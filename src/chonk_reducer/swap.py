@@ -101,3 +101,6 @@ def restore_from_bak(original: Path, bak: Path, logger: Logger) -> None:
         bak.rename(original)
     except Exception as e:
         logger.log(f"Restore FAILED: {e}")
+
+# Backward compatibility alias
+swap_in = swap_in_encoded
