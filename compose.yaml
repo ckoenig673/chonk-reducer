@@ -9,7 +9,8 @@ services:
       - PYTHONPATH=/project/src
       - PYTHONPYCACHEPREFIX=/work/pycache
       - PYTHONDONTWRITEBYTECODE=1      
-      
+      - FAIL_FAST=true
+
       - LOG_PREFIX=movie
 
       - TZ=America/Chicago
@@ -78,8 +79,10 @@ services:
       - PYTHONPATH=/project/src
       - PYTHONPYCACHEPREFIX=/work/pycache
       - PYTHONDONTWRITEBYTECODE=1      
+      - FAIL_FAST=true
 
       - TZ=America/Chicago
+      
       - LOG_PREFIX=tv
 
       # point the exact same code at TV instead of movies
@@ -87,7 +90,7 @@ services:
       - WORK_ROOT=/work
 
       # make it easy to force a test transcode
-      - MIN_SIZE_GB=7
+      - MIN_SIZE_GB=8
       - MAX_FILES=1
 
       - QSV_QUALITY=21

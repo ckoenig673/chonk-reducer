@@ -82,6 +82,9 @@ class Config:
 
     log_prefix: str
 
+    # NEW
+    fail_fast: bool
+
 
 def load_config() -> Config:
     excl = _split_csv(_env("EXCLUDE_PATH_PARTS", "#recycle,@eaDir"))
@@ -118,4 +121,7 @@ def load_config() -> Config:
         exclude_path_parts=tuple(excl),
 
         log_prefix=_env("LOG_PREFIX", ""),
+
+        # NEW
+        fail_fast=_env_bool("FAIL_FAST", False),
     )
