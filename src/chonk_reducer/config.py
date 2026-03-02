@@ -81,14 +81,12 @@ class Config:
     exclude_path_parts: tuple[str, ...]
 
     log_prefix: str
-
-    # NEW
     fail_fast: bool
-
+    dry_run: bool
 
 def load_config() -> Config:
     excl = _split_csv(_env("EXCLUDE_PATH_PARTS", "#recycle,@eaDir"))
-
+    
     return Config(
         media_root=Path(_env("MEDIA_ROOT", "/movies")),
         work_root=Path(_env("WORK_ROOT", "/work")),
@@ -122,6 +120,6 @@ def load_config() -> Config:
 
         log_prefix=_env("LOG_PREFIX", ""),
 
-        # NEW
         fail_fast=_env_bool("FAIL_FAST", False),
+        dry_run=_env_bool("DRY_RUN", False),
     )

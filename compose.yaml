@@ -6,6 +6,7 @@ services:
     container_name: movie-transcoder
     entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
     environment:
+      - DRY_RUN=true
       - PYTHONPATH=/project/src
       - PYTHONPYCACHEPREFIX=/work/pycache
       - PYTHONDONTWRITEBYTECODE=1      
@@ -76,6 +77,8 @@ services:
       - "937"
 
     environment:
+      - DRY_RUN=true
+      
       - PYTHONPATH=/project/src
       - PYTHONPYCACHEPREFIX=/work/pycache
       - PYTHONDONTWRITEBYTECODE=1      

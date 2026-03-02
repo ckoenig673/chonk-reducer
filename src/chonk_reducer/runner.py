@@ -29,6 +29,7 @@ def run() -> int:
 
     logger.log("===== TRANSCODE START =====")
     logger.log(f"FAIL_FAST={cfg.fail_fast}")
+    logger.log(f"DRY_RUN={cfg.dry_run}")
 
     lock_path = cfg.work_root / f"{prefix}chonkreducer.lock"
     if not acquire_lock(lock_path, cfg.lock_stale_hours, logger):
@@ -64,7 +65,12 @@ def run() -> int:
 
             considered += 1
             logger.log(f"Processing: {src}")
-
+            
+            if cfg.dry_run:
+                logger.log(f"DRY_RUN: would encode + swap: {src}")
+                processed += 1
+                continue
+            
             stamp2 = make_run_stamp()
             encoded = src.parent / f"{src.name}.{stamp2}.encoded.mkv"
 
