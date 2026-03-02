@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-from .cleanup import cleanup_baks, cleanup_logs, cleanup_work_dir
+from .cleanup import cleanup_baks, cleanup_logs, cleanup_work_dir, cleanup_media_temp
 from .config import load_config
 from .discovery import gather_candidates
 from .encode import encode_qsv
@@ -38,6 +38,7 @@ def run() -> int:
 
     try:
         cleanup_work_dir(cfg.work_root, cfg.work_cleanup_hours, logger)
+        cleanup_media_temp(cfg.media_root, cfg.work_cleanup_hours, cfg.exclude_path_parts, logger)
         cleanup_logs(log_dir, cfg.log_retention_days, logger)
         cleanup_baks(cfg.media_root, cfg.bak_retention_days, logger)
 

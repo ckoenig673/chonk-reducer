@@ -43,6 +43,19 @@ def _file_epoch(p: Path, ts_pattern: re.Pattern[str] | None = None) -> float:
 class CleanupResult:
     deleted: int
 
+def _path_has_excluded_part(p: Path, exclude_path_parts: tuple[str, ...]) -> bool:
+    parts_lower = [part.lower() for part in p.parts]
+    for ex in exclude_path_parts:
+        ex_l = (ex or "").lower()
+        if not ex_l:
+            continue
+        if any(ex_l == part for part in parts_lower):
+            return True
+        if any(ex_l in part for part in parts_lower):
+            return True
+    return False
+
+
 
 def cleanup_baks(media_root: Path, bak_retention_days: float | int, logger: Logger) -> CleanupResult:
     """Delete backup files (*.bak.*) under media_root.
@@ -128,4 +141,41 @@ def cleanup_work_dir(work_root: Path, work_cleanup_hours: float | int, logger: L
                     logger.log(f"Cleanup: failed delete: {p} ({e})")
 
     logger.log(f"Cleanup: deleted {deleted} work files under {work_root}")
+    return CleanupResult(deleted=deleted)
+
+
+def cleanup_media_temp(media_root: Path, work_cleanup_hours: float | int, exclude_path_parts: tuple[str, ...], logger: Logger) -> CleanupResult:
+    """Delete old in-place encoded/temp artifacts under media_root.
+
+    This is for the in-place encode strategy where temp outputs live next to the source file,
+    e.g. Episode.mkv.<stamp>.encoded.mkv.
+
+    Retention logic (same as cleanup_work_dir):
+      - work_cleanup_hours > 0 : delete older than N hours
+      - work_cleanup_hours <= 0: delete ALL known temp artifacts (force-clean)
+    """
+    hours = int(work_cleanup_hours)
+    cutoff = time.time() - (hours * 3600) if hours > 0 else time.time()
+
+    deleted = 0
+    patterns = ("*.encoded.mkv", "*.tmp", "*.partial")
+
+    for pat in patterns:
+        for p in media_root.rglob(pat):
+            if not p.is_file():
+                continue
+            if _path_has_excluded_part(p, exclude_path_parts):
+                continue
+            # Don't touch real backups/markers even if they match patterns (extra safety)
+            if ".bak." in p.name or p.name.endswith(".optimized"):
+                continue
+            if _file_epoch(p) < cutoff:
+                try:
+                    logger.log(f"Cleanup: deleting media temp file: {p}")
+                    p.unlink()
+                    deleted += 1
+                except Exception as e:
+                    logger.log(f"Cleanup: failed delete: {p} ({e})")
+
+    logger.log(f"Cleanup: deleted {deleted} media temp files under {media_root}")
     return CleanupResult(deleted=deleted)
