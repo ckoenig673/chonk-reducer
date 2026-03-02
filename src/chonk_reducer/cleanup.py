@@ -5,38 +5,34 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
 from .logging_utils import Logger
 
 # Matches: something.mkv.bak.20260302_010925
 _BAK_TS_RE = re.compile(r"\.bak\.(\d{8}_\d{6})$")
 
+# Matches: prefix_transcode_20260302_010925.log (or wrapper_..., candidates_...)
+_LOG_TS_RE = re.compile(r"_(\d{8}_\d{6})\.log$")
 
-def _parse_bak_ts_from_name(p: Path) -> float | None:
-    """
-    If filename ends with .bak.YYYYMMDD_HHMMSS, return epoch seconds.
-    Otherwise None.
-    """
-    m = _BAK_TS_RE.search(p.name)
+
+def _parse_ts_from_suffix(p: Path, pattern: re.Pattern[str]) -> float | None:
+    """If regex matches a YYYYMMDD_HHMMSS group, return epoch seconds."""
+    m = pattern.search(p.name)
     if not m:
         return None
     ts = m.group(1)
     try:
-        # time.strptime returns localtime struct; consistent with how we stamp names
         st = time.strptime(ts, "%Y%m%d_%H%M%S")
         return time.mktime(st)
     except Exception:
         return None
 
 
-def _file_age_epoch(p: Path) -> float:
-    """
-    Prefer timestamp embedded in .bak filename (if present),
-    otherwise fall back to filesystem mtime.
-    """
-    ts = _parse_bak_ts_from_name(p)
-    if ts is not None:
-        return ts
+def _file_epoch(p: Path, ts_pattern: re.Pattern[str] | None = None) -> float:
+    """Prefer timestamp embedded in filename; otherwise fall back to filesystem mtime."""
+    if ts_pattern is not None:
+        ts = _parse_ts_from_suffix(p, ts_pattern)
+        if ts is not None:
+            return ts
     try:
         return p.stat().st_mtime
     except Exception:
@@ -48,29 +44,26 @@ class CleanupResult:
     deleted: int
 
 
-def cleanup_baks(media_root: Path, cfg: Config, logger: Logger) -> CleanupResult:
-    """
-    Delete old backup files (*.bak.*) under media_root.
-    Uses timestamp-in-filename when available; otherwise uses mtime.
-    """
-    days = int(cfg.bak_retention_days)
-    if days <= 0:
-        logger.log("Cleanup: BAK retention <= 0, skipping")
-        return CleanupResult(deleted=0)
+def cleanup_baks(media_root: Path, bak_retention_days: float | int, logger: Logger) -> CleanupResult:
+    """Delete backup files (*.bak.*) under media_root.
 
-    cutoff = time.time() - (days * 86400)
+    Retention logic:
+      - bak_retention_days > 0 : delete older than N days
+      - bak_retention_days <= 0: delete ALL *.bak.* (force-clean)
+    """
+    days = int(bak_retention_days)
+    cutoff = time.time() - (days * 86400) if days > 0 else time.time()
+
     deleted = 0
-
     for p in media_root.rglob("*"):
         if not p.is_file():
             continue
         if ".bak." not in p.name:
             continue
 
-        age = _file_age_epoch(p)
-        if age < cutoff:
+        if _file_epoch(p, _BAK_TS_RE) < cutoff:
             try:
-                logger.log(f"Cleanup: deleting old bak: {p}")
+                logger.log(f"Cleanup: deleting bak: {p}")
                 p.unlink()
                 deleted += 1
             except Exception as e:
@@ -80,32 +73,59 @@ def cleanup_baks(media_root: Path, cfg: Config, logger: Logger) -> CleanupResult
     return CleanupResult(deleted=deleted)
 
 
-def cleanup_work_dir(work_root: Path, cfg: Config, logger: Logger) -> CleanupResult:
+def cleanup_logs(log_dir: Path, log_retention_days: float | int, logger: Logger) -> CleanupResult:
+    """Delete old *.log under log_dir.
+
+    Retention logic:
+      - log_retention_days > 0 : delete older than N days
+      - log_retention_days <= 0: delete ALL *.log (force-clean)
     """
-    Delete old encoded/temp artifacts in work_root.
-    NOTE: If hours <= 0, we skip (safer than 'delete everything older than now').
-    """
-    hours = int(cfg.work_cleanup_hours)
-    if hours <= 0:
-        logger.log("Cleanup: WORK_CLEANUP_HOURS <= 0, skipping work cleanup")
+    if not log_dir.exists():
         return CleanupResult(deleted=0)
 
-    cutoff = time.time() - (hours * 3600)
-    deleted = 0
+    days = int(log_retention_days)
+    cutoff = time.time() - (days * 86400) if days > 0 else time.time()
 
-    patterns = ("*.encoded.mkv", "*.encoded.*.mkv", "*.tmp", "*.partial", "*.log")
+    deleted = 0
+    for p in log_dir.glob("*.log"):
+        if not p.is_file():
+            continue
+        if _file_epoch(p, _LOG_TS_RE) < cutoff:
+            try:
+                logger.log(f"Cleanup: deleting log: {p}")
+                p.unlink()
+                deleted += 1
+            except Exception as e:
+                logger.log(f"Cleanup: failed delete: {p} ({e})")
+
+    logger.log(f"Cleanup: deleted {deleted} log files under {log_dir}")
+    return CleanupResult(deleted=deleted)
+
+
+def cleanup_work_dir(work_root: Path, work_cleanup_hours: float | int, logger: Logger) -> CleanupResult:
+    """Delete old encoded/temp artifacts in work_root.
+
+    Retention logic:
+      - work_cleanup_hours > 0 : delete older than N hours
+      - work_cleanup_hours <= 0: delete ALL known temp artifacts (force-clean)
+    """
+    hours = int(work_cleanup_hours)
+    cutoff = time.time() - (hours * 3600) if hours > 0 else time.time()
+
+    deleted = 0
+    patterns = ("*.encoded.mkv", "*.tmp", "*.partial")
 
     for pat in patterns:
         for p in work_root.glob(pat):
             if not p.is_file():
                 continue
-            try:
-                if p.stat().st_mtime < cutoff:
+            if _file_epoch(p) < cutoff:
+                try:
                     logger.log(f"Cleanup: deleting work file: {p}")
                     p.unlink()
                     deleted += 1
-            except Exception as e:
-                logger.log(f"Cleanup: failed delete: {p} ({e})")
+                except Exception as e:
+                    logger.log(f"Cleanup: failed delete: {p} ({e})")
 
     logger.log(f"Cleanup: deleted {deleted} work files under {work_root}")
     return CleanupResult(deleted=deleted)
