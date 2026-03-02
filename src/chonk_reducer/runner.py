@@ -43,10 +43,13 @@ def run() -> int:
     processed = failed = considered = skipped_marker = skipped_backup = 0
 
     try:
-        cleanup_work_dir(cfg.work_root, cfg.work_cleanup_hours, logger)
-        cleanup_logs(log_dir, cfg.log_retention_days, logger)
-        cleanup_baks(cfg.media_root, cfg.bak_retention_days, logger)
-
+        #cleanup_work_dir(cfg.work_root, cfg.work_cleanup_hours, logger)
+        #cleanup_logs(log_dir, cfg.log_retention_days, logger)
+        #cleanup_baks(cfg.media_root, cfg.bak_retention_days, logger)
+        cleanup_work_dir(cfg.work_root, cfg, logger)
+        cleanup_logs(log_dir, cfg, logger)
+        cleanup_baks(cfg.media_root, cfg, logger)
+        
         cands = gather_candidates(cfg)
         logger.log(f"Found {len(cands)} candidates")
 
@@ -70,7 +73,8 @@ def run() -> int:
             logger.log(f"Processing: {src}")
 
             stamp2 = make_run_stamp()
-            encoded = cfg.work_root / f"{src.name}.{stamp2}.encoded.mkv"
+            encoded = src.parent / f"{src.name}.{stamp2}.encoded.mkv"
+            #encoded = cfg.work_root / f"{src.name}.{stamp2}.encoded.mkv" 
 
             try:
                 encode_qsv(src, encoded, cfg, logger)
