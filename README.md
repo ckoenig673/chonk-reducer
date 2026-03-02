@@ -1,2 +1,8 @@
 # chonk-reducer
-A containerized, hardware-accelerated NAS media transcoding pipeline that automatically reduces large video files using Intel QSV, with safe swap, validation, logging, and lifecycle management.
+
+Modular refactor of the original `auto_transcode.py` into a small Python package.
+
+Entry point:
+- `python -m chonk_reducer`
+
+Designed to run in containers with env-driven configuration.

@@ -1,2 +1,2 @@
-def test_smoke_import():
-    import chonk_reducer  # noqa
+def test_import():
+    import chonk_reducer  # noqa: F401

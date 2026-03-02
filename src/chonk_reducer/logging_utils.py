@@ -24,25 +24,24 @@ def now_ts() -> str:
     return datetime.now(tz=z).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def make_run_stamp() -> str:
-    # Stable + sortable. Uses container localtime.
-    return time.strftime("%Y%m%d_%H%M%S", time.localtime())
+@dataclass
+class Logger:
+    logfile: str | None = None
+
+    def log(self, msg: str) -> None:
+        line = f"[{now_ts()}] {msg}"
+        print(line, flush=True)
+        if self.logfile:
+            try:
+                with open(self.logfile, "a", encoding="utf-8", newline="\n") as f:
+                    f.write(line + "\n")
+            except Exception:
+                pass
 
 
 def log_prefix() -> str:
     return (os.environ.get("LOG_PREFIX") or "").strip().lower()
 
 
-@dataclass
-class Logger:
-    run_log: str
-
-    def log(self, msg: str) -> None:
-        line = f"[{now_ts()}] {msg}"
-        print(line, flush=True)
-        try:
-            with open(self.run_log, "a", encoding="utf-8", newline="\n") as f:
-                f.write(line + "\n")
-        except Exception:
-            # never crash because logging failed
-            pass
+def make_run_stamp() -> str:
+    return time.strftime("%Y%m%d_%H%M%S", time.localtime())
