@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from .config import Config
@@ -29,22 +30,36 @@ def apply_dir_perms(dir_path: Path, cfg: Config) -> None:
         pass
 
 
+def _touch_now(p: Path) -> None:
+    """Force mtime/atime to 'now' so retention policies behave as intended."""
+    try:
+        now = time.time()
+        os.utime(p, (now, now))
+    except Exception:
+        pass
+
+
 def swap_in(src: Path, encoded: Path, cfg: Config, logger: Logger) -> Path:
-    stamp = "swap"
-    # encoded name: <src>.YYYYMMDD_HHMMSS.encoded.mkv
+    stamp = "swap"  # encoded name: .YYYYMMDD_HHMMSS.encoded.mkv
     parts = encoded.name.split(".")
     if len(parts) >= 4:
         stamp = parts[-3]
 
     bak = src.with_name(src.name + f".bak.{stamp}")
+
     logger.log(f"Backup: {bak}")
     src.rename(bak)
+
+    # IMPORTANT: rename preserves original mtime (often years old).
+    # Touch the bak so BAK_RETENTION_DAYS works based on backup creation time.
+    _touch_now(bak)
 
     logger.log(f"Swap in: {encoded} -> {src}")
     try:
         encoded.replace(src)
     except OSError:
         import shutil
+
         tmp = src.with_name(src.name + f".tmp.{stamp}")
         shutil.copy2(encoded, tmp)
         tmp.replace(src)

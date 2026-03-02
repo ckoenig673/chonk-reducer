@@ -7,17 +7,30 @@ from .logging_utils import Logger
 
 
 def _delete_older_than(root: Path, glob_pat: str, cutoff_epoch: float, logger: Logger) -> int:
-    n = 0
+    deleted: list[str] = []
+
     for p in root.rglob(glob_pat):
         try:
-            if p.stat().st_mtime < cutoff_epoch:
+            st = p.stat()
+            if st.st_mtime < cutoff_epoch:
                 p.unlink(missing_ok=True)
-                n += 1
+                deleted.append(str(p))
         except Exception:
             continue
-    if n:
-        logger.log(f"Cleanup: deleted {n} files for pattern {glob_pat} under {root}")
-    return n
+
+    if deleted:
+        # Log a short, useful list so you can confirm what's being removed.
+        # (Avoids exploding logs if thousands get removed.)
+        sample = deleted[:10]
+        more = len(deleted) - len(sample)
+
+        logger.log(f"Cleanup: deleted {len(deleted)} files for pattern {glob_pat} under {root}")
+        for s in sample:
+            logger.log(f"Cleanup: deleted: {s}")
+        if more > 0:
+            logger.log(f"Cleanup: …and {more} more")
+
+    return len(deleted)
 
 
 def cleanup_logs(log_dir: Path, retention_days: int, logger: Logger) -> None:
