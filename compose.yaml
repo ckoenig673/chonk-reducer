@@ -16,8 +16,8 @@ services:
       - MEDIA_ROOT=/movies
       - WORK_ROOT=/work
 
-      - MIN_SIZE_GB=18
-      - MAX_FILES=2
+      - MIN_SIZE_GB=17
+      - MAX_FILES=1
 
       - QSV_QUALITY=21
       - QSV_PRESET=7
@@ -78,7 +78,7 @@ services:
       - PYTHONPATH=/project/src
       - PYTHONPYCACHEPREFIX=/work/pycache
       - PYTHONDONTWRITEBYTECODE=1      
-          
+
       - TZ=America/Chicago
       - LOG_PREFIX=tv
 
