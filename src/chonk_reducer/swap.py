@@ -1,75 +1,103 @@
 from __future__ import annotations
 
 import os
-import time
+import shutil
 from pathlib import Path
 
 from .config import Config
-from .logging_utils import Logger
+from .logging_utils import Logger, make_run_stamp
 
 
-def apply_perms(path: Path, cfg: Config) -> None:
+def _touch(path: Path) -> None:
+    """
+    Set mtime/atime to now without changing contents.
+    """
     try:
-        os.chown(path, cfg.out_uid, cfg.out_gid)
-    except Exception:
-        pass
-    try:
-        os.chmod(path, cfg.out_mode)
-    except Exception:
-        pass
-
-
-def apply_dir_perms(dir_path: Path, cfg: Config) -> None:
-    try:
-        os.chown(dir_path, cfg.out_uid, cfg.out_gid)
-    except Exception:
-        pass
-    try:
-        os.chmod(dir_path, cfg.out_dir_mode)
+        os.utime(path, None)
     except Exception:
         pass
 
 
-def _touch_now(p: Path) -> None:
-    """Force mtime/atime to 'now' so retention policies behave as intended."""
+def _chmod(path: Path, mode: int) -> None:
     try:
-        now = time.time()
-        os.utime(p, (now, now))
+        os.chmod(path, mode)
     except Exception:
         pass
 
 
-def swap_in(src: Path, encoded: Path, cfg: Config, logger: Logger) -> Path:
-    stamp = "swap"  # encoded name: .YYYYMMDD_HHMMSS.encoded.mkv
-    parts = encoded.name.split(".")
-    if len(parts) >= 4:
-        stamp = parts[-3]
+def _chown(path: Path, uid: int, gid: int) -> None:
+    try:
+        os.chown(path, uid, gid)
+    except Exception:
+        pass
 
-    bak = src.with_name(src.name + f".bak.{stamp}")
 
+def make_bak_path(src: Path, stamp: str) -> Path:
+    return src.with_name(f"{src.name}.bak.{stamp}")
+
+
+def make_optimized_marker(src: Path) -> Path:
+    return src.with_name(f"{src.name}.optimized")
+
+
+def swap_in_encoded(
+    original: Path,
+    encoded: Path,
+    cfg: Config,
+    logger: Logger,
+) -> tuple[Path, Path]:
+    """
+    1) Move original -> .bak.STAMP
+    2) Move encoded -> original path
+    3) Write .optimized marker
+    4) Apply perms + touch files so timestamps reflect *now*
+    """
+    stamp = make_run_stamp()
+
+    bak = make_bak_path(original, stamp)
+    marker = make_optimized_marker(original)
+
+    # Backup original (rename is atomic on same filesystem)
     logger.log(f"Backup: {bak}")
-    src.rename(bak)
+    original.rename(bak)
 
-    # IMPORTANT: rename preserves original mtime (often years old).
-    # Touch the bak so BAK_RETENTION_DAYS works based on backup creation time.
-    _touch_now(bak)
+    # IMPORTANT: the bak keeps the OLD mtime unless we touch it
+    _touch(bak)
 
-    logger.log(f"Swap in: {encoded} -> {src}")
+    # Move encoded into place
+    logger.log(f"Swap in: {encoded} -> {original}")
+    encoded.rename(original)
+
+    # Apply ownership/mode (best-effort)
+    _chown(original, int(cfg.out_uid), int(cfg.out_gid))
+    _chmod(original, int(cfg.out_mode))
+    _touch(original)
+
+    # Marker (idempotent)
     try:
-        encoded.replace(src)
-    except OSError:
-        import shutil
+        marker.write_text("", encoding="utf-8")
+        _chown(marker, int(cfg.out_uid), int(cfg.out_gid))
+        _chmod(marker, int(cfg.out_mode))
+        _touch(marker)
+    except Exception as e:
+        logger.log(f"WARN: failed to write marker {marker}: {e}")
 
-        tmp = src.with_name(src.name + f".tmp.{stamp}")
-        shutil.copy2(encoded, tmp)
-        tmp.replace(src)
-        encoded.unlink(missing_ok=True)
+    return bak, marker
 
-    marker = src.with_suffix(src.suffix + ".optimized")
-    marker.write_text("", encoding="utf-8", newline="\n")
 
-    apply_dir_perms(src.parent, cfg)
-    apply_perms(src, cfg)
-    apply_perms(marker, cfg)
+def restore_from_bak(original: Path, bak: Path, logger: Logger) -> None:
+    """
+    If something goes sideways after backup, restore.
+    """
+    try:
+        if original.exists():
+            logger.log(f"Restore: removing broken output {original}")
+            original.unlink()
+    except Exception:
+        pass
 
-    return bak
+    try:
+        logger.log(f"Restore: {bak} -> {original}")
+        bak.rename(original)
+    except Exception as e:
+        logger.log(f"Restore FAILED: {e}")
