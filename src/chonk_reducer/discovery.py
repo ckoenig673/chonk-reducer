@@ -43,6 +43,7 @@ def gather_candidates(cfg: Config, logger: Logger):
 
     candidates: list[Path] = []
     ignored_folders = defaultdict(int)
+    failed_skipped: list[Path] = []
 
     for p in cfg.media_root.rglob("*.mkv"):
         try:
@@ -52,6 +53,13 @@ def gather_candidates(cfg: Config, logger: Logger):
             ignore_root = find_ignore_root(p, cfg.media_root)
             if ignore_root:
                 ignored_folders[ignore_root] += 1
+                continue
+
+
+            # Skip files previously marked as failed/quarantined
+            failed_marker = p.with_suffix(p.suffix + ".failed")
+            if failed_marker.exists():
+                failed_skipped.append(p)
                 continue
 
             if ".bak." in p.name:
@@ -69,6 +77,16 @@ def gather_candidates(cfg: Config, logger: Logger):
             continue
 
     candidates.sort(key=lambda x: x.stat().st_size, reverse=True)
+
+    # Log skipped failed files summary
+    if failed_skipped:
+        logger.log("===== SKIPPED FAILED FILES (.failed marker) =====")
+        logger.log(f"SKIPPED FAILED: {len(failed_skipped)}")
+        for p in failed_skipped[:10]:
+            logger.log(f"FAILED-MARKED: {p}")
+        if len(failed_skipped) > 10:
+            logger.log(f"...and {len(failed_skipped) - 10} more")
+        logger.log("==============================================")
 
     # Log ignored folders summary
     if ignored_folders:

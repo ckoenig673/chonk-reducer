@@ -1,164 +1,221 @@
 # Chonk Reducer
 
-```
-        ▄████▄   ██░ ██  ▒█████   ███▄    █  ██ ▄█▀
-       ▒██▀ ▀█  ▓██░ ██▒▒██▒  ██▒ ██ ▀█   █  ██▄█▒
-       ▒▓█    ▄ ▒██▀▀██░▒██░  ██▒▓██  ▀█ ██▒▓███▄░
-       ▒▓▓▄ ▄██▒░▓█ ░██ ▒██   ██░▓██▒  ▐▌██▒▓██ █▄
-       ▒ ▓███▀ ░░▓█▒░██▓░ ████▓▒░▒██░   ▓██░▒██▒ █▄
-       ░ ░▒ ▒  ░ ▒ ░░▒░▒░ ▒░▒░▒░ ░ ▒░   ▒ ▒ ▒ ▒▒ ▓▒
-         ░  ▒    ▒ ░▒░ ░  ░ ▒ ▒░ ░ ░░   ░ ▒░░ ░▒ ▒░
-       ░         ░  ░░ ░░ ░ ░ ▒     ░   ░ ░ ░ ░░ ░
-       ░ ░       ░  ░  ░    ░ ░           ░ ░  ░
+Chonk Reducer is a policy-driven media size reduction system designed
+for NAS environments (especially Synology + Docker).
 
-                Reduce the Chonk. Respect the Bits.
-```
+Its mission is simple:
 
----
+> Safely reduce large video files to reclaim storage space ---
+> predictably, observably, and without breaking your media library.
 
-## Overview
+------------------------------------------------------------------------
 
-**Chonk Reducer** is a containerized, scheduled media transcoding system designed for NAS environments.
+# What Chonk Is
 
-It safely converts large media files to HEVC using Intel Quick Sync (QSV), validates the output, swaps originals with timestamped backups, and enforces retention policies — all without running persistent services.
+Chonk is **not** a generic transcoder.
 
-This project evolved from a simple shell-based ffmpeg loop into a modular Python-based pipeline with clean separation of concerns and deterministic behavior.
+It is a controlled storage optimization system that:
 
----
+-   Finds oversized media files
+-   Re-encodes using Intel QSV (HEVC)
+-   Validates output
+-   Enforces minimum savings thresholds
+-   Swaps safely in-place
+-   Tracks metrics and per-show savings
+-   Prevents reprocessing
+-   Runs safely on a schedule
 
-## Core Capabilities
+------------------------------------------------------------------------
 
-- Directory scanning with exclusion support
-- Size-based filtering (`MIN_SIZE_GB`)
-- Intel QSV hardware-accelerated HEVC encoding
-- Optional validation pass (`probe` or `decode` mode)
-- Atomic swap with timestamped `.bak.YYYYMMDD_HHMMSS`
-- Backup retention enforcement
-- Work directory cleanup for stale encodes
-- `.optimized` marker to prevent reprocessing
-- Short-lived container execution (`docker compose run --rm`)
-- Designed for DSM Task Scheduler integration
+# Core Features
 
-Idempotent by design. Safe for repeated scheduled runs.
+## Same-Folder Encoding
 
----
+All encoded files are written next to the source file.\
+This prevents cross-device rename failures (EXDEV) common in Docker +
+Synology bind mounts.
 
-## High-Level Architecture
+## Guard Rails
 
-```
-DSM Task Scheduler
-    → scripts/chonkreducer_task.sh
-        → docker compose run --rm
-            → python -m chonk_reducer
-                → runner
-                    → discovery
-                    → encode
-                    → validation
-                    → swap
-                    → cleanup
-```
+-   Minimum file size threshold
+-   Minimum savings percentage requirement
+-   Retry with backoff
+-   Failed file quarantine (.failed marker)
+-   Fail-fast mode
+-   Pause system
+-   Folder ignore markers
 
-No long-running daemons. Each scheduled execution is isolated and self-contained.
+## Operational Controls
 
----
+-   `.chonkignore` -- Ignore entire folders
+-   `.chonkpause` -- Immediately halt processing
+-   `.chonkpause.reason` -- Log pause reason
+-   `.optimized` -- Prevent reprocessing
+-   `.failed` -- Mark permanent failures
 
-## Project Structure
+## Observability
 
-```
-scripts/
-    chonkreducer_task.sh
-    auto_transcode.monolith.py   (archived original implementation)
+-   Top candidate preview logging
+-   Per-file metrics (before/after/saved/elapsed/rate)
+-   Per-show rollups
+-   Total run savings
+-   Run ID tagging
+-   Optional skip logging
 
-src/chonk_reducer/
-    cli.py
-    runner.py
-    discovery.py
-    encode.py
-    validation.py
-    swap.py
-    cleanup.py
-    config.py
-    ffmpeg_utils.py
-    lock.py
-    logging_utils.py
-```
+------------------------------------------------------------------------
 
----
+# Processing Flow
 
-## Build
+1.  Cleanup temp artifacts
+2.  Discover candidates
+3.  Apply ignore rules
+4.  Apply size threshold
+5.  Probe source (ffprobe)
+6.  Encode (ffmpeg QSV)
+7.  Validate output (decode test)
+8.  Enforce minimum savings
+9.  Backup original
+10. Atomic swap
+11. Write `.optimized` marker
+12. Log metrics + summary
 
-```bash
-docker compose build --no-cache movie-transcoder
-```
+------------------------------------------------------------------------
 
----
+# Folder Markers
 
-## Manual Run
+## .chonkignore
 
-```bash
-docker compose run --rm movie-transcoder
-docker compose run --rm tv-transcoder
-```
+Place in a show folder to exclude it entirely:
 
----
+    /tv_shows/Sports/.chonkignore
 
-## DSM Task Example
+## .chonkpause
 
-```bash
-/bin/sh /volume1/docker/projects/nas-transcoder/scripts/chonkreducer_task.sh movie-transcoder
-```
+Place in media root to halt processing:
 
-Repeat for `tv-transcoder`.
+    /tv_shows/.chonkpause
 
----
+Optional reason:
 
-## Key Environment Variables
+    /tv_shows/.chonkpause.reason
 
-| Variable | Purpose |
-|----------|----------|
-| MEDIA_ROOT | Root directory to scan |
-| WORK_ROOT | Temporary workspace + logs |
-| MIN_SIZE_GB | Minimum file size to process |
-| MAX_FILES | Maximum files per run |
-| QSV_QUALITY | HEVC quality level |
-| POST_ENCODE_VALIDATE | Enable validation step |
-| VALIDATE_MODE | `probe` or `decode` |
-| VALIDATE_SECONDS | Seconds to validate |
-| BAK_RETENTION_DAYS | Backup retention window |
-| WORK_CLEANUP_HOURS | Stale work artifact cleanup |
-| LOG_PREFIX | Distinguish movie vs tv logs |
+## .failed
 
----
+Automatically created after retry exhaustion:
 
-## Design Decisions
+    Episode.mkv.failed
 
-- Backups are explicitly “touched” on creation so retention logic reflects backup time, not original file timestamp.
-- Transcodes are written to `/work` and only swapped in after successful validation.
-- `.optimized` marker prevents re-encoding.
-- Cleanup logs explicitly list deleted files for traceability.
-- Execution uses `docker compose run --rm` to avoid container buildup.
+Prevents repeated failure loops.
 
----
+------------------------------------------------------------------------
 
-## Evolution
+# Environment Variables
 
-This project began as a simple script experiment and evolved into:
+## Run Modes
 
-- A modular Python pipeline
-- A containerized job execution model
-- A Git-managed refactor workflow
-- A reproducible NAS automation system
+  Variable    Description
+  ----------- -----------------------
+  DRY_RUN     Log only, no encoding
+  PREVIEW     Probe-only mode
+  FAIL_FAST   Stop on first failure
 
-It demonstrates iterative refinement, architectural discipline, and AI-assisted development without forced deadlines.
+## Retry
 
----
+  Variable             Description
+  -------------------- ---------------------
+  RETRY_COUNT          Additional attempts
+  RETRY_BACKOFF_SECS   Backoff multiplier
 
-## Status
+## Selection
 
-Stable for scheduled NAS usage.
-Modularized and version-controlled.
-Actively evolving.
+  Variable         Description
+  ---------------- -----------------------
+  MIN_SIZE_GB      Minimum file size
+  MAX_FILES        Max processed per run
+  TOP_CANDIDATES   Log top N by size
 
----
+## Encoding
 
-Reduce the chonk responsibly.
+  Variable              Description
+  --------------------- --------------------------
+  QSV_QUALITY           HEVC quality level
+  QSV_PRESET            QSV preset
+  MIN_SAVINGS_PERCENT   Minimum savings required
+
+## Validation
+
+  Variable               Description
+  ---------------------- -------------------
+  POST_ENCODE_VALIDATE   Enable validation
+  VALIDATE_MODE          decode mode
+  VALIDATE_SECONDS       Seconds to test
+
+## Logging & Retention
+
+  Variable             Description
+  -------------------- ------------------
+  LOG_SKIPS            Log skip reasons
+  LOG_RETENTION_DAYS   Log retention
+  BAK_RETENTION_DAYS   Backup retention
+
+------------------------------------------------------------------------
+
+# Docker Usage
+
+Run manually:
+
+    docker compose run --rm tv-transcoder
+    docker compose run --rm movie-transcoder
+
+Designed for DSM Task Scheduler via wrapper script.
+
+------------------------------------------------------------------------
+
+# Scheduling Model
+
+Recommended approach:
+
+-   TV runs 3 alternating days
+-   Movies run 3 alternating days
+-   No overlap
+-   MAX_FILES=1 for predictable behavior
+
+------------------------------------------------------------------------
+
+# Philosophy
+
+Chonk is not meant to be clever.
+
+It is meant to be:
+
+-   Safe
+-   Predictable
+-   Observable
+-   Storage-focused
+
+Once configured, it should run for years without supervision.
+
+------------------------------------------------------------------------
+
+# Project Structure
+
+-   Modular Python architecture
+-   Runner orchestrates pipeline
+-   Separate modules for:
+    -   discovery
+    -   encoding
+    -   validation
+    -   swap
+    -   cleanup
+    -   locking
+    -   logging
+
+------------------------------------------------------------------------
+
+# Status
+
+Production-grade storage reducer.
+
+------------------------------------------------------------------------
+
+Author: Cory Koenig

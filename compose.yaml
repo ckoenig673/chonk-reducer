@@ -1,51 +1,85 @@
 name: nas-transcoder
 
+# ============================================================
+# Common Environment (shared by movie + tv)
+# ============================================================
+x-common-env: &common-env
+  # ---- Python / container hygiene ----
+  PYTHONPATH: /project/src
+  PYTHONPYCACHEPREFIX: /work/pycache
+  PYTHONDONTWRITEBYTECODE: 1
+
+  # ---- Run modes ----
+  DRY_RUN: "false"
+  PREVIEW: "false"
+  FAIL_FAST: "true"
+
+  # ---- Retries ----
+  RETRY_COUNT: "1"
+  RETRY_BACKOFF_SECS: "5"
+
+  # ---- Candidate selection ----
+  TOP_CANDIDATES: "5"
+  MAX_FILES: "1"
+
+  # ---- Encode settings ----
+  QSV_QUALITY: "21"
+  QSV_PRESET: "7"
+  EXTRA_HW_FRAMES: "64"
+  MIN_SAVINGS_PERCENT: "15"
+
+  # ---- Validation ----
+  POST_ENCODE_VALIDATE: "1"
+  VALIDATE_MODE: decode
+  VALIDATE_SECONDS: "10"
+
+  # ---- Output ownership ----
+  OUT_UID: "1028"
+  OUT_GID: "100"
+  OUT_MODE: "664"
+  OUT_DIR_MODE: "775"
+
+  # ---- Logging & retention ----
+  LOG_SKIPS: "true"
+  LOG_RETENTION_DAYS: "30"
+  BAK_RETENTION_DAYS: "60"
+
+  # ---- Locks & cleanup ----
+  LOCK_STALE_HOURS: "12"
+  WORK_CLEANUP_HOURS: "0"
+
+  # ---- Probing ----
+  PROBE_TIMEOUT_SECS: "60"
+  FFPROBE_ANALYZEDURATION: "50000000"
+  FFPROBE_PROBESIZE: "50000000"
+
+  # ---- Path exclusions ----
+  EXCLUDE_PATH_PARTS: "#recycle,@eaDir"
+
+
 services:
+
+  # ============================================================
+  # MOVIES
+  # ============================================================
   movie-transcoder:
     build: .
     container_name: movie-transcoder
     entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
+
     environment:
-      - DRY_RUN=true
-      - PYTHONPATH=/project/src
-      - PYTHONPYCACHEPREFIX=/work/pycache
-      - PYTHONDONTWRITEBYTECODE=1      
-      - FAIL_FAST=true
+      <<: *common-env
 
-      - LOG_PREFIX=movie
+      # ---- Identity ----
+      TZ: America/Chicago
+      LOG_PREFIX: movie
 
-      - TZ=America/Chicago
-      - MEDIA_ROOT=/movies
-      - WORK_ROOT=/work
+      # ---- Roots ----
+      MEDIA_ROOT: /movies
+      WORK_ROOT: /work
 
-      - MIN_SIZE_GB=17
-      - MAX_FILES=1
-
-      - QSV_QUALITY=21
-      - QSV_PRESET=7
-      - EXTRA_HW_FRAMES=64
-
-      - POST_ENCODE_VALIDATE=1
-      - VALIDATE_MODE=decode
-      - VALIDATE_SECONDS=10
-
-      - OUT_UID=1028
-      - OUT_GID=100
-      - OUT_MODE=664
-      - OUT_DIR_MODE=775
-
-      - BAK_RETENTION_DAYS=60
-      - LOG_RETENTION_DAYS=30
-
-      - LOCK_STALE_HOURS=12
-      - WORK_CLEANUP_HOURS=0
-
-      - PROBE_TIMEOUT_SECS=60
-      - FFPROBE_ANALYZEDURATION=50000000
-      - FFPROBE_PROBESIZE=50000000
-
-      # hygiene
-      - EXCLUDE_PATH_PARTS=#recycle,@eaDir
+      # ---- Movie-specific selection ----
+      MIN_SIZE_GB: "17"
 
     volumes:
       - /volume1/movies:/movies:rw
@@ -58,66 +92,37 @@ services:
       - "937"
     restart: "no"
 
+
+  # ============================================================
+  # TV
+  # ============================================================
   tv-transcoder:
     build: .
     container_name: tv-transcoder
-
-    # run the same python package, just with TV env + log prefix
     entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
+
+    environment:
+      <<: *common-env
+
+      # ---- Identity ----
+      TZ: America/Chicago
+      LOG_PREFIX: tv
+
+      # ---- Roots ----
+      MEDIA_ROOT: /tv_shows
+      WORK_ROOT: /work
+
+      # ---- TV-specific selection ----
+      MIN_SIZE_GB: "8"
 
     volumes:
       - /volume1/tv_shows:/tv_shows:rw
       - /volume1/data/transcodework:/work:rw
       - /volume1/docker/projects/nas-transcoder:/project:ro
       - /usr/share/zoneinfo/America/Chicago:/etc/localtime:ro
-
     devices:
       - /dev/dri:/dev/dri
     group_add:
       - "937"
-
-    environment:
-      - DRY_RUN=true
-      
-      - PYTHONPATH=/project/src
-      - PYTHONPYCACHEPREFIX=/work/pycache
-      - PYTHONDONTWRITEBYTECODE=1      
-      - FAIL_FAST=true
-
-      - TZ=America/Chicago
-      
-      - LOG_PREFIX=tv
-
-      # point the exact same code at TV instead of movies
-      - MEDIA_ROOT=/tv_shows
-      - WORK_ROOT=/work
-
-      # make it easy to force a test transcode
-      - MIN_SIZE_GB=8
-      - MAX_FILES=1
-
-      - QSV_QUALITY=21
-      - QSV_PRESET=7
-
-      - POST_ENCODE_VALIDATE=1
-      - VALIDATE_MODE=decode
-      - VALIDATE_SECONDS=10
-
-      - OUT_UID=1028
-      - OUT_GID=100
-      - OUT_MODE=664
-      - OUT_DIR_MODE=775
-
-      - BAK_RETENTION_DAYS=60
-      - LOG_RETENTION_DAYS=30
-
-      - LOCK_STALE_HOURS=12
-      - WORK_CLEANUP_HOURS=0
-
-      - PROBE_TIMEOUT_SECS=60
-      - FFPROBE_ANALYZEDURATION=50000000
-      - FFPROBE_PROBESIZE=50000000
-
-      - EXCLUDE_PATH_PARTS=#recycle,@eaDir
-
     restart: "no"
+    

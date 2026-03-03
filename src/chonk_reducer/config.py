@@ -83,6 +83,12 @@ class Config:
     log_prefix: str
     fail_fast: bool
     dry_run: bool
+    min_savings_percent: float
+    log_skips: bool
+    top_candidates: int
+    retry_count: int
+    retry_backoff_secs: int
+    preview: bool
 
 def load_config() -> Config:
     excl = _split_csv(_env("EXCLUDE_PATH_PARTS", "#recycle,@eaDir"))
@@ -122,4 +128,10 @@ def load_config() -> Config:
 
         fail_fast=_env_bool("FAIL_FAST", False),
         dry_run=_env_bool("DRY_RUN", False),
+        min_savings_percent=_env_float("MIN_SAVINGS_PERCENT", 15.0),
+        log_skips=_env_bool("LOG_SKIPS", False),
+        top_candidates=_env_int("TOP_CANDIDATES", 5),
+        retry_count=_env_int("RETRY_COUNT", 1),
+        retry_backoff_secs=_env_int("RETRY_BACKOFF_SECS", 5),
+        preview=_env_bool("PREVIEW", False),
     )
