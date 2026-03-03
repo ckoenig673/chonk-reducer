@@ -88,6 +88,11 @@ Created when a file fails after all retries. Skipped on future runs.
 ---
 
 ## Docker Usage
+Healthcheck run:
+
+```bash
+docker compose run --rm tv-transcoder healthcheck
+docker compose run --rm movie-transcoder healthcheck
 
 Manual run:
 
@@ -107,6 +112,15 @@ This project is designed to be run via Synology DSM Task Scheduler using the wra
 - Movies: 3 days/week
 - Alternate days so they never overlap
 - Keep `MAX_FILES=1` to bound runtime per scheduled job
+
+## Add Wrapper Commands Section (Nice to Have)
+
+```markdown
+Example DSM task using wrapper:
+
+```bash
+/bin/sh scripts/chonkreducer_task.sh tv-transcoder
+/bin/sh scripts/chonkreducer_task.sh movie-transcoder
 
 ---
 
@@ -151,6 +165,24 @@ Yes—keep a table. It makes upgrades and troubleshooting way easier.
 | `QSV_PRESET` | QSV preset | `7` |
 | `EXTRA_HW_FRAMES` | QSV hw frames | `64` |
 | `MIN_SAVINGS_PERCENT` | Skip swap if savings below threshold | `15` |
+
+### Skip Policies (Pre-Encode)
+
+Chonk Reducer can skip files before encoding based on codec or resolution.
+
+| Variable | Description | Example |
+|---|---|---|
+| `SKIP_CODECS` | Skip files already encoded in these codecs | `hevc,av1` |
+| `SKIP_MIN_HEIGHT` | Skip files whose video height ≥ value | `2160` |
+| `SKIP_RESOLUTION_TAGS` | Skip if filename contains these tags | `2160p,4k,uhd` |
+
+Example behavior:
+
+- Skip files already encoded in **HEVC or AV1**
+- Skip **4K / UHD** content
+- Skip files with **2160p / 4k / uhd** in filename
+
+This protects high-quality media from unnecessary re-encoding.
 
 ### Validation
 
@@ -207,7 +239,8 @@ Yes—keep a table. It makes upgrades and troubleshooting way easier.
   `Episode.mkv.failed`
 - Logs (work root):  
   `/work/logs/<prefix>_transcode_<stamp>.log`
-
+- Weekly reports:
+  `/work/reports/chonk_weekly_<date>.txt`
 ---
 
 ## Project Structure
@@ -424,7 +457,7 @@ This provides full visibility into space savings and performance per run.
 
 ---
 
-## 🆕 v1.2.0 – Reporting & Healthcheck Release
+## 🆕 v1.2.0 – Reporting, Healthcheck & Skip Logic
 
 This release introduces:
 
@@ -453,6 +486,7 @@ Generate 7-day rollup from NDJSON stats files:
 
 ```bash
 docker compose run --rm tv-transcoder weekly-report
+docker compose run --rm movie-transcoder weekly-report
 ```
 
 Aggregates from:

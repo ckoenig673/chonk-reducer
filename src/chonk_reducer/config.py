@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from chonk_reducer import __version__ as PACKAGE_VERSION
+
 
 
 def _env(name: str, default: str) -> str:
@@ -50,36 +52,44 @@ def _split_csv(val: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Config:
+    # Paths
     media_root: Path
     work_root: Path
 
+    # Selection
     min_size_gb: float
     max_files: int
 
+    # Encoder
     qsv_quality: int
     qsv_preset: int
 
+    # Validation
     post_encode_validate: bool
     validate_mode: str
     validate_seconds: int
 
+    # Output perms
     out_uid: int
     out_gid: int
     out_mode: int
     out_dir_mode: int
 
+    # Retention / cleanup
     bak_retention_days: int
     log_retention_days: int
-
     lock_stale_hours: int
     work_cleanup_hours: int
 
+    # Probe
     probe_timeout_secs: int
     ffprobe_analyzeduration: int
     ffprobe_probesize: int
 
+    # Discovery exclusions
     exclude_path_parts: tuple[str, ...]
 
+    # Behavior
     log_prefix: str
     fail_fast: bool
     dry_run: bool
@@ -90,21 +100,40 @@ class Config:
     retry_backoff_secs: int
     preview: bool
 
-    stats_enabled: bool
-    stats_path: Path
-    library: str
-    version: str
-    encoder: str
+    # Skip policies (Story 40/41)
+    skip_codecs: tuple[str, ...] = ()
+    skip_min_height: int = 0
+    skip_resolution_tags: tuple[str, ...] = ()
+
+    # Stats (NDJSON)
+    stats_enabled: bool = False
+    stats_path: Path = Path("/work/.chonkstats.ndjson")
+    library: str = ""
+    version: str = "unknown"
+    encoder: str = "hevc_qsv"
+
 
 def load_config() -> Config:
     excl = _split_csv(_env("EXCLUDE_PATH_PARTS", "#recycle,@eaDir"))
 
     media_root = Path(_env("MEDIA_ROOT", "/movies"))
     work_root = Path(_env("WORK_ROOT", "/work"))
-    default_library = "tv" if "tv" in str(media_root).lower() else "movie"
-    stats_path = Path(_env("STATS_PATH", str(media_root / ".chonkstats.ndjson")))
+
+    # Skip policies
+    skip_codecs = tuple(s.lower() for s in _split_csv(_env("SKIP_CODECS", "")))
+    skip_min_height = _env_int("SKIP_MIN_HEIGHT", 0)
+    skip_tags = tuple(s.lower() for s in _split_csv(_env("SKIP_RESOLUTION_TAGS", "")))
+
+    # Stats defaults
+    stats_enabled = _env_bool("STATS_ENABLED", True)
+    default_stats_path = media_root / ".chonkstats.ndjson"
+    stats_path = Path(_env("STATS_PATH", str(default_stats_path)))
+    library = _env("LIBRARY", "")
+    encoder = _env("ENCODER", "hevc_qsv")
+    app_version = os.getenv("APP_VERSION") or os.getenv("VERSION") or PACKAGE_VERSION
 
     return Config(
+        version=app_version,
         media_root=media_root,
         work_root=work_root,
 
@@ -146,10 +175,12 @@ def load_config() -> Config:
         retry_backoff_secs=_env_int("RETRY_BACKOFF_SECS", 5),
         preview=_env_bool("PREVIEW", False),
 
-        # Stats / reporting
-        stats_enabled=_env_bool("STATS_ENABLED", False),
+        skip_codecs=skip_codecs,
+        skip_min_height=skip_min_height,
+        skip_resolution_tags=skip_tags,
+
+        stats_enabled=stats_enabled,
         stats_path=stats_path,
-        library=_env("LIBRARY", default_library),
-        version=_env("APP_VERSION", "dev"),
-        encoder=_env("ENCODER", "hevc_qsv"),
+        library=library,
+        encoder=encoder,
     )

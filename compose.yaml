@@ -10,13 +10,13 @@ x-common-env: &common-env
   PYTHONDONTWRITEBYTECODE: 1
 
   # ---- Run modes ----
-  DRY_RUN: "false"
+  DRY_RUN: "true"
   PREVIEW: "false"
   FAIL_FAST: "true"
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"          # enable NDJSON stats export
-  APP_VERSION: "v1.2.0"          # version stamp written into stats entries
+  APP_VERSION: "v1.3.0"          # version stamp written into stats entries
   REPORTS_DIR: "/work/reports"
   WEEKLY_REPORT_DAYS: "7"
   WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"
@@ -34,6 +34,11 @@ x-common-env: &common-env
   QSV_PRESET: "7"
   EXTRA_HW_FRAMES: "64"
   MIN_SAVINGS_PERCENT: "15"
+  
+  # ---- Skip policies (pre-encode) ----
+  SKIP_CODECS: "hevc,av1"          # skip if source codec matches (comma list). empty = disabled
+  SKIP_MIN_HEIGHT: "2160"          # skip if height >= this. 0 = disabled
+  SKIP_RESOLUTION_TAGS: "2160p,4k,uhd"  # skip if filename contains any tag. empty = disabled
 
   # ---- Validation ----
   POST_ENCODE_VALIDATE: "1"
