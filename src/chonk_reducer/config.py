@@ -90,12 +90,23 @@ class Config:
     retry_backoff_secs: int
     preview: bool
 
+    stats_enabled: bool
+    stats_path: Path
+    library: str
+    version: str
+    encoder: str
+
 def load_config() -> Config:
     excl = _split_csv(_env("EXCLUDE_PATH_PARTS", "#recycle,@eaDir"))
-    
+
+    media_root = Path(_env("MEDIA_ROOT", "/movies"))
+    work_root = Path(_env("WORK_ROOT", "/work"))
+    default_library = "tv" if "tv" in str(media_root).lower() else "movie"
+    stats_path = Path(_env("STATS_PATH", str(media_root / ".chonkstats.ndjson")))
+
     return Config(
-        media_root=Path(_env("MEDIA_ROOT", "/movies")),
-        work_root=Path(_env("WORK_ROOT", "/work")),
+        media_root=media_root,
+        work_root=work_root,
 
         min_size_gb=_env_float("MIN_SIZE_GB", 18.0),
         max_files=_env_int("MAX_FILES", 2),
@@ -134,4 +145,11 @@ def load_config() -> Config:
         retry_count=_env_int("RETRY_COUNT", 1),
         retry_backoff_secs=_env_int("RETRY_BACKOFF_SECS", 5),
         preview=_env_bool("PREVIEW", False),
+
+        # Stats / reporting
+        stats_enabled=_env_bool("STATS_ENABLED", False),
+        stats_path=stats_path,
+        library=_env("LIBRARY", default_library),
+        version=_env("APP_VERSION", "dev"),
+        encoder=_env("ENCODER", "hevc_qsv"),
     )
