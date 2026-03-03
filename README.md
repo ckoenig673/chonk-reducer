@@ -253,3 +253,108 @@ Stable for scheduled NAS usage.
 Actively evolving.
 
 Author: Cory Koenig
+
+---
+
+
+---
+
+## 🔔 Discord Notifications (Optional)
+
+Chonk Reducer can send a summary notification after each run using a Discord webhook.
+
+### 1️⃣ Create a Webhook
+- Go to **Discord → Server Settings → Integrations → Webhooks**
+- Create a webhook
+- Copy the webhook URL
+
+### 2️⃣ (Optional) Get Your User ID (for mentions)
+- Enable **Developer Mode** in Discord
+- Right-click your username → **Copy User ID**
+
+---
+
+## 🔧 Configuration Options
+
+You can configure Discord in **two ways**.
+
+### ✅ Option A — Recommended (DSM Task Scheduler)
+
+This keeps secrets out of git and keeps the wrapper script generic.
+
+In DSM:
+
+**Control Panel → Task Scheduler → Edit Task → User-defined script**
+
+Add environment variables BEFORE calling the wrapper:
+
+```bash
+export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/XXXXXXXX/XXXXXXXX"
+export DISCORD_USER_ID="123456789012345678"   # optional
+
+export DISCORD_ONLY_IF_WORK_DONE=true
+export DISCORD_PING_ON_FAILURE=true
+export DISCORD_PING_ON_SUCCESS=false
+export DISCORD_DEBUG=false
+
+/volume1/docker/projects/nas-transcoder/scripts/chonkreducer_task.sh tv-transcoder
+```
+
+**Recommended for production use.**
+
+---
+
+### Option B — Directly Inside `scripts/chonkreducer_task.sh`
+
+For simple setups (or non-DSM environments), you can define:
+
+```bash
+DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/XXXXXXXX/XXXXXXXX"
+DISCORD_USER_ID="123456789012345678"
+```
+
+⚠ Not recommended if the repository is public.
+
+---
+
+## 📬 What Gets Sent
+
+Notifications include:
+
+- Service name (tv or movie)
+- Exit code
+- Run ID
+- Processed / Failed counts
+- Savings summary
+- Log file location
+
+---
+
+## ⚙ Environment Variables (compose.yaml)
+
+Keep TV and Movie containers in the **same order** for consistency.
+
+| Setting | Description |
+|----------|-------------|
+| MEDIA_ROOT | Root folder to scan (`/tv_shows` or `/movies`) |
+| WORK_ROOT | Temporary work/log directory |
+| MIN_SIZE_GB | Minimum file size threshold |
+| MAX_FILES | Max successful swaps per run |
+| MIN_SAVINGS_PERCENT | Minimum % reduction required to keep encode |
+| QSV_QUALITY | Intel QSV quality target |
+| QSV_PRESET | QSV speed/quality preset |
+| POST_ENCODE_VALIDATE | Enable validation step |
+| VALIDATE_MODE | Validation type (`decode`) |
+| VALIDATE_SECONDS | Seconds to validate |
+| OUT_UID | Output file owner UID |
+| OUT_GID | Output file group GID |
+| OUT_MODE | File permissions |
+| OUT_DIR_MODE | Directory permissions |
+| EXCLUDE_PATH_PARTS | Skip folders like `#recycle`, `@eaDir` |
+| FAIL_FAST | Stop immediately on error |
+| DRY_RUN | Simulate encode + swap |
+| LOG_SKIPS | Log skipped candidates |
+| TOP_CANDIDATES | Show largest candidates preview |
+| DISCORD_* | Configured in wrapper script (not compose) |
+
+---

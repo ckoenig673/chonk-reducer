@@ -10,7 +10,7 @@ x-common-env: &common-env
   PYTHONDONTWRITEBYTECODE: 1
 
   # ---- Run modes ----
-  DRY_RUN: "false"
+  DRY_RUN: "true"
   PREVIEW: "false"
   FAIL_FAST: "true"
 
