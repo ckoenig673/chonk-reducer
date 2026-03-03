@@ -358,3 +358,65 @@ Keep TV and Movie containers in the **same order** for consistency.
 | DISCORD_* | Configured in wrapper script (not compose) |
 
 ---
+
+---
+
+## 🚀 v1.1.0 – Stats + Run Totals Release
+
+### What’s New
+- NDJSON stats export per library (`.chonkstats.ndjson`)
+- Per-run totals in logs (before/after/saved/%/time/rate)
+- Discord summary now includes run totals
+- Enforced LF line endings via `.gitattributes` for cross-platform stability
+
+---
+
+## 📊 Stats Output (NDJSON)
+
+Each processed file appends a single JSON line to:
+
+- `/tv_shows/.chonkstats.ndjson`
+- `/movies/.chonkstats.ndjson`
+
+### Example Fields
+
+- `ts`
+- `run_id`
+- `version`
+- `library`
+- `mode`
+- `encoder`
+- `quality`
+- `preset`
+- `status`
+- `stage`
+- `path`
+- `filename`
+- `size_before_bytes`
+- `size_after_bytes`
+- `saved_bytes`
+- `saved_pct`
+- `codec_from`
+- `codec_to`
+- `duration_seconds`
+- `bak_path`
+
+This file is append-only and intended as the source of truth for reporting and aggregation (e.g., weekly reports).
+
+---
+
+## 📣 Discord Summary (Run Totals)
+
+When enabled via the wrapper script, Discord notifications now include:
+
+- `TOTAL BEFORE (run)`
+- `TOTAL AFTER (run)`
+- `TOTAL SAVED (run)`
+- `TOTAL SAVED PCT (run)`
+- `TOTAL TIME`
+- `TOTAL RATE`
+
+This provides full visibility into space savings and performance per run.
+
+---
+
