@@ -14,6 +14,7 @@ from .logging_utils import Logger, make_run_stamp
 from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
+from .skip_policy import evaluate_skip
 from .stats import record_success, record_failure, record_dry_run
 from . import __version__ as PKG_VERSION
 
@@ -109,6 +110,9 @@ def run() -> int:
     logger.log(f"TOP_CANDIDATES={cfg.top_candidates}")
     logger.log(f"RETRY_COUNT={cfg.retry_count} RETRY_BACKOFF_SECS={cfg.retry_backoff_secs}")
     logger.log(f"PREVIEW={cfg.preview}")
+    logger.log(f"SKIP_CODECS={','.join(getattr(cfg,'skip_codecs',()))}")
+    logger.log(f"SKIP_MIN_HEIGHT={getattr(cfg,'skip_min_height',0)}")
+    logger.log(f"SKIP_RESOLUTION_TAGS={','.join(getattr(cfg,'skip_resolution_tags',()))}")
     logger.log(f"Run log: {run_log}")
 
     if not _validate_config(cfg, logger):
@@ -146,6 +150,8 @@ def run() -> int:
     skipped_marker = 0
     skipped_backup = 0
     skipped_min_savings = 0
+    skipped_codec = 0
+    skipped_resolution = 0
 
     bytes_before_total = 0
     bytes_after_total = 0
@@ -243,6 +249,18 @@ def run() -> int:
                 )
             except Exception as e:
                 logger.log(f"Probe (before) failed: {e}")
+
+            # Pre-encode skip evaluation (codec/resolution policies)
+            skip = evaluate_skip(src, before_probe, cfg)
+            if skip:
+                cat, reason = skip
+                if cat == 'codec':
+                    skipped_codec += 1
+                elif cat == 'resolution':
+                    skipped_resolution += 1
+                if cfg.log_skips:
+                    logger.log(f"SKIP({cat}): {reason} :: {src}")
+                continue
 
             attempt_errors: list[str] = []
             for attempt in range(cfg.retry_count + 1):
@@ -426,6 +444,8 @@ def run() -> int:
         logger.log(f"Processed:            {processed}")
         logger.log(f"Skipped (marker):     {skipped_marker}")
         logger.log(f"Skipped (backup):     {skipped_backup}")
+        logger.log(f"Skipped (codec):      {skipped_codec}")
+        logger.log(f"Skipped (resolution): {skipped_resolution}")
         logger.log(f"Skipped (min savings): {skipped_min_savings}")
         logger.log(f"Failed:               {failed}")
         logger.log(f"Ignored folders:      {len(ignored_folders)}")
