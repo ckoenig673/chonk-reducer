@@ -79,7 +79,7 @@ services:
       WORK_ROOT: /work
 
       # ---- Movie-specific selection ----
-      MIN_SIZE_GB: "17"
+      MIN_SIZE_GB: "20"
 
     volumes:
       - /volume1/movies:/movies:rw
