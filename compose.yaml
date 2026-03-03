@@ -16,8 +16,11 @@ x-common-env: &common-env
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"          # enable NDJSON stats export
-  APP_VERSION: "v1.1.0"          # version stamp written into stats entries
-
+  APP_VERSION: "v1.2.0"          # version stamp written into stats entries
+  REPORTS_DIR: "/work/reports"
+  WEEKLY_REPORT_DAYS: "7"
+  WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"
+  
   # ---- Retries ----
   RETRY_COUNT: "1"
   RETRY_BACKOFF_SECS: "5"

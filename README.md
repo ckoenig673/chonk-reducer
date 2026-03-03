@@ -420,3 +420,91 @@ This provides full visibility into space savings and performance per run.
 
 ---
 
+
+
+---
+
+## 🆕 v1.2.0 – Reporting & Healthcheck Release
+
+This release introduces:
+
+### ✅ Healthcheck Mode
+Run without processing files:
+
+```bash
+docker compose run --rm tv-transcoder healthcheck
+docker compose run --rm movie-transcoder healthcheck
+```
+
+Verifies:
+- Config loads
+- MEDIA_ROOT readable
+- WORK_ROOT writable
+- Logs & reports directories exist
+- ffmpeg / ffprobe available
+- QSV device present
+- Stats file writable
+
+---
+
+### 📊 Weekly Report Generator
+
+Generate 7-day rollup from NDJSON stats files:
+
+```bash
+docker compose run --rm tv-transcoder weekly-report
+```
+
+Aggregates from:
+- `/tv_shows/.chonkstats.ndjson`
+- `/movies/.chonkstats.ndjson`
+
+Outputs:
+- Human-readable report file under `/work/reports/`
+- Console summary (visible in DSM logs)
+- Optional Discord summary (if enabled in wrapper)
+
+---
+
+### 🔔 Discord Enhancements
+
+Wrapper now supports:
+- Healthcheck notifications
+- Weekly report notifications
+- Run totals in summary
+
+Controlled via wrapper toggles:
+
+```bash
+DISCORD_NOTIFY_HEALTHCHECK="true"
+DISCORD_NOTIFY_WEEKLY="true"
+```
+
+Webhook + User ID remain configured in the DSM Task Scheduler (not in compose.yaml).
+
+---
+
+### 📈 Stats Export (NDJSON)
+
+Each successful encode appends structured entry:
+
+```
+/tv_shows/.chonkstats.ndjson
+/movies/.chonkstats.ndjson
+```
+
+Includes:
+- run_id
+- library
+- encoder
+- before/after bytes
+- saved bytes
+- saved %
+- duration
+- codec transition
+- status + stage
+
+Designed for:
+- Future dashboarding
+- Database import
+- Long-term reporting
