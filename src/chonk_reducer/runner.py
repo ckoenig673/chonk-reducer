@@ -14,6 +14,8 @@ from .logging_utils import Logger, make_run_stamp
 from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
+from .stats import record_success, record_failure, record_dry_run
+from . import __version__ as PKG_VERSION
 
 
 def _fmt_hms(seconds: float) -> str:
@@ -66,6 +68,8 @@ def run() -> int:
     stamp = make_run_stamp()
     run_id = uuid.uuid4().hex[:8]
 
+    run_start = time.monotonic()
+
     log_dir = cfg.work_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,6 +86,9 @@ def run() -> int:
     if cfg.dry_run:
         mode = "DRY_RUN"
     logger.log(f"RUN_ID={run_id} MODE={mode}")
+    logger.log(f"VERSION={PKG_VERSION}")
+    logger.log(f"STATS_ENABLED={getattr(cfg, 'stats_enabled', False)}")
+    logger.log(f"STATS_PATH={getattr(cfg, 'stats_path', '')}")
     logger.log(f"MEDIA_ROOT={cfg.media_root}")
     logger.log(f"WORK_ROOT={cfg.work_root}")
     logger.log(f"MIN_SIZE_GB={cfg.min_size_gb} MAX_FILES={cfg.max_files}")
@@ -105,6 +112,8 @@ def run() -> int:
     logger.log(f"Run log: {run_log}")
 
     if not _validate_config(cfg, logger):
+        run_duration = time.monotonic() - run_start
+        logger.log(f"RUN DURATION: {_fmt_hms(run_duration)}")
         logger.log("===== END =====")
         return 1
 
@@ -121,6 +130,8 @@ def run() -> int:
             if reason:
                 logger.log(f"PAUSE reason: {reason}")
         logger.log(f"PAUSE detected at {pause_file} — exiting without processing.")
+        run_duration = time.monotonic() - run_start
+        logger.log(f"RUN DURATION: {_fmt_hms(run_duration)}")
         logger.log("===== END =====")
         return 0
 
@@ -209,10 +220,14 @@ def run() -> int:
                     )
                 else:
                     logger.log(f"DRY_RUN: would encode + swap: {src}")
+
+                # Optional stats entry for dry run
+                record_dry_run(cfg, logger, run_id, src, before_bytes)
+
                 processed += 1
                 done += 1
                 break
-                continue
+
 
             stamp2 = make_run_stamp()
             encoded = src.parent / f"{src.name}.{stamp2}.encoded.mkv"
@@ -238,8 +253,10 @@ def run() -> int:
 
                 t0 = time.monotonic()
                 try:
+                    stage = "encode"
                     encode_qsv(src, encoded, cfg, logger)
 
+                    stage = "validate"
                     if not validate_post_encode(encoded, cfg, logger):
                         raise RuntimeError("Post-encode validation failed")
 
@@ -265,7 +282,8 @@ def run() -> int:
                             done += 1
                             continue
 
-                    swap_in(src, encoded, cfg, logger)
+                    stage = "swap"
+                    bak_path, marker_path = swap_in(src, encoded, cfg, logger)
 
                     after_probe = None
                     try:
@@ -336,6 +354,21 @@ def run() -> int:
                         logger.log(f"METRICS: elapsed={_fmt_hms(elapsed)}")
 
                     logger.log(f"OK: swapped + marked: {src}")
+                    # Stats (success) - append after marker write
+                    record_success(
+                        cfg,
+                        logger,
+                        run_id=run_id,
+                        mode=mode.lower(),
+                        stage="swap",
+                        src=src,
+                        before_bytes=int(before_bytes or 0),
+                        after_bytes=int(after_bytes or 0),
+                        codec_from=(before_probe.get("codec") if before_probe else None),
+                        codec_to=(after_probe.get("codec") if after_probe else None),
+                        duration_seconds=float(elapsed),
+                        bak_path=bak_path,
+                    )
                     processed += 1
                     done += 1
                     break
@@ -354,6 +387,19 @@ def run() -> int:
                     if attempt < cfg.retry_count:
                         continue
 
+                    # Final failure: record stats + mark file as failed/quarantined
+                    record_failure(
+                        cfg,
+                        logger,
+                        run_id=run_id,
+                        mode=mode.lower(),
+                        stage=stage if "stage" in locals() else "unknown",
+                        src=src,
+                        before_bytes=int(before_bytes or 0),
+                        duration_seconds=float(time.monotonic() - t0),
+                        err=e,
+                        encoded_path=encoded,
+                    )
                     # Final failure: mark file as failed/quarantined
                     failed += 1
                     fail_marker = src.with_suffix(src.suffix + ".failed")
@@ -394,11 +440,10 @@ def run() -> int:
         if bytes_before_total:
             saved_total = bytes_before_total - bytes_after_total
             pct_total = (saved_total / bytes_before_total) * 100.0 if bytes_before_total > 0 else 0.0
-            logger.log(
-                f"TOTAL SAVINGS: before={bytes_before_total/1024**3:.2f}GB "
-                f"after={bytes_after_total/1024**3:.2f}GB "
-                f"saved={saved_total/1024**3:.2f}GB ({pct_total:.1f}%)"
-            )
+            logger.log(f"TOTAL BEFORE (run):    {bytes_before_total/1024**3:.2f}GB")
+            logger.log(f"TOTAL AFTER (run):     {bytes_after_total/1024**3:.2f}GB")
+            logger.log(f"TOTAL SAVED (run):     {saved_total/1024**3:.2f}GB")
+            logger.log(f"TOTAL SAVED PCT (run): {pct_total:.1f}%")
 
         if elapsed_total:
             logger.log(f"TOTAL TIME: {_fmt_hms(elapsed_total)}")
@@ -418,6 +463,8 @@ def run() -> int:
                 )
             logger.log("============================")
 
+        run_duration = time.monotonic() - run_start
+        logger.log(f"RUN DURATION: {_fmt_hms(run_duration)}")
         logger.log("===== END =====")
         return 0 if failed == 0 else 2
 

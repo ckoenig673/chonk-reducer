@@ -73,7 +73,7 @@ send_discord() {
   DISCORD_DEBUG="${DISCORD_DEBUG:-false}"
 
   # Keep the payload short and safe (Discord message limits + JSON escaping)
-  SUMMARY="$(grep -E 'RUN_ID=|MODE=|Processed:|Failed:|TOTAL SAVED:|Saved:|TOTAL RATE:|Run log:' "$WRAPPER_LOG" 2>/dev/null | tail -n 25)"
+  SUMMARY="$(grep -E 'RUN_ID=|MODE=|Processed:|Failed:|TOTAL BEFORE \(run\):|TOTAL AFTER \(run\):|TOTAL SAVED \(run\):|TOTAL SAVED PCT \(run\):|RUN DURATION:|TOTAL TIME:|TOTAL RATE:|Run log:' "$WRAPPER_LOG" 2>/dev/null | tail -n 40)"
 
   # Fallback: last lines of wrapper log
   if [ -z "$SUMMARY" ]; then
