@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
+import shutil
 
 from .cleanup import cleanup_baks, cleanup_logs, cleanup_work_dir, cleanup_media_temp
 from .config import load_config
@@ -39,6 +40,15 @@ def _validate_config(cfg, logger: Logger) -> bool:
         add("MIN_SIZE_GB must be >= 0")
     if cfg.min_savings_percent < 0 or cfg.min_savings_percent > 100:
         add("MIN_SAVINGS_PERCENT must be between 0 and 100")
+
+    if getattr(cfg, "max_savings_percent", 0) and (cfg.max_savings_percent < 0 or cfg.max_savings_percent > 100):
+        add("MAX_SAVINGS_PERCENT must be between 0 and 100")
+    if getattr(cfg, "max_savings_percent", 0) and cfg.min_savings_percent and cfg.max_savings_percent and cfg.max_savings_percent < cfg.min_savings_percent:
+        add("MAX_SAVINGS_PERCENT must be >= MIN_SAVINGS_PERCENT")
+    if getattr(cfg, "min_media_free_gb", 0) < 0:
+        add("MIN_MEDIA_FREE_GB must be >= 0")
+    if getattr(cfg, "max_gb_per_run", 0) < 0:
+        add("MAX_GB_PER_RUN must be >= 0")
     if cfg.qsv_quality <= 0 or cfg.qsv_quality > 51:
         add("QSV_QUALITY must be between 1 and 51")
     if cfg.qsv_preset <= 0 or cfg.qsv_preset > 9:
@@ -151,12 +161,14 @@ def run() -> int:
     skipped_marker = 0
     skipped_backup = 0
     skipped_min_savings = 0
+    skipped_max_savings = 0
     skipped_codec = 0
     skipped_resolution = 0
     skipped_dry_run = 0
 
     bytes_before_total = 0
     bytes_after_total = 0
+    saved_bytes_run = 0
     elapsed_total = 0.0
 
     # define for summary even if discovery fails early
@@ -172,6 +184,25 @@ def run() -> int:
         cleanup_media_temp(cfg.media_root, cfg.work_cleanup_hours, cfg.exclude_path_parts, logger)
         cleanup_logs(log_dir, cfg.log_retention_days, logger)
         cleanup_baks(cfg.media_root, cfg.bak_retention_days, logger)
+
+
+        # Free space guard (Story 42) - abort if MEDIA_ROOT volume is low on space
+        if getattr(cfg, "min_media_free_gb", 0):
+            try:
+                free_bytes = shutil.disk_usage(str(cfg.media_root)).free
+            except Exception:
+                free_bytes = 0
+            need_bytes = int(float(cfg.min_media_free_gb) * (1024 ** 3))
+            if free_bytes and free_bytes < need_bytes:
+                logger.log("===== FREE SPACE GUARD TRIGGERED =====")
+                logger.log(f"MEDIA_ROOT free space: {free_bytes/1024**3:.2f} GB")
+                logger.log(f"Required minimum: {float(cfg.min_media_free_gb):.2f} GB (MIN_MEDIA_FREE_GB)")
+                logger.log("Aborting run to protect filesystem.")
+                logger.log("====================================")
+                run_duration = time.monotonic() - run_start
+                logger.log(f"RUN DURATION: {_fmt_hms(run_duration)}")
+                logger.log("===== END =====")
+                return 2
 
         # Discovery (returns candidates + ignored folder counts)
         cands, ignored_folders = gather_candidates(cfg, logger)
@@ -196,6 +227,16 @@ def run() -> int:
         for src in cands:
             if done >= cfg.max_files:
                 break
+
+            # Max GB per run guard (Story 43)
+            if getattr(cfg, "max_gb_per_run", 0):
+                limit_bytes = float(cfg.max_gb_per_run) * (1024 ** 3)
+                if saved_bytes_run >= limit_bytes and limit_bytes > 0:
+                    logger.log(
+                        f"Max GB per run reached: saved={saved_bytes_run/1024**3:.2f}GB "
+                        f"limit={float(cfg.max_gb_per_run):.2f}GB — stopping early."
+                    )
+                    break
 
             # Skip if already optimized
             if src.with_suffix(src.suffix + ".optimized").exists():
@@ -328,6 +369,31 @@ def run() -> int:
                             done += 1
                             break
 
+                        # Max savings guard (Story 44) - reject overly aggressive reductions
+                        if getattr(cfg, 'max_savings_percent', 0) and pct_tmp > float(cfg.max_savings_percent):
+                            logger.log(
+                                f"SKIP: savings {pct_tmp:.1f}% > MAX_SAVINGS_PERCENT {float(cfg.max_savings_percent):.1f}% "
+                                f"(before={before_bytes/1024**3:.2f}GB encoded={encoded_bytes/1024**3:.2f}GB)"
+                            )
+                            try:
+                                encoded.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                            skipped_max_savings += 1
+                            record_skip(
+                                cfg,
+                                logger,
+                                run_id=run_id,
+                                mode=mode.lower(),
+                                skip_reason='max_savings',
+                                src=src,
+                                before_bytes=int(before_bytes or 0),
+                                codec_from=(before_probe.get('codec') if before_probe else None),
+                                detail=f"{pct_tmp:.1f}% > {float(cfg.max_savings_percent):.1f}%",
+                            )
+                            done += 1
+                            break
+
                     stage = "swap"
                     bak_path, marker_path = swap_in(src, encoded, cfg, logger)
 
@@ -388,6 +454,7 @@ def run() -> int:
 
                     if before_bytes and after_bytes:
                         saved = before_bytes - after_bytes
+                        saved_bytes_run += int(saved)
                         pct = (saved / before_bytes) * 100.0 if before_bytes > 0 else 0.0
                         logger.log(
                             f"METRICS: before={before_bytes/1024**3:.2f}GB "
@@ -467,7 +534,7 @@ def run() -> int:
                 logger.log("===== SUMMARY =====")
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
         prefiltered = skipped_marker + skipped_backup
-        skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_dry_run
+        skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_max_savings + skipped_dry_run
         logger.log(f"Candidates found:     {len(cands)}")
         logger.log(f"Pre-filtered:         {prefiltered}")
         logger.log(f"Evaluated:            {evaluated}")
@@ -480,6 +547,7 @@ def run() -> int:
         logger.log(f"Skipped (codec):      {skipped_codec}")
         logger.log(f"Skipped (resolution): {skipped_resolution}")
         logger.log(f"Skipped (min savings): {skipped_min_savings}")
+        logger.log(f"Skipped (max savings): {skipped_max_savings}")
         logger.log(f"Skipped (dry run):    {skipped_dry_run}")
         logger.log(f"Ignored folders:      {len(ignored_folders)}")
         logger.log(f"Ignored files:        {ignored_files}")

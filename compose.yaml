@@ -34,7 +34,10 @@ x-common-env: &common-env
   QSV_PRESET: "7"
   EXTRA_HW_FRAMES: "64"
   MIN_SAVINGS_PERCENT: "15"
-  
+  MIN_MEDIA_FREE_GB: "50"
+  MAX_GB_PER_RUN: "40"
+  MAX_SAVINGS_PERCENT: "65"
+
   # ---- Skip policies (pre-encode) ----
   SKIP_CODECS: "hevc,av1"          # skip if source codec matches (comma list). empty = disabled
   SKIP_MIN_HEIGHT: "2160"          # skip if height >= this. 0 = disabled
