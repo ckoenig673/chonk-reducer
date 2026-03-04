@@ -31,6 +31,8 @@ def _fmt_gb(n_bytes: int) -> str:
 class Totals:
     success: int = 0
     failed: int = 0
+    skipped: int = 0
+    unknown: int = 0
     before_bytes: int = 0
     after_bytes: int = 0
     saved_bytes: int = 0
@@ -103,11 +105,13 @@ def generate_weekly_report() -> int:
                 continue
 
             lib = str(row.get("library", "")).lower().strip() or "unknown"
+            if lib == "movie":
+                lib = "movies"
             if lib not in by_lib:
                 by_lib[lib] = Totals()
 
-            status = str(row.get("status", "")).lower()
-            stage = str(row.get("stage", "")).lower()
+            status = str(row.get("status", "")).lower().strip()
+            stage = str(row.get("stage", "")).lower().strip()
 
             if status == "success":
                 b = int(row.get("size_before_bytes") or 0)
@@ -128,11 +132,17 @@ def generate_weekly_report() -> int:
                     "path": row.get("path") or row.get("filename") or "",
                     "library": lib,
                 })
-            else:
+            elif status == "failed":
                 for t in (by_lib[lib], combined):
                     t.failed += 1
                 if stage:
                     fail_stage[stage] = fail_stage.get(stage, 0) + 1
+            elif status == "skipped":
+                for t in (by_lib[lib], combined):
+                    t.skipped += 1
+            else:
+                for t in (by_lib[lib], combined):
+                    t.unknown += 1
 
     for t in list(by_lib.values()) + [combined]:
         t.finalize()
@@ -156,6 +166,8 @@ def generate_weekly_report() -> int:
         lines.append("-" * 50)
         lines.append(f"Files Processed (success): {t.success}")
         lines.append(f"Files Failed:              {t.failed}")
+        lines.append(f"Files Skipped:             {t.skipped}")
+        lines.append(f"Files Unknown:             {t.unknown}")
         lines.append("")
         lines.append(f"Total Before:  {_fmt_gb(t.before_bytes)}")
         lines.append(f"Total After:   {_fmt_gb(t.after_bytes)}")
@@ -175,6 +187,8 @@ def generate_weekly_report() -> int:
     lines.append("-" * 50)
     lines.append(f"Total Files Success: {combined.success}")
     lines.append(f"Total Files Failed:  {combined.failed}")
+    lines.append(f"Total Files Skipped: {combined.skipped}")
+    lines.append(f"Total Files Unknown: {combined.unknown}")
     lines.append("")
     lines.append(f"Grand Total Before: {_fmt_gb(combined.before_bytes)}")
     lines.append(f"Grand Total After:  {_fmt_gb(combined.after_bytes)}")
@@ -208,6 +222,8 @@ def generate_weekly_report() -> int:
     logger.log(f"TV saved: {_fmt_gb(by_lib.get('tv', Totals()).saved_bytes)}")
     logger.log(f"Movies saved: {_fmt_gb(by_lib.get('movies', Totals()).saved_bytes)}")
     logger.log(f"Total saved: {_fmt_gb(combined.saved_bytes)}")
+    if combined.skipped or combined.unknown:
+        logger.log(f"Skipped: {combined.skipped}  Unknown: {combined.unknown}")
     logger.log(f"Failures: {combined.failed}")
 
     # Optional Discord

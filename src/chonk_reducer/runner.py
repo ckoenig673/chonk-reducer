@@ -283,7 +283,6 @@ def run() -> int:
                         encoded_bytes = encoded.stat().st_size
                     except Exception:
                         encoded_bytes = 0
-
                     if cfg.min_savings_percent and before_bytes and encoded_bytes:
                         saved_tmp = before_bytes - encoded_bytes
                         pct_tmp = (saved_tmp / before_bytes) * 100.0 if before_bytes > 0 else 0.0
@@ -298,7 +297,7 @@ def run() -> int:
                                 pass
                             skipped_min_savings += 1
                             done += 1
-                            continue
+                            break
 
                     stage = "swap"
                     bak_path, marker_path = swap_in(src, encoded, cfg, logger)
@@ -428,7 +427,6 @@ def run() -> int:
                         marked_failed.append(src)
                     except Exception as me:
                         logger.log(f"FAILED to write marker for {src}: {me}")
-
                     if cfg.fail_fast:
                         logger.log("FAIL_FAST enabled — exiting immediately.")
                         return 1

@@ -37,7 +37,7 @@ def infer_library(cfg: Config) -> str:
     if "tv" in s:
         return "tv"
     if "movie" in s:
-        return "movie"
+        return "movies"
     return "media"
 
 
