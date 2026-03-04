@@ -13,6 +13,7 @@
 
                 Reduce the Chonk. Respect the Bits.
 ```
+Current Version: v1.6.0
 
 Chonk Reducer is a **policy-driven media size reduction system** built for NAS environments (Synology + Docker).
 

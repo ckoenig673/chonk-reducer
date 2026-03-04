@@ -10,13 +10,13 @@ x-common-env: &common-env
   PYTHONDONTWRITEBYTECODE: 1               # avoid writing .pyc files entirely
 
   # ---- Run modes ----
-  DRY_RUN: "true"                          # if true, do everything except encode/swap (safe testing)
+  DRY_RUN: "false"                          # if true, do everything except encode/swap (safe testing)
   PREVIEW: "false"                         # if true, log “top candidates” only and exit (no per-file work)
   FAIL_FAST: "true"                        # if true, abort run on first hard failure
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"                    # append NDJSON rows to STATS_PATH for success/skip/fail events
-  APP_VERSION: "v1.4.0"                    # version stamp written into stats + startup banner
+  APP_VERSION: "v1.6.0"                    # version stamp written into stats + startup banner
   REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
   WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
   WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"  # comma list of NDJSON inputs
