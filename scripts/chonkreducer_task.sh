@@ -9,6 +9,9 @@ COMPOSE="${PROJ_DIR}/compose.yaml"
 DOCKER="/usr/local/bin/docker"
 
 LOG_ROOT="/volume1/data/transcodework/logs"
+STATE_ROOT="/volume1/data/transcodework/state"
+ESCALATE_FAILURES="${ESCALATE_FAILURES:-true}"
+ESCALATE_FAILURE_THRESHOLD="${ESCALATE_FAILURE_THRESHOLD:-3}"
 RUN_TS="$(date +%Y%m%d_%H%M%S)"
 WRAPPER_LOG="${LOG_ROOT}/wrapper_${RUN_TS}.log"
 
@@ -30,6 +33,7 @@ DISCORD_NOTIFY_WEEKLY="${DISCORD_NOTIFY_WEEKLY:-true}"
 
 # Ensure log directory exists
 mkdir -p "$LOG_ROOT"
+mkdir -p "$STATE_ROOT"
 
 # Redirect all output to wrapper log
 exec >> "$WRAPPER_LOG" 2>&1
@@ -83,6 +87,25 @@ EXIT_CODE=$?
 set -e
 
 echo "Docker exit code: $EXIT_CODE"
+
+# --- Story 45: Escalated failure handling (consecutive failure counter) ---
+FAILKEY="${SERVICE}.${CMD}"
+FAILFILE="${STATE_ROOT}/${FAILKEY}.failcount"
+FAILCOUNT="0"
+if [ -f "$FAILFILE" ]; then FAILCOUNT="$(cat "$FAILFILE" 2>/dev/null || echo 0)"; fi
+case "$FAILCOUNT" in (*[!0-9]*|"") FAILCOUNT="0";; esac
+ESCALATE_NOW="false"
+if [ "$EXIT_CODE" -ne 0 ]; then
+  FAILCOUNT=$((FAILCOUNT + 1))
+  echo "$FAILCOUNT" > "$FAILFILE" 2>/dev/null || true
+  if [ "$ESCALATE_FAILURES" = "true" ] && [ "$FAILCOUNT" -ge "$ESCALATE_FAILURE_THRESHOLD" ]; then
+    ESCALATE_NOW="true"
+  fi
+else
+  # reset on success
+  echo "0" > "$FAILFILE" 2>/dev/null || true
+fi
+
 echo "===== WRAPPER END $(date) ====="
 
 send_discord() {
@@ -149,7 +172,17 @@ send_discord() {
     fi
   fi
 
-  MSG="${MENTION}Chonk run complete (${SERVICE}). Cmd=${CMD}. Exit=${EXIT_CODE}
+  # Escalation override
+  if [ "${ESCALATE_NOW:-false}" = "true" ] && [ -n "${DISCORD_USER_ID:-}" ]; then
+    MENTION="<@${DISCORD_USER_ID}> "
+  fi
+
+  ESCALATION_LINE=""
+  if [ "${ESCALATE_NOW:-false}" = "true" ]; then
+    ESCALATION_LINE="[ESCALATION] consecutive failures: ${FAILCOUNT} (threshold=${ESCALATE_FAILURE_THRESHOLD})\n\n"
+  fi
+
+  MSG="${MENTION}${ESCALATION_LINE}Chonk run complete (${SERVICE}). Cmd=${CMD}. Exit=${EXIT_CODE}
 
 ${SUMMARY}"
 

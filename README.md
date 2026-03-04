@@ -114,6 +114,12 @@ docker compose run --rm tv-transcoder
 docker compose run --rm movie-transcoder
 ```
 
+**Healthcheck strict mode**
+
+- `HEALTHCHECK_STRICT=true` (default): exits non-zero if any check fails
+- `HEALTHCHECK_STRICT=false`: always exits 0 but still prints `[FAIL]` lines (useful for smoke tests)
+
+
 This project is designed to be run via Synology DSM Task Scheduler using the wrapper script:
 - `scripts/chonkreducer_task.sh`
 
@@ -232,6 +238,7 @@ This protects high-quality media from unnecessary re-encoding.
 | `LOG_RETENTION_DAYS` | Log retention | `30` |
 | `BAK_RETENTION_DAYS` | Backup retention | `60` |
 | `LOCK_STALE_HOURS` | Consider lock stale after N hours | `12` |
+| `LOCK_SELF_HEAL` | Auto-remove stale locks | `true` |
 
 ### Probe / Timeouts
 
@@ -345,6 +352,10 @@ export DISCORD_ONLY_IF_WORK_DONE=true
 export DISCORD_PING_ON_FAILURE=true
 export DISCORD_PING_ON_SUCCESS=false
 export DISCORD_DEBUG=false
+
+# Escalated failure handling (wrapper-level)
+export ESCALATE_FAILURES=true
+export ESCALATE_FAILURE_THRESHOLD=3
 
 /volume1/docker/projects/nas-transcoder/scripts/chonkreducer_task.sh tv-transcoder
 ```

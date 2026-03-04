@@ -13,6 +13,19 @@ from .logging_utils import Logger
 def _env(name: str, default: str) -> str:
     return (os.environ.get(name) or default).strip()
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = _env(name, "true" if default else "false").lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = _env(name, "true" if default else "false").lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _env(name: str, default: str) -> str:
+    return (os.environ.get(name) or default).strip()
+
 
 def _ok(logger: Logger, msg: str) -> None:
     logger.log(f"[OK] {msg}")
@@ -133,12 +146,19 @@ def _finish(logger: Logger, failures: list[str]) -> None:
 
 
 def _notify_and_exit(logger: Logger, failures: list[str]) -> int:
+    """Send optional Discord notification and return appropriate exit code."""
+    strict = _env_bool("HEALTHCHECK_STRICT", True)
+
+    ping_fail = _env_bool("DISCORD_PING_ON_FAILURE", True)
+    ping_ok = _env_bool("DISCORD_PING_ON_SUCCESS", False)
+
     if notify_healthcheck_enabled():
         if failures:
-            content = "Chonk healthcheck FAILED\n" + "\n".join(failures[:5])
-            send_discord_message(content, ping_user=True)
-            return 2
+            content = "Chonk healthcheck FAILED\n" + "\n".join(failures[:8])
+            send_discord_message(content, ping_user=ping_fail)
         else:
-            send_discord_message("Chonk healthcheck OK", ping_user=False)
-            return 0
-    return 2 if failures else 0
+            send_discord_message("Chonk healthcheck OK", ping_user=ping_ok)
+
+    if failures:
+        return 2 if strict else 0
+    return 0

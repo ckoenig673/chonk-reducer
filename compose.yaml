@@ -13,6 +13,8 @@ x-common-env: &common-env
   DRY_RUN: "true"
   PREVIEW: "false"
   FAIL_FAST: "true"
+  ESCALATE_FAILURES: "true"
+  ESCALATE_FAILURE_THRESHOLD: "3"
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"          # enable NDJSON stats export
@@ -62,6 +64,7 @@ x-common-env: &common-env
 
   # ---- Locks & cleanup ----
   LOCK_STALE_HOURS: "12"
+  LOCK_SELF_HEAL: "true"
   WORK_CLEANUP_HOURS: "0"
 
   # ---- Probing ----
