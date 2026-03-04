@@ -1,3 +1,4 @@
+![CI](https://github.com/ckoenig673/chonk-reducer/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/github/license/ckoenig673/chonk-reducer)
 ![Release](https://img.shields.io/github/v/release/ckoenig673/chonk-reducer)
 ![Issues](https://img.shields.io/github/issues/ckoenig673/chonk-reducer)
