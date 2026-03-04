@@ -27,7 +27,7 @@ Chonk Reducer is a **policy-driven media size reduction system** built for NAS e
 - Can pause instantly with `.chonkpause` (+ optional `.chonkpause.reason`)
 - Encodes **in the same folder** as the source (avoids cross-device rename errors / EXDEV)
 - Validates output (decode test)
-- Enforces **minimum savings %** before swapping
+- Enforces a **savings window** (min + optional max) before swapping
 - Backs up original with timestamped `.bak.YYYYMMDD_HHMMSS`
 - Atomic replace swap + writes `.optimized` marker
 - Retries transient failures with backoff
@@ -177,7 +177,10 @@ Yes—keep a table. It makes upgrades and troubleshooting way easier.
 | `QSV_QUALITY` | QSV quality (lower = higher quality) | `21` |
 | `QSV_PRESET` | QSV preset | `7` |
 | `EXTRA_HW_FRAMES` | QSV hw frames | `64` |
-| `MIN_SAVINGS_PERCENT` | Skip swap if savings below threshold | `15` |
+| `MIN_SAVINGS_PERCENT` | Reject encode if savings below threshold | `15` |
+| `MAX_SAVINGS_PERCENT` | Reject encode if savings above threshold (0 = disabled) | `65` |
+| `MAX_GB_PER_RUN` | Stop run after reclaiming this much space (0 = disabled) | `40` |
+| `MIN_MEDIA_FREE_GB` | Abort run if MEDIA_ROOT volume free space is below this (0 = disabled) | `50` |
 
 ### Skip Policies (Pre-Encode)
 
