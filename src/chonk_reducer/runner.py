@@ -15,7 +15,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .skip_policy import evaluate_skip
-from .stats import record_success, record_failure, record_dry_run
+from .stats import record_success, record_failure, record_dry_run, record_skip
 from . import __version__ as PKG_VERSION
 
 
@@ -87,7 +87,7 @@ def run() -> int:
     if cfg.dry_run:
         mode = "DRY_RUN"
     logger.log(f"RUN_ID={run_id} MODE={mode}")
-    logger.log(f"VERSION={PKG_VERSION}")
+    logger.log(f"VERSION={cfg.version}")
     logger.log(f"STATS_ENABLED={getattr(cfg, 'stats_enabled', False)}")
     logger.log(f"STATS_PATH={getattr(cfg, 'stats_path', '')}")
     logger.log(f"MEDIA_ROOT={cfg.media_root}")
@@ -144,14 +144,16 @@ def run() -> int:
         return 0
 
     done = 0
-    processed = 0
+    evaluated = 0
+    processed = 0  # files where an encode attempt occurred
+    succeeded = 0
     failed = 0
-    considered = 0
     skipped_marker = 0
     skipped_backup = 0
     skipped_min_savings = 0
     skipped_codec = 0
     skipped_resolution = 0
+    skipped_dry_run = 0
 
     bytes_before_total = 0
     bytes_after_total = 0
@@ -209,7 +211,7 @@ def run() -> int:
                     logger.log(f"SKIP(backup): {src}")
                 continue
 
-            considered += 1
+            evaluated += 1
             logger.log(f"Processing: {src}")
 
             try:
@@ -230,7 +232,7 @@ def run() -> int:
                 # Optional stats entry for dry run
                 record_dry_run(cfg, logger, run_id, src, before_bytes)
 
-                processed += 1
+                skipped_dry_run += 1
                 done += 1
                 break
 
@@ -260,9 +262,22 @@ def run() -> int:
                     skipped_resolution += 1
                 if cfg.log_skips:
                     logger.log(f"SKIP({cat}): {reason} :: {src}")
+                # Stats: record policy/runtime skips (avoid marker/backup prefilters)
+                record_skip(
+                    cfg,
+                    logger,
+                    run_id=run_id,
+                    mode=mode.lower(),
+                    skip_reason=cat,
+                    src=src,
+                    before_bytes=int(before_bytes or 0),
+                    codec_from=(before_probe.get('codec') if before_probe else None),
+                    detail=str(reason),
+                )
                 continue
 
             attempt_errors: list[str] = []
+            encode_attempted = False
             for attempt in range(cfg.retry_count + 1):
                 if attempt > 0:
                     logger.log(f"RETRY {attempt}/{cfg.retry_count}: {src}")
@@ -272,6 +287,9 @@ def run() -> int:
                 t0 = time.monotonic()
                 try:
                     stage = "encode"
+                    if not encode_attempted:
+                        processed += 1
+                        encode_attempted = True
                     encode_qsv(src, encoded, cfg, logger)
 
                     stage = "validate"
@@ -296,6 +314,17 @@ def run() -> int:
                             except Exception:
                                 pass
                             skipped_min_savings += 1
+                            record_skip(
+                                cfg,
+                                logger,
+                                run_id=run_id,
+                                mode=mode.lower(),
+                                skip_reason='min_savings',
+                                src=src,
+                                before_bytes=int(before_bytes or 0),
+                                codec_from=(before_probe.get('codec') if before_probe else None),
+                                detail=f"{pct_tmp:.1f}% < {cfg.min_savings_percent:.1f}%",
+                            )
                             done += 1
                             break
 
@@ -386,7 +415,7 @@ def run() -> int:
                         duration_seconds=float(elapsed),
                         bak_path=bak_path,
                     )
-                    processed += 1
+                    succeeded += 1
                     done += 1
                     break
 
@@ -435,17 +464,23 @@ def run() -> int:
                     done += 1
 
         # Summary
-        logger.log("===== SUMMARY =====")
+                logger.log("===== SUMMARY =====")
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
+        prefiltered = skipped_marker + skipped_backup
+        skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_dry_run
         logger.log(f"Candidates found:     {len(cands)}")
-        logger.log(f"Considered:           {considered}")
-        logger.log(f"Processed:            {processed}")
-        logger.log(f"Skipped (marker):     {skipped_marker}")
-        logger.log(f"Skipped (backup):     {skipped_backup}")
+        logger.log(f"Pre-filtered:         {prefiltered}")
+        logger.log(f"Evaluated:            {evaluated}")
+        logger.log(f"Processed (encode):   {processed}")
+        logger.log(f"Succeeded:            {succeeded}")
+        logger.log(f"Skipped (policy):     {skipped_policy}")
+        logger.log(f"Failed:               {failed}")
+        logger.log(f"Pre-filtered (marker):     {skipped_marker}")
+        logger.log(f"Pre-filtered (backup):     {skipped_backup}")
         logger.log(f"Skipped (codec):      {skipped_codec}")
         logger.log(f"Skipped (resolution): {skipped_resolution}")
         logger.log(f"Skipped (min savings): {skipped_min_savings}")
-        logger.log(f"Failed:               {failed}")
+        logger.log(f"Skipped (dry run):    {skipped_dry_run}")
         logger.log(f"Ignored folders:      {len(ignored_folders)}")
         logger.log(f"Ignored files:        {ignored_files}")
 
