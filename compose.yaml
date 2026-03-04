@@ -10,7 +10,7 @@ x-common-env: &common-env
   PYTHONDONTWRITEBYTECODE: 1
 
   # ---- Run modes ----
-  DRY_RUN: "true"
+  DRY_RUN: "false"
   PREVIEW: "false"
   FAIL_FAST: "true"
 
@@ -81,6 +81,7 @@ services:
 
     environment:
       <<: *common-env
+      LIBRARY: movies
 
       # ---- Identity ----
       TZ: America/Chicago
@@ -117,6 +118,8 @@ services:
     environment:
       <<: *common-env
 
+      LIBRARY: tv
+      
       # ---- Identity ----
       TZ: America/Chicago
       LOG_PREFIX: tv

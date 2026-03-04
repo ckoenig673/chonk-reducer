@@ -542,3 +542,10 @@ Designed for:
 - Future dashboarding
 - Database import
 - Long-term reporting
+
+## Weekly Report Totals
+
+Notes on totals:
+- `success` rows contribute to savings totals.
+- `skipped` rows are counted separately and **do not** count as failures.
+- Rows with missing/unknown `status` are counted as `unknown`.
