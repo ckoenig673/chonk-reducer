@@ -3,6 +3,7 @@
 ![CI](https://github.com/ckoenig673/chonk-reducer/actions/workflows/ci.yml/badge.svg)
 ![Issues](https://img.shields.io/github/issues/ckoenig673/chonk-reducer)
 ![Last Commit](https://img.shields.io/github/last-commit/ckoenig673/chonk-reducer)
+
 # Chonk Reducer
 
 ```
@@ -25,6 +26,11 @@ Chonk Reducer is a **policy-driven media size reduction system** built for NAS e
 **Goal:** safely reclaim space by re-encoding oversized media files (Intel QSV → HEVC), validating output, and swapping in-place with backups and markers so scheduled runs are safe and repeatable.
 
 ---
+## Roadmap
+
+Future improvements and feature backlog:
+[View the project roadmap](https://github.com/ckoenig673/chonk-reducer/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap)
+
 
 ## What Chonk Does
 
