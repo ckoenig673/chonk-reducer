@@ -34,6 +34,19 @@ Chonk Reducer is a **policy-driven media size reduction system** built for NAS e
 - Quarantines repeated failures with `.failed` marker
 - Logs metrics and per-show rollups
 
+### Run Summary Counters
+
+At the end of each run, the runner prints stage-oriented counters:
+
+- `Candidates found`
+- `Pre-filtered` (marker/backup)
+- `Evaluated`
+- `Processed (encode)`
+- `Succeeded`
+- `Skipped (policy)`
+- `Failed`
+
+
 ---
 
 ## High-Level Architecture
@@ -408,6 +421,8 @@ Keep TV and Movie containers in the **same order** for consistency.
 
 Each processed file appends a single JSON line to:
 
+Version stamping uses `APP_VERSION` if set; otherwise it falls back to the package `__version__` (or `unknown`).
+
 - `/tv_shows/.chonkstats.ndjson`
 - `/movies/.chonkstats.ndjson`
 
@@ -423,6 +438,8 @@ Each processed file appends a single JSON line to:
 - `preset`
 - `status`
 - `stage`
+- `skip_reason` (when `status=skipped`)
+- `fail_stage` (when `status=failed`)
 - `path`
 - `filename`
 - `size_before_bytes`
@@ -433,6 +450,13 @@ Each processed file appends a single JSON line to:
 - `codec_to`
 - `duration_seconds`
 - `bak_path`
+
+### Status Semantics
+
+- `status` is one of: `success`, `skipped`, `failed`
+- If `status=skipped`, `skip_reason` is recorded (e.g., `codec`, `resolution`, `min_savings`, `dry_run`)
+- If `status=failed`, `fail_stage` is recorded (e.g., `probe`, `encode`, `validate`, `swap`)
+- Older NDJSON rows may not include `skip_reason`/`fail_stage`; reports treat these as `unknown`.
 
 This file is append-only and intended as the source of truth for reporting and aggregation (e.g., weekly reports).
 

@@ -96,6 +96,9 @@ def generate_weekly_report() -> int:
     # Failure stage breakdown
     fail_stage: dict[str, int] = {}
 
+    # Skip reason breakdown (for status=skipped)
+    skip_reason_breakdown: dict[str, int] = {}
+
     total_rows = 0
     for sp in stats_paths:
         for row in _read_ndjson(sp):
@@ -111,7 +114,7 @@ def generate_weekly_report() -> int:
                 by_lib[lib] = Totals()
 
             status = str(row.get("status", "")).lower().strip()
-            stage = str(row.get("stage", "")).lower().strip()
+            stage = str(row.get("fail_stage") or row.get("stage") or "").lower().strip()
 
             if status == "success":
                 b = int(row.get("size_before_bytes") or 0)
@@ -140,6 +143,8 @@ def generate_weekly_report() -> int:
             elif status == "skipped":
                 for t in (by_lib[lib], combined):
                     t.skipped += 1
+                sr = str(row.get("skip_reason") or "").lower().strip() or "unknown"
+                skip_reason_breakdown[sr] = skip_reason_breakdown.get(sr, 0) + 1
             else:
                 for t in (by_lib[lib], combined):
                     t.unknown += 1
@@ -199,6 +204,13 @@ def generate_weekly_report() -> int:
     if top_saves:
         for i, r in enumerate(top_saves, start=1):
             lines.append(f"{i}) {_fmt_gb(int(r['saved_bytes']))} saved ({float(r['saved_pct']):.1f}%)  [{r['library']}]  {r['path']}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append("Skip Breakdown (by reason):")
+    if skip_reason_breakdown:
+        for sr, cnt in sorted(skip_reason_breakdown.items(), key=lambda x: (-x[1], x[0])):
+            lines.append(f" - {sr}: {cnt}")
     else:
         lines.append("  (none)")
     lines.append("")

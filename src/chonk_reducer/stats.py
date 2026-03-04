@@ -113,8 +113,9 @@ def record_failure(
     obj = build_base(cfg, run_id, mode)
     obj.update(
         {
-            "status": "failed",
+            "status":"failed",
             "stage": stage,
+            "fail_stage": stage,
             "path": str(src),
             "filename": src.name,
             "size_before_bytes": int(before_bytes),
@@ -134,6 +135,42 @@ def record_failure(
     append_ndjson(Path(cfg.stats_path), obj, logger)
 
 
+def record_skip(
+    cfg: Config,
+    logger: Logger,
+    run_id: str,
+    mode: str,
+    skip_reason: str,
+    src: Path,
+    before_bytes: int,
+    codec_from: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """Record a skipped file in NDJSON stats (policy/runtime skip, not pre-filter markers).
+
+    Note: We intentionally do not record marker/backup pre-filters to avoid bloating stats.
+    """
+    if not getattr(cfg, "stats_enabled", False):
+        return
+
+    obj = build_base(cfg, run_id, mode)
+    obj.update(
+        {
+            "status": "skipped",
+            "stage": "skip",
+            "skip_reason": (skip_reason or "unknown").lower(),
+            "path": str(src),
+            "filename": src.name,
+            "size_before_bytes": int(before_bytes),
+            "codec_from": codec_from or "",
+        }
+    )
+    if detail:
+        obj["skip_detail"] = str(detail)[:500]
+
+    append_ndjson(Path(cfg.stats_path), obj, logger)
+
+
 def record_dry_run(
     cfg: Config,
     logger: Logger,
@@ -146,8 +183,9 @@ def record_dry_run(
     obj = build_base(cfg, run_id, "dry_run")
     obj.update(
         {
-            "status": "skipped",
-            "stage": "dry_run",
+            "status":"skipped",
+            "stage":"dry_run",
+            "skip_reason":"dry_run",
             "path": str(src),
             "filename": src.name,
             "size_before_bytes": int(before_bytes),

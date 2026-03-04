@@ -130,7 +130,7 @@ def load_config() -> Config:
     stats_path = Path(_env("STATS_PATH", str(default_stats_path)))
     library = _env("LIBRARY", "")
     encoder = _env("ENCODER", "hevc_qsv")
-    app_version = os.getenv("APP_VERSION") or os.getenv("VERSION") or PACKAGE_VERSION
+    app_version = (os.getenv("APP_VERSION") or "").strip() or (PACKAGE_VERSION or "").strip() or "unknown"
 
     return Config(
         version=app_version,
