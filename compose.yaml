@@ -10,7 +10,7 @@ x-common-env: &common-env
   PYTHONDONTWRITEBYTECODE: 1
 
   # ---- Run modes ----
-  DRY_RUN: "false"
+  DRY_RUN: "true"
   PREVIEW: "false"
   FAIL_FAST: "true"
 
@@ -20,7 +20,8 @@ x-common-env: &common-env
   REPORTS_DIR: "/work/reports"
   WEEKLY_REPORT_DAYS: "7"
   WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"
-  
+  REPORT_RETENTION_DAYS: "30"
+
   # ---- Retries ----
   RETRY_COUNT: "1"
   RETRY_BACKOFF_SECS: "5"

@@ -576,3 +576,9 @@ Notes on totals:
 - `success` rows contribute to savings totals.
 - `skipped` rows are counted separately and **do not** count as failures.
 - Rows with missing/unknown `status` are counted as `unknown`.
+
+Wrapper detects DRY_RUN by reading latest log in /volume1/data/transcodework/logs and prints a banner.
+
+## DRY_RUN visibility
+
+The wrapper determines whether a run is DRY_RUN by reading the resolved `DRY_RUN` value from `docker compose config` (so it matches the container environment). It will print a clear banner when DRY_RUN is enabled.
