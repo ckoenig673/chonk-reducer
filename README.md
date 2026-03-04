@@ -28,7 +28,7 @@ Chonk Reducer is a **policy-driven media size reduction system** built for NAS e
 ---
 ## Roadmap
 
-Future improvements and feature backlog:
+Future improvements and planned features:
 [View the project roadmap](https://github.com/ckoenig673/chonk-reducer/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap)
 
 
