@@ -5,75 +5,72 @@ name: nas-transcoder
 # ============================================================
 x-common-env: &common-env
   # ---- Python / container hygiene ----
-  PYTHONPATH: /project/src
-  PYTHONPYCACHEPREFIX: /work/pycache
-  PYTHONDONTWRITEBYTECODE: 1
+  PYTHONPATH: /project/src                 # lets `python -m chonk_reducer` import project code
+  PYTHONPYCACHEPREFIX: /work/pycache       # keep __pycache__ out of the read-only /project mount
+  PYTHONDONTWRITEBYTECODE: 1               # avoid writing .pyc files entirely
 
   # ---- Run modes ----
-  DRY_RUN: "true"
-  PREVIEW: "false"
-  FAIL_FAST: "true"
-  ESCALATE_FAILURES: "true"
-  ESCALATE_FAILURE_THRESHOLD: "3"
+  DRY_RUN: "true"                          # if true, do everything except encode/swap (safe testing)
+  PREVIEW: "false"                         # if true, log “top candidates” only and exit (no per-file work)
+  FAIL_FAST: "true"                        # if true, abort run on first hard failure
 
   # ---- Stats / Reporting ----
-  STATS_ENABLED: "true"          # enable NDJSON stats export
-  APP_VERSION: "v1.4.0"          # version stamp written into stats entries
-  REPORTS_DIR: "/work/reports"
-  WEEKLY_REPORT_DAYS: "7"
-  WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"
-  REPORT_RETENTION_DAYS: "30"
+  STATS_ENABLED: "true"                    # append NDJSON rows to STATS_PATH for success/skip/fail events
+  APP_VERSION: "v1.4.0"                    # version stamp written into stats + startup banner
+  REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
+  WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
+  WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"  # comma list of NDJSON inputs
+  REPORT_RETENTION_DAYS: "30"              # delete weekly reports older than N days (weekly-report)
 
   # ---- Retries ----
-  RETRY_COUNT: "1"
-  RETRY_BACKOFF_SECS: "5"
+  RETRY_COUNT: "1"                         # encode retry attempts per file (hard failures only)
+  RETRY_BACKOFF_SECS: "5"                  # seconds to sleep between retries
 
   # ---- Candidate selection ----
-  TOP_CANDIDATES: "5"
-  MAX_FILES: "1"
+  TOP_CANDIDATES: "5"                      # how many “top candidates” to print in the log header
+  MAX_FILES: "1"                           # max files to process per run (keeps runs scheduler-friendly)
 
   # ---- Encode settings ----
-  QSV_QUALITY: "21"
-  QSV_PRESET: "7"
-  EXTRA_HW_FRAMES: "64"
-  MIN_SAVINGS_PERCENT: "15"
-  MIN_MEDIA_FREE_GB: "50"
-  MAX_GB_PER_RUN: "40"
-  MAX_SAVINGS_PERCENT: "65"
+  QSV_QUALITY: "21"                        # Intel QSV quality (lower = better quality / bigger file)
+  QSV_PRESET: "7"                          # Intel QSV preset (ffmpeg hevc_qsv preset)
+  EXTRA_HW_FRAMES: "64"                    # ffmpeg QSV extra_hw_frames (decoder/encoder buffering)
+  MIN_SAVINGS_PERCENT: "15"                # require at least this % savings or treat as min-savings skip
+  MAX_SAVINGS_PERCENT: "65"                # if savings exceed this %, treat as max-savings skip (guardrail)
+  MIN_MEDIA_FREE_GB: "50"                  # abort run if MEDIA_ROOT volume has < this free space (0=off)
+  MAX_GB_PER_RUN: "40"                     # stop after saving this many GB in a single run (0=off)
 
   # ---- Skip policies (pre-encode) ----
-  SKIP_CODECS: "hevc,av1"          # skip if source codec matches (comma list). empty = disabled
-  SKIP_MIN_HEIGHT: "2160"          # skip if height >= this. 0 = disabled
-  SKIP_RESOLUTION_TAGS: "2160p,4k,uhd"  # skip if filename contains any tag. empty = disabled
+  SKIP_CODECS: "hevc,av1"                  # skip if source codec matches list (comma list; empty=off)
+  SKIP_MIN_HEIGHT: "2160"                  # skip if height >= this (0=off)
+  SKIP_RESOLUTION_TAGS: "2160p,4k,uhd"     # skip if filename contains any of these tags (comma list; empty=off)
 
   # ---- Validation ----
-  POST_ENCODE_VALIDATE: "1"
-  VALIDATE_MODE: decode
-  VALIDATE_SECONDS: "10"
+  POST_ENCODE_VALIDATE: "1"                # if 1, validate output after encode (decode test)
+  VALIDATE_MODE: decode                    # validation mode (currently: decode)
+  VALIDATE_SECONDS: "10"                   # seconds to validate (decode first N seconds)
 
   # ---- Output ownership ----
-  OUT_UID: "1028"
-  OUT_GID: "100"
-  OUT_MODE: "664"
-  OUT_DIR_MODE: "775"
+  OUT_UID: "1028"                          # chown output file to this UID
+  OUT_GID: "100"                           # chown output file to this GID
+  OUT_MODE: "664"                          # chmod for output files
+  OUT_DIR_MODE: "775"                      # chmod for any created directories
 
   # ---- Logging & retention ----
-  LOG_SKIPS: "true"
-  LOG_RETENTION_DAYS: "30"
-  BAK_RETENTION_DAYS: "60"
+  LOG_SKIPS: "true"                        # if true, log SKIP(...) lines (noise control)
+  LOG_RETENTION_DAYS: "30"                 # delete /work/logs/*.log older than N days
+  BAK_RETENTION_DAYS: "60"                 # delete *.bak.* older than N days under MEDIA_ROOT
 
   # ---- Locks & cleanup ----
-  LOCK_STALE_HOURS: "12"
-  LOCK_SELF_HEAL: "true"
-  WORK_CLEANUP_HOURS: "0"
+  LOCK_STALE_HOURS: "12"                   # consider lock stale after N hours (stale lock recovery)
+  WORK_CLEANUP_HOURS: "0"                  # delete temp work files older than N hours (0=disabled)
 
   # ---- Probing ----
-  PROBE_TIMEOUT_SECS: "60"
-  FFPROBE_ANALYZEDURATION: "50000000"
-  FFPROBE_PROBESIZE: "50000000"
+  PROBE_TIMEOUT_SECS: "60"                 # timeout for ffprobe calls (seconds)
+  FFPROBE_ANALYZEDURATION: "50000000"      # ffprobe analyzeduration tuning (microseconds)
+  FFPROBE_PROBESIZE: "50000000"            # ffprobe probesize tuning (bytes)
 
   # ---- Path exclusions ----
-  EXCLUDE_PATH_PARTS: "#recycle,@eaDir"
+  EXCLUDE_PATH_PARTS: "#recycle,@eaDir"     # ignore any path containing these parts (comma list)
 
 
 services:
@@ -88,19 +85,19 @@ services:
 
     environment:
       <<: *common-env
-      LIBRARY: movies
 
       # ---- Identity ----
-      TZ: America/Chicago
-      LOG_PREFIX: movie
+      LIBRARY: movies                        # library label used in stats + reporting
+      TZ: America/Chicago                    # timezone for logs
+      LOG_PREFIX: movie                      # prefix for run log name + lock name
 
       # ---- Roots ----
-      MEDIA_ROOT: /movies
-      WORK_ROOT: /work
-      STATS_PATH: /movies/.chonkstats.ndjson
+      MEDIA_ROOT: /movies                    # media library root inside the container
+      WORK_ROOT: /work                       # writable work root (logs/reports/tmp)
+      STATS_PATH: /movies/.chonkstats.ndjson # per-library NDJSON stats file
 
-      # ---- Movie-specific selection ----
-      MIN_SIZE_GB: "17"
+      # ---- Library-specific selection ----
+      MIN_SIZE_GB: "17"                      # minimum file size to consider as a candidate
 
     volumes:
       - /volume1/movies:/movies:rw
@@ -125,19 +122,18 @@ services:
     environment:
       <<: *common-env
 
-      LIBRARY: tv
-      
       # ---- Identity ----
-      TZ: America/Chicago
-      LOG_PREFIX: tv
+      LIBRARY: tv                            # library label used in stats + reporting
+      TZ: America/Chicago                    # timezone for logs
+      LOG_PREFIX: tv                         # prefix for run log name + lock name
 
       # ---- Roots ----
-      MEDIA_ROOT: /tv_shows
-      WORK_ROOT: /work
-      STATS_PATH: /tv_shows/.chonkstats.ndjson
-      
-      # ---- TV-specific selection ----
-      MIN_SIZE_GB: "8"
+      MEDIA_ROOT: /tv_shows                  # media library root inside the container
+      WORK_ROOT: /work                       # writable work root (logs/reports/tmp)
+      STATS_PATH: /tv_shows/.chonkstats.ndjson # per-library NDJSON stats file
+
+      # ---- Library-specific selection ----
+      MIN_SIZE_GB: "8"                       # minimum file size to consider as a candidate
 
     volumes:
       - /volume1/tv_shows:/tv_shows:rw
@@ -149,4 +145,3 @@ services:
     group_add:
       - "937"
     restart: "no"
-    

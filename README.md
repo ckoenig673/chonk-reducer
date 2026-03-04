@@ -145,110 +145,60 @@ Example DSM task using wrapper:
 
 ## Environment Variables
 
-Yes—keep a table. It makes upgrades and troubleshooting way easier.
+These are passed to the **container** via `compose.yaml` (`environment:`). Movie and TV services should use the same keys.
 
-> Tip: Use YAML anchors in `compose.yaml` so movie + tv share the same ordered config block.
+**Run modes:** `DRY_RUN=true` (no swaps/changes) and `PREVIEW=true` (lightweight preview) are supported; otherwise the run is **LIVE**.
 
-### Roots / Identity
+| Variable | Default | What it does |
+|---|---:|---|
+| `LIBRARY_NAME` | `` | Logical library name written into stats/weekly reports (e.g., movies, tv). |
+| `MEDIA_ROOT` | `/movies` | Root folder to scan for media files (container path). |
+| `WORK_ROOT` | `/work` | Work directory for temp files, logs, and reports (container path). |
+| `EXCLUDE_PATH_PARTS` | `#recycle,@eaDir` | Comma-separated path fragments to ignore during scanning (Synology recycle bin, @eaDir, etc). |
+| `DRY_RUN` | `False` | If true, prints what would happen but does not encode/swap. |
+| `PREVIEW` | `False` | If true, behaves like a lightweight preview run (no swaps). |
+| `MAX_FILES` | `2` | Max number of files to attempt per run. |
+| `MIN_SIZE_GB` | `18.0` | Only consider files >= this size (GB). |
+| `MAX_GB_PER_RUN` | `0.0` | Optional cap on total input size processed per run (0 disables). |
+| `FAIL_FAST` | `False` | Stop the run on the first hard failure (vs continue). |
+| `MIN_SAVINGS_PERCENT` | `15.0` | Minimum savings required to keep an encode result; otherwise treated as skip. |
+| `MAX_SAVINGS_PERCENT` | `0.0` | Optional maximum savings; if savings exceed this, treat as skip (0 disables). |
+| `SKIP_CODECS` | `hevc,av1` | Comma-separated codecs to skip (already encoded). |
+| `SKIP_MIN_HEIGHT` | `2160` | Skip if source height >= this (e.g., skip 4K). |
+| `SKIP_RESOLUTION_TAGS` | `2160p,4k,uhd` | Comma-separated tags; if in path/name then skip as 4K/uhd, etc. |
+| `LOG_SKIPS` | `False` | Log skip decisions per-file. |
+| `ENCODER` | `hevc_qsv` | Encoder profile to use (default QSV HEVC). |
+| `QSV_QUALITY` | `21` | QSV quality (ICQ). Lower = higher quality. |
+| `QSV_PRESET` | `7` | QSV preset (higher is faster; depends on driver). |
+| `EXTRA_HW_FRAMES` | `64` | Extra hardware frames for QSV (helps throughput on some systems). |
+| `FFMPEG_PATH` | `ffmpeg` | Path to ffmpeg inside the container. |
+| `FFPROBE_PATH` | `ffprobe` | Path to ffprobe inside the container. |
+| `PROBE_TIMEOUT_SECS` | `60` | Timeout for ffprobe on a single file. |
+| `TOP_CANDIDATES` | `5` | How many largest candidates to print before processing. |
+| `POST_ENCODE_VALIDATE` | `True` | Enable post-encode validation. |
+| `VALIDATE_MODE` | `decode` | Validation mode (e.g., decode). |
+| `VALIDATE_SECONDS` | `10` | How many seconds of output to validate. |
+| `RETRY_COUNT` | `1` | Encode retry attempts on transient failure. |
+| `RETRY_BACKOFF_SECS` | `5` | Seconds to wait between retries. |
+| `OUT_UID` | `1028` | UID to chown output files to (0 leaves as-is if running as root). |
+| `OUT_GID` | `100` | GID to chown output files to (0 leaves as-is if running as root). |
+| `OUT_MODE` | `"664"` | Octal file mode for output files. |
+| `OUT_DIR_MODE` | `"775"` | Octal dir mode for created directories. |
+| `WORK_CLEANUP_HOURS` | `0` | Delete temp files under WORK_ROOT older than this many hours. |
+| `LOG_RETENTION_DAYS` | `30` | Delete old transcode logs under /work/logs older than this many days. |
+| `BAK_RETENTION_DAYS` | `60` | Delete old *.bak.* files under MEDIA_ROOT older than this many days. |
+| `STATS_ENABLED` | `True` | Write per-file NDJSON stats to STATS_PATH. |
+| `STATS_PATH` | `/movies/.chonkstats.ndjson` | Where NDJSON stats are written (container path). |
+| `WEEKLY_REPORT_DAYS` | `7` | Lookback window (days) for the weekly report command. |
+| `REPORT_RETENTION_DAYS` | `0` | Delete weekly report files older than this many days (0 disables). |
+| `LOCK_STALE_HOURS` | `12` | Consider a lock stale after this many hours. |
+| `LOCK_SELF_HEAL` | `True` | If true, automatically remove stale locks; if false, skip the run when lock is stale. |
+| `MIN_MEDIA_FREE_GB` | `0.0` | Abort run if MEDIA_ROOT volume has less free space than this (0 disables). |
 
-| Variable | Purpose | Example |
-|---|---|---|
-| `MEDIA_ROOT` | Root directory to scan | `/tv_shows` |
-| `WORK_ROOT` | Workspace root (logs, caches, locks) | `/work` |
-| `LOG_PREFIX` | Prefix for log file names | `tv` / `movie` |
-| `TZ` | Timezone in logs | `America/Chicago` |
-
-### Run Modes
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `DRY_RUN` | No encode/swap; log what would happen | `false` |
-| `PREVIEW` | Probe-only preview; no encode/swap | `false` |
-| `FAIL_FAST` | Exit on first failure | `true` |
-
-### Selection / Discovery
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `MIN_SIZE_GB` | Minimum file size to consider | (service-specific) |
-| `MAX_FILES` | Stop after this many “done” actions | `1` |
-| `TOP_CANDIDATES` | Log top N candidates by size | `5` |
-| `EXCLUDE_PATH_PARTS` | Comma list of path parts to exclude | `#recycle,@eaDir` |
-| `LOG_SKIPS` | Log per-file skip reasons | `false` |
-
-### Encoding
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `QSV_QUALITY` | QSV quality (lower = higher quality) | `21` |
-| `QSV_PRESET` | QSV preset | `7` |
-| `EXTRA_HW_FRAMES` | QSV hw frames | `64` |
-| `MIN_SAVINGS_PERCENT` | Reject encode if savings below threshold | `15` |
-| `MAX_SAVINGS_PERCENT` | Reject encode if savings above threshold (0 = disabled) | `65` |
-| `MAX_GB_PER_RUN` | Stop run after reclaiming this much space (0 = disabled) | `40` |
-| `MIN_MEDIA_FREE_GB` | Abort run if MEDIA_ROOT volume free space is below this (0 = disabled) | `50` |
-
-### Skip Policies (Pre-Encode)
-
-Chonk Reducer can skip files before encoding based on codec or resolution.
-
-| Variable | Description | Example |
-|---|---|---|
-| `SKIP_CODECS` | Skip files already encoded in these codecs | `hevc,av1` |
-| `SKIP_MIN_HEIGHT` | Skip files whose video height ≥ value | `2160` |
-| `SKIP_RESOLUTION_TAGS` | Skip if filename contains these tags | `2160p,4k,uhd` |
-
-Example behavior:
-
-- Skip files already encoded in **HEVC or AV1**
-- Skip **4K / UHD** content
-- Skip files with **2160p / 4k / uhd** in filename
-
-This protects high-quality media from unnecessary re-encoding.
-
-### Validation
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `POST_ENCODE_VALIDATE` | Enable post-encode validation | `1` |
-| `VALIDATE_MODE` | Validation mode | `decode` |
-| `VALIDATE_SECONDS` | Seconds to decode-test | `10` |
-
-### Retries / Failure Handling
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `RETRY_COUNT` | Extra retries after first attempt | `1` |
-| `RETRY_BACKOFF_SECS` | Backoff base seconds (multiplied by attempt #) | `5` |
-
-### Ownership / Permissions
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `OUT_UID` | Output file owner UID | `1028` |
-| `OUT_GID` | Output file group GID | `100` |
-| `OUT_MODE` | Output file mode | `664` |
-| `OUT_DIR_MODE` | Output directory mode | `775` |
-
-### Cleanup / Retention / Locks
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `WORK_CLEANUP_HOURS` | Cleanup stale work artifacts | `0` |
-| `LOG_RETENTION_DAYS` | Log retention | `30` |
-| `BAK_RETENTION_DAYS` | Backup retention | `60` |
-| `LOCK_STALE_HOURS` | Consider lock stale after N hours | `12` |
-| `LOCK_SELF_HEAL` | Auto-remove stale locks | `true` |
-
-### Probe / Timeouts
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `PROBE_TIMEOUT_SECS` | Timeout for ffprobe | `60` |
-| `FFPROBE_ANALYZEDURATION` | ffprobe analyzeduration | `50000000` |
-| `FFPROBE_PROBESIZE` | ffprobe probesize | `50000000` |
-
----
+### Notes
+- Values are read from env and parsed as bool/int/float where applicable.
+- `STATS_PATH` should live on the media volume if you want one stats file per library.
+- `REPORT_RETENTION_DAYS` is applied by the `weekly-report` command to prune old `weekly_*.md` files.
 
 ## Outputs / Artifacts
 
