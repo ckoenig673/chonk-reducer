@@ -11,7 +11,6 @@ DOCKER="/usr/local/bin/docker"
 LOG_ROOT="/volume1/data/transcodework/logs"
 RUN_TS="$(date +%Y%m%d_%H%M%S)"
 WRAPPER_LOG="${LOG_ROOT}/wrapper_${RUN_TS}.log"
-LATEST_LOG="${LOG_ROOT}/wrapper_latest.log"
 
 # --- Discord notifications ---
 # NOTE: Keep secrets out of compose.yaml. Provide these via DSM Task Scheduler env vars
@@ -36,7 +35,6 @@ mkdir -p "$LOG_ROOT"
 exec >> "$WRAPPER_LOG" 2>&1
 
 # Optional: keep a pointer to the latest wrapper log
-ln -sf "$WRAPPER_LOG" "$LATEST_LOG"
 
 echo "===== WRAPPER START $(date) ====="
 echo "Webhook: $DISCORD_WEBHOOK_URL"
@@ -64,6 +62,16 @@ if "$DOCKER" ps --format '{{.Names}}' | grep -q "^${SERVICE}\$"; then
   echo "ERROR: ${SERVICE} appears to already be running. Exiting to avoid overlap."
   echo "===== WRAPPER END $(date) ====="
   exit 1
+fi
+
+
+# --- DRY_RUN visibility: read resolved DRY_RUN from docker compose config (matches container env) ---
+if [ "${CMD:-run}" = "run" ]; then
+  COMPOSE_DRY_RUN="$("$DOCKER" compose -f "$COMPOSE" config 2>/dev/null | awk '$1=="DRY_RUN:" {print $2; exit}' | tr -d '"')"
+  if [ "$COMPOSE_DRY_RUN" = "true" ] || [ "$COMPOSE_DRY_RUN" = "True" ] || [ "$COMPOSE_DRY_RUN" = "1" ]; then
+    echo "***** DRY RUN ENABLED (no swaps will occur) *****"
+    echo "Wrapper detected: MODE=DRY_RUN (from compose)"
+  fi
 fi
 
 echo "Starting docker compose for $SERVICE ..."

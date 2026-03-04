@@ -23,6 +23,28 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _prune_old_reports(report_dir: Path, retention_days: int, logger: Logger) -> None:
+    """Delete weekly report files older than retention_days.
+
+    retention_days <= 0 disables pruning.
+    """
+    if retention_days <= 0:
+        return
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    deleted = 0
+    for p in sorted(report_dir.glob("chonk_weekly_*.txt")):
+        try:
+            mtime = datetime.fromtimestamp(p.stat().st_mtime)
+        except Exception:
+            continue
+        if mtime < cutoff:
+            try:
+                p.unlink()
+                deleted += 1
+            except Exception:
+                continue
+    if deleted:
+        logger.log(f"Report retention: deleted {deleted} report(s) older than {retention_days} day(s)")
 def _fmt_gb(n_bytes: int) -> str:
     return f"{n_bytes / (1024**3):.2f}GB"
 
