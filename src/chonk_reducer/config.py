@@ -84,6 +84,7 @@ class Config:
     bak_retention_days: int
     log_retention_days: int
     lock_stale_hours: int
+    lock_self_heal: bool
     work_cleanup_hours: int
 
     # Probe
@@ -164,6 +165,7 @@ def load_config() -> Config:
         log_retention_days=_env_int("LOG_RETENTION_DAYS", 30),
 
         lock_stale_hours=_env_int("LOCK_STALE_HOURS", 12),
+        lock_self_heal=_env_bool("LOCK_SELF_HEAL", True),
         work_cleanup_hours=_env_int("WORK_CLEANUP_HOURS", 0),
 
         probe_timeout_secs=_env_int("PROBE_TIMEOUT_SECS", 60),

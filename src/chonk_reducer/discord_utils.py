@@ -47,8 +47,16 @@ def send_discord_message(content: str, *, ping_user: bool = False) -> bool:
 
 
 def notify_healthcheck_enabled() -> bool:
-    return _env_bool("DISCORD_NOTIFY_HEALTHCHECK", False)
+    return _env_bool("DISCORD_NOTIFY_HEALTHCHECK", True)
 
 
 def notify_weekly_enabled() -> bool:
     return _env_bool("DISCORD_NOTIFY_WEEKLY", False)
+
+def ping_on_failure() -> bool:
+    return _env_bool("DISCORD_PING_ON_FAILURE", True)
+
+
+def ping_on_success() -> bool:
+    return _env_bool("DISCORD_PING_ON_SUCCESS", False)
+

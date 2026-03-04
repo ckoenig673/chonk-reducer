@@ -150,7 +150,7 @@ def run() -> int:
         return 0
 
     lock_path = cfg.work_root / f"{prefix}chonkreducer.lock"
-    if not acquire_lock(lock_path, cfg.lock_stale_hours, logger):
+    if not acquire_lock(lock_path, cfg.lock_stale_hours, cfg.lock_self_heal, logger):
         return 0
 
     done = 0
