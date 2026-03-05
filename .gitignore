@@ -216,3 +216,7 @@ __marimo__/
 /state/
 /reports/
 
+
+# Required local/dev ignores
+*.pyc
+.vscode/
