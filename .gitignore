@@ -220,3 +220,6 @@ __marimo__/
 # Required local/dev ignores
 *.pyc
 .vscode/
+@eaDir/
+logs/
+*.pyc
