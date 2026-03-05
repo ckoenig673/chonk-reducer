@@ -215,6 +215,11 @@ __marimo__/
 /work/
 /state/
 /reports/
+
+
+# Required local/dev ignores
+*.pyc
+.vscode/
 @eaDir/
 logs/
 *.pyc

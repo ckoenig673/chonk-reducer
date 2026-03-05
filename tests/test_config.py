@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+from chonk_reducer.config import load_config
+
+
+def test_load_config_returns_expected_defaults(monkeypatch):
+    for key in [
+        "MEDIA_ROOT",
+        "WORK_ROOT",
+        "MIN_SIZE_GB",
+        "MAX_FILES",
+        "MIN_SAVINGS_PERCENT",
+        "OUT_MODE",
+        "OUT_DIR_MODE",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    cfg = load_config()
+
+    assert str(cfg.media_root) == "/movies"
+    assert str(cfg.work_root) == "/work"
+    assert cfg.min_size_gb == 18.0
+    assert cfg.max_files == 2
+    assert cfg.min_savings_percent == 15.0
+    assert cfg.out_mode == int("664", 8)
+    assert cfg.out_dir_mode == int("775", 8)
+
+
+def test_invalid_config_values_fall_back_to_safe_defaults(monkeypatch):
+    monkeypatch.setenv("MAX_FILES", "not-an-int")
+    monkeypatch.setenv("MIN_SIZE_GB", "not-a-float")
+    monkeypatch.setenv("OUT_MODE", "invalid")
+
+    cfg = load_config()
+
+    assert cfg.max_files == 2
+    assert cfg.min_size_gb == 18.0
+    assert cfg.out_mode == int("664", 8)
