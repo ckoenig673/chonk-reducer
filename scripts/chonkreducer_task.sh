@@ -28,11 +28,6 @@ mkdir -p "$LOG_DIR"
 STATE_ROOT="${STATE_ROOT:-$PROJ_DIR/.task_state}"
 mkdir -p "$STATE_ROOT"
 
-# Keep pytest temp files isolated per wrapper user/runtime
-TMPDIR="${TMPDIR:-$STATE_ROOT/tmp}"
-mkdir -p "$TMPDIR"
-export TMPDIR
-
 STAMP="$(date +%Y%m%d-%H%M%S)"
 TASK_LOG="$LOG_DIR/${SERVICE}_${STAMP}.task.log"
 
@@ -48,8 +43,7 @@ notify_discord() {
   esc="$(printf '%s' "$msg" | sed 's/"/\\"/g')"
   payload="{\"content\": \"${DISCORD_USER_ID:+<@${DISCORD_USER_ID}> }${esc}\"}"
 
-  /usr/bin/curl -sS -X POST -H "Content-Type: application/json" \
-    -d "$payload" "$DISCORD_WEBHOOK_URL" >/dev/null 2>&1 || true
+  /usr/bin/curl -sS -X POST -H "Content-Type: application/json"     -d "$payload" "$DISCORD_WEBHOOK_URL" >/dev/null 2>&1 || true
 }
 
 log() {
@@ -169,16 +163,30 @@ REBUILD_NO_CACHE="${REBUILD_NO_CACHE:-true}"
 compose_service_image_exists() {
   service="$1"
 
-  # Never abort the wrapper on image name lookup failure.
-  service_image_name="$("$DOCKER" compose -f "$COMPOSE" config --images "$service" 2>>"$TASK_LOG" || true)"
-  service_image_name="$(printf '%s\n' "$service_image_name" | awk 'NF {print; exit}')"
+  set +e
+  service_image_name="$($DOCKER compose -f "$COMPOSE" config --images "$service" 2>>"$TASK_LOG")"
+  image_name_rc=$?
+  set -e
 
+  if [ $image_name_rc -ne 0 ]; then
+    return 1
+  fi
+
+  service_image_name="$(printf '%s\n' "$service_image_name" | awk 'NF {print; exit}')"
   if [ -z "$service_image_name" ]; then
     return 1
   fi
 
-  "$DOCKER" image inspect "$service_image_name" >/dev/null 2>>"$TASK_LOG" || return 1
-  return 0
+  set +e
+  "$DOCKER" image inspect "$service_image_name" >/dev/null 2>>"$TASK_LOG"
+  image_inspect_rc=$?
+  set -e
+
+  if [ $image_inspect_rc -eq 0 ]; then
+    return 0
+  fi
+
+  return 1
 }
 
 if [ "$REBUILD_IMAGE" = "true" ]; then
@@ -198,10 +206,11 @@ if [ "$REBUILD_IMAGE" = "true" ]; then
   fi
   if [ "$SHOULD_BUILD" = "true" ]; then
     log "[build] rebuilding image for service: $SERVICE ($BUILD_ARGS)"
-    "$DOCKER" compose -f "$COMPOSE" build $BUILD_ARGS "$SERVICE" >>"$TASK_LOG" 2>&1 || {
-      log "[build] docker compose build failed; aborting"
-      exit 1
-    }
+    "$DOCKER" compose -f "$COMPOSE" build $BUILD_ARGS "$SERVICE" >>"$TASK_LOG" 2>&1 || { log "[build] docker compose build failed; aborting"; exit 1; }
+  else
+    if [ "$REPO_CHANGED" = "true" ]; then
+      log "[build] repository up to date — skipping container rebuild"
+    fi
   fi
 fi
 
