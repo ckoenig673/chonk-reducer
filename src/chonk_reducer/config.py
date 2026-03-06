@@ -110,6 +110,7 @@ class Config:
     skip_codecs: tuple[str, ...] = ()
     skip_min_height: int = 0
     skip_resolution_tags: tuple[str, ...] = ()
+    min_file_age_minutes: int = 0
 
     # Stats (SQLite)
     stats_enabled: bool = False
@@ -129,6 +130,7 @@ def load_config() -> Config:
     skip_codecs = tuple(s.lower() for s in _split_csv(_env("SKIP_CODECS", "")))
     skip_min_height = _env_int("SKIP_MIN_HEIGHT", 0)
     skip_tags = tuple(s.lower() for s in _split_csv(_env("SKIP_RESOLUTION_TAGS", "")))
+    min_file_age_minutes = max(0, _env_int("MIN_FILE_AGE_MINUTES", 0))
 
     # Stats defaults
     stats_enabled = _env_bool("STATS_ENABLED", True)
@@ -188,6 +190,7 @@ def load_config() -> Config:
         skip_codecs=skip_codecs,
         skip_min_height=skip_min_height,
         skip_resolution_tags=skip_tags,
+        min_file_age_minutes=min_file_age_minutes,
 
         stats_enabled=stats_enabled,
         stats_path=stats_path,

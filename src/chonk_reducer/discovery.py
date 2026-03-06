@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections import defaultdict
+import time
 
 from .config import Config
 from .logging_utils import Logger
@@ -38,12 +39,16 @@ def gather_candidates(cfg: Config, logger: Logger):
     Returns:
         candidates: list[Path]
         ignored_folders: dict[Path, int]  # folder -> count of skipped files
+        recent_skipped: list[tuple[Path, int]]
     """
     min_bytes = int(cfg.min_size_gb * 1024**3)
+    min_file_age_minutes = max(0, int(getattr(cfg, "min_file_age_minutes", 0)))
+    now = time.time()
 
     candidates: list[Path] = []
     ignored_folders = defaultdict(int)
     failed_skipped: list[Path] = []
+    recent_skipped: list[tuple[Path, int]] = []
 
     for p in cfg.media_root.rglob("*.mkv"):
         try:
@@ -66,8 +71,15 @@ def gather_candidates(cfg: Config, logger: Logger):
                 continue
             if p.name.endswith(".encoded.mkv"):
                 continue
-            if p.stat().st_size < min_bytes:
+            stat = p.stat()
+            if stat.st_size < min_bytes:
                 continue
+
+            if min_file_age_minutes > 0:
+                age_minutes = int(max(0, (now - stat.st_mtime) // 60))
+                if age_minutes < min_file_age_minutes:
+                    recent_skipped.append((p, age_minutes))
+                    continue
 
             candidates.append(p)
 
@@ -77,6 +89,19 @@ def gather_candidates(cfg: Config, logger: Logger):
             continue
 
     candidates.sort(key=lambda x: x.stat().st_size, reverse=True)
+
+    # Log recently modified skips summary
+    if recent_skipped:
+        logger.log("===== SKIPPED RECENTLY MODIFIED FILES =====")
+        logger.log(f"SKIPPED RECENTLY MODIFIED: {len(recent_skipped)}")
+        for p, age_minutes in recent_skipped[:10]:
+            logger.log("Skipping file (recently modified):")
+            logger.log(str(p))
+            logger.log(f"modified {age_minutes} minutes ago")
+            logger.log(f"minimum age: {min_file_age_minutes} minutes")
+        if len(recent_skipped) > 10:
+            logger.log(f"...and {len(recent_skipped) - 10} more")
+        logger.log("===========================================")
 
     # Log skipped failed files summary
     if failed_skipped:
@@ -95,4 +120,4 @@ def gather_candidates(cfg: Config, logger: Logger):
             logger.log(f"IGNORED: {folder}  ({count} files)")
         logger.log("==========================================")
 
-    return candidates, ignored_folders
+    return candidates, ignored_folders, recent_skipped
