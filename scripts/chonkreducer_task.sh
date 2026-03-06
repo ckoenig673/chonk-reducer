@@ -24,6 +24,10 @@ DISCORD_USER_ID="${DISCORD_USER_ID:-}"
 LOG_DIR="$PROJ_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# Where to store wrapper state (host)
+STATE_ROOT="${STATE_ROOT:-$PROJ_DIR/.task_state}"
+mkdir -p "$STATE_ROOT"
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
 TASK_LOG="$LOG_DIR/${SERVICE}_${STAMP}.task.log"
 
@@ -107,17 +111,49 @@ else
   log "[git] git not available or repo not initialized; skipping update check"
 fi
 
-# --- QUICK SAFETY CHECK (pytest, only after repo changes) ---
+# --- QUICK SAFETY CHECK (pytest required unless current commit already validated) ---
 RUN_PYTEST="${RUN_PYTEST:-true}"
-if [ "$RUN_PYTEST" = "true" ] && [ "$REPO_CHANGED" = "true" ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    log "[test] running pytest..."
-    PYTHONPATH=src python3 -m pytest -q >>"$TASK_LOG" 2>&1 || { log "[test] pytest failed; aborting"; exit 1; }
+CURRENT_HEAD=""
+if command -v git >/dev/null 2>&1 && [ -d ".git" ]; then
+  CURRENT_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+fi
+
+LAST_TESTED_FILE="$STATE_ROOT/${SERVICE}.last_tested_sha"
+LAST_TESTED_SHA=""
+if [ -f "$LAST_TESTED_FILE" ]; then
+  LAST_TESTED_SHA="$(sed -n '1p' "$LAST_TESTED_FILE" 2>/dev/null | tr -d '[:space:]')"
+fi
+
+if [ "$RUN_PYTEST" = "true" ]; then
+  NEEDS_PYTEST="false"
+  if [ "$REPO_CHANGED" = "true" ]; then
+    log "[test] current commit not yet validated — running pytest"
+    NEEDS_PYTEST="true"
+  elif [ -n "$CURRENT_HEAD" ] && [ "$CURRENT_HEAD" = "$LAST_TESTED_SHA" ]; then
+    log "[test] current commit already validated — skipping pytest"
   else
-    log "[test] python3 not found; skipping pytest"
+    log "[test] current commit not yet validated — running pytest"
+    NEEDS_PYTEST="true"
   fi
-elif [ "$RUN_PYTEST" = "true" ]; then
-  log "[test] repository unchanged — skipping pytest"
+
+  if [ "$NEEDS_PYTEST" = "true" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+      PYTHONPATH=src python3 -m pytest -q >>"$TASK_LOG" 2>&1 || {
+        SHORT_SHA="$(printf '%.7s' "$CURRENT_HEAD")"
+        [ -z "$SHORT_SHA" ] && SHORT_SHA="unknown"
+        log "[test] pytest failed for commit $SHORT_SHA — aborting"
+        exit 1
+      }
+      if [ -n "$CURRENT_HEAD" ]; then
+        printf '%s\n' "$CURRENT_HEAD" >"$LAST_TESTED_FILE"
+        log "[test] pytest passed for commit $(printf '%.7s' "$CURRENT_HEAD")"
+      else
+        log "[test] pytest passed"
+      fi
+    else
+      log "[test] python3 not found; skipping pytest"
+    fi
+  fi
 fi
 
 # --- REBUILD IMAGE (only when code changed, or image missing) ---
