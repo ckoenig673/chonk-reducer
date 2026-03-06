@@ -141,6 +141,37 @@ def _iter_ndjson(path: Path) -> Iterable[Dict[str, Any]]:
         return
 
 
+def _event_exists(conn: sqlite3.Connection, obj: Dict[str, Any]) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM encodes
+        WHERE run_id = ?
+          AND ts = ?
+          AND status = ?
+          AND COALESCE(stage, '') = COALESCE(?, '')
+          AND COALESCE(path, '') = COALESCE(?, '')
+          AND COALESCE(filename, '') = COALESCE(?, '')
+          AND COALESCE(size_before_bytes, -1) = COALESCE(?, -1)
+          AND COALESCE(size_after_bytes, -1) = COALESCE(?, -1)
+          AND COALESCE(saved_bytes, -1) = COALESCE(?, -1)
+        LIMIT 1
+        """,
+        (
+            str(obj.get("run_id") or ""),
+            str(obj.get("ts") or ""),
+            str(obj.get("status") or ""),
+            obj.get("stage"),
+            obj.get("path"),
+            obj.get("filename"),
+            obj.get("size_before_bytes"),
+            obj.get("size_after_bytes"),
+            obj.get("saved_bytes"),
+        ),
+    ).fetchone()
+    return row is not None
+
+
 def _update_run_summary(conn: sqlite3.Connection, run_id: str) -> None:
     conn.execute(
         """
@@ -228,15 +259,16 @@ def _insert_event(conn: sqlite3.Connection, obj: Dict[str, Any]) -> None:
 
 
 def _migrate_ndjson_if_needed(cfg: Config, db_path: Path, logger: Logger) -> None:
-    migrated_marker = Path(str(_legacy_stats_path(cfg, db_path)) + ".migrated")
     legacy = _legacy_stats_path(cfg, db_path)
-    if db_path.exists() or not legacy.exists() or migrated_marker.exists():
+    migrated_marker = Path(str(legacy) + ".migrated")
+    if not legacy.exists() or migrated_marker.exists():
         return
 
+    logger.log(f"Migrating legacy stats file: {legacy}")
     conn = _connect(db_path)
     try:
+        imported = 0
         with conn:
-            grouped: Dict[str, List[Dict[str, Any]]] = {}
             unknown_index = 0
             for row in _iter_ndjson(legacy):
                 run_id = str(row.get("run_id") or "").strip()
@@ -244,14 +276,12 @@ def _migrate_ndjson_if_needed(cfg: Config, db_path: Path, logger: Logger) -> Non
                     run_id = "legacy-unknown-%d" % unknown_index
                     unknown_index += 1
                 row["run_id"] = run_id
-                grouped.setdefault(run_id, []).append(row)
-
-            for run_rows in grouped.values():
-                run_rows.sort(key=lambda r: str(r.get("ts") or ""))
-                for row in run_rows:
+                if not _event_exists(conn, row):
                     _insert_event(conn, row)
+                    imported += 1
+        logger.log(f"Imported {imported} legacy records")
         legacy.rename(migrated_marker)
-        logger.log(f"Migrated NDJSON stats to SQLite: {legacy} -> {migrated_marker}")
+        logger.log(f"Renamed file to {migrated_marker.name}")
     except Exception as e:
         logger.log(f"WARN: NDJSON migration failed safely: {legacy} ({e})")
     finally:
