@@ -126,7 +126,14 @@ REBUILD_NO_CACHE="${REBUILD_NO_CACHE:-true}"
 if [ "$REBUILD_IMAGE" = "true" ]; then
   SHOULD_BUILD="$REPO_CHANGED"
   if [ "$SHOULD_BUILD" != "true" ]; then
-    EXISTING_IMAGE_ID="$($DOCKER compose -f "$COMPOSE" images -q "$SERVICE" 2>>"$TASK_LOG" || true)"
+    set +e
+    EXISTING_IMAGE_ID="$($DOCKER compose -f "$COMPOSE" images -q "$SERVICE" 2>>"$TASK_LOG")"
+    IMAGE_LOOKUP_RC=$?
+    set -e
+    if [ $IMAGE_LOOKUP_RC -ne 0 ]; then
+      log "[build] image lookup failed for $SERVICE (continuing with rebuild)"
+      EXISTING_IMAGE_ID=""
+    fi
     if [ -z "$EXISTING_IMAGE_ID" ]; then
       SHOULD_BUILD="true"
       log "[build] no local image found for $SERVICE — building container"
