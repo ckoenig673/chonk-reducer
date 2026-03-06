@@ -4,7 +4,10 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo  # py3.9+
+except ModuleNotFoundError:  # py3.8 (Synology)
+    from backports.zoneinfo import ZoneInfo
 
 
 def _get_tz() -> ZoneInfo | None:
