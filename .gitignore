@@ -223,3 +223,8 @@ __marimo__/
 @eaDir/
 logs/
 *.pyc
+
+# ingore db files
+/config/chonk.db
+/config/chonk.db-wal
+/config/chonk.db-shm
