@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Optional
 
 from .discord_utils import send_discord_message, notify_weekly_enabled
 from .logging_utils import Logger
+from .stats import fetch_encodes_since
 
 
 def _env(name: str, default: str) -> str:
@@ -45,6 +44,8 @@ def _prune_old_reports(report_dir: Path, retention_days: int, logger: Logger) ->
                 continue
     if deleted:
         logger.log(f"Report retention: deleted {deleted} report(s) older than {retention_days} day(s)")
+
+
 def _fmt_gb(n_bytes: int) -> str:
     return f"{n_bytes / (1024**3):.2f}GB"
 
@@ -69,30 +70,6 @@ class Totals:
             self.saved_pct_avg = self._saved_pct_sum / self.success
 
 
-def _parse_ts(ts: str) -> Optional[datetime]:
-    try:
-        # NDJSON uses ISO without timezone, e.g. 2026-03-03T13:13:13
-        return datetime.fromisoformat(ts)
-    except Exception:
-        return None
-
-
-def _read_ndjson(path: Path) -> Iterable[dict]:
-    if not path.exists():
-        return []
-    rows = []
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except Exception:
-                continue
-    except Exception:
-        return []
-    return rows
 
 
 def generate_weekly_report() -> int:
@@ -101,7 +78,7 @@ def generate_weekly_report() -> int:
     now = datetime.now()
     start = now - timedelta(days=days)
 
-    stats_paths_raw = _env("WEEKLY_STATS_PATHS", "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson")
+    stats_paths_raw = _env("WEEKLY_STATS_PATHS", "/config/chonk.db")
     stats_paths = [Path(p.strip()) for p in stats_paths_raw.split(",") if p.strip()]
 
     report_dir = Path(_env("REPORTS_DIR", "/work/reports"))
@@ -122,54 +99,52 @@ def generate_weekly_report() -> int:
     skip_reason_breakdown: dict[str, int] = {}
 
     total_rows = 0
-    for sp in stats_paths:
-        for row in _read_ndjson(sp):
-            total_rows += 1
-            ts = _parse_ts(str(row.get("ts", "")))
-            if not ts or ts < start:
-                continue
+    for row in fetch_encodes_since(stats_paths, start):
+        total_rows += 1
 
-            lib = str(row.get("library", "")).lower().strip() or "unknown"
-            if lib == "movie":
-                lib = "movies"
-            if lib not in by_lib:
-                by_lib[lib] = Totals()
+        lib = str(row.get("library", "")).lower().strip() or "unknown"
+        if lib == "movie":
+            lib = "movies"
+        if lib not in by_lib:
+            by_lib[lib] = Totals()
 
-            status = str(row.get("status", "")).lower().strip()
-            stage = str(row.get("fail_stage") or row.get("stage") or "").lower().strip()
+        status = str(row.get("status", "")).lower().strip()
+        stage = str(row.get("fail_stage") or row.get("stage") or "").lower().strip()
 
-            if status == "success":
-                b = int(row.get("size_before_bytes") or 0)
-                a = int(row.get("size_after_bytes") or 0)
-                s = int(row.get("saved_bytes") or max(b - a, 0))
-                pct = float(row.get("saved_pct") or 0.0)
+        if status == "success":
+            b = int(row.get("size_before_bytes") or 0)
+            a = int(row.get("size_after_bytes") or 0)
+            s = int(row.get("saved_bytes") or max(b - a, 0))
+            pct = float(row.get("saved_pct") or 0.0)
 
-                for t in (by_lib[lib], combined):
-                    t.success += 1
-                    t.before_bytes += b
-                    t.after_bytes += a
-                    t.saved_bytes += s
-                    t._saved_pct_sum += pct
+            for t in (by_lib[lib], combined):
+                t.success += 1
+                t.before_bytes += b
+                t.after_bytes += a
+                t.saved_bytes += s
+                t._saved_pct_sum += pct
 
-                top_saves.append({
+            top_saves.append(
+                {
                     "saved_bytes": s,
                     "saved_pct": pct,
                     "path": row.get("path") or row.get("filename") or "",
                     "library": lib,
-                })
-            elif status == "failed":
-                for t in (by_lib[lib], combined):
-                    t.failed += 1
-                if stage:
-                    fail_stage[stage] = fail_stage.get(stage, 0) + 1
-            elif status == "skipped":
-                for t in (by_lib[lib], combined):
-                    t.skipped += 1
-                sr = str(row.get("skip_reason") or "").lower().strip() or "unknown"
-                skip_reason_breakdown[sr] = skip_reason_breakdown.get(sr, 0) + 1
-            else:
-                for t in (by_lib[lib], combined):
-                    t.unknown += 1
+                }
+            )
+        elif status == "failed":
+            for t in (by_lib[lib], combined):
+                t.failed += 1
+            if stage:
+                fail_stage[stage] = fail_stage.get(stage, 0) + 1
+        elif status == "skipped":
+            for t in (by_lib[lib], combined):
+                t.skipped += 1
+            sr = str(row.get("skip_reason") or "").lower().strip() or "unknown"
+            skip_reason_breakdown[sr] = skip_reason_breakdown.get(sr, 0) + 1
+        else:
+            for t in (by_lib[lib], combined):
+                t.unknown += 1
 
     for t in list(by_lib.values()) + [combined]:
         t.finalize()

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
-from chonk_reducer.stats import record_failure, record_skip, record_success
+from chonk_reducer.stats import (
+    ensure_database,
+    fetch_run_summaries,
+    record_failure,
+    record_skip,
+    record_success,
+)
 
 
 class StubLogger:
@@ -15,7 +22,7 @@ class StubLogger:
 def _cfg(tmp_path: Path):
     return SimpleNamespace(
         stats_enabled=True,
-        stats_path=tmp_path / "stats.ndjson",
+        stats_path=tmp_path / "chonk.db",
         version="test",
         media_root=tmp_path / "movies",
         library="movies",
@@ -25,7 +32,88 @@ def _cfg(tmp_path: Path):
     )
 
 
-def test_stats_record_success_and_saved_bytes(tmp_path):
+def _count_rows(db_path: Path, table: str) -> int:
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.execute(f"SELECT COUNT(*) FROM {table}")
+    val = int(cur.fetchone()[0])
+    conn.close()
+    return val
+
+
+def test_database_initialization_creates_schema_and_wal(tmp_path):
+    cfg = _cfg(tmp_path)
+    db_path = ensure_database(cfg, StubLogger())
+
+    assert db_path.exists()
+    conn = sqlite3.connect(str(db_path))
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    mode = conn.execute("PRAGMA journal_mode;").fetchone()[0].lower()
+    conn.close()
+
+    assert "runs" in tables
+    assert "encodes" in tables
+    assert mode == "wal"
+
+
+def test_migration_from_ndjson(tmp_path):
+    cfg = _cfg(tmp_path)
+    legacy = cfg.media_root / ".chonkstats.ndjson"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "ts": "2026-01-01T00:00:01",
+            "run_id": "run-1",
+            "version": "test",
+            "library": "movies",
+            "mode": "live",
+            "encoder": "hevc_qsv",
+            "quality": 21,
+            "preset": 7,
+            "status": "success",
+            "stage": "swap",
+            "path": "/movies/a.mkv",
+            "filename": "a.mkv",
+            "size_before_bytes": 100,
+            "size_after_bytes": 60,
+            "saved_bytes": 40,
+            "saved_pct": 40.0,
+            "duration_seconds": 1.2,
+        },
+        {
+            "ts": "2026-01-01T00:00:03",
+            "run_id": "run-1",
+            "version": "test",
+            "library": "movies",
+            "mode": "live",
+            "encoder": "hevc_qsv",
+            "quality": 21,
+            "preset": 7,
+            "status": "failed",
+            "stage": "encode",
+            "fail_stage": "encode",
+            "path": "/movies/b.mkv",
+            "filename": "b.mkv",
+            "size_before_bytes": 200,
+            "duration_seconds": 0.3,
+            "error_type": "RuntimeError",
+            "error_msg": "boom",
+        },
+    ]
+    legacy.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    ensure_database(cfg, StubLogger())
+
+    migrated = legacy.with_suffix(legacy.suffix + ".migrated")
+    assert migrated.exists()
+    assert not legacy.exists()
+    assert _count_rows(cfg.stats_path, "encodes") == 2
+    summaries = fetch_run_summaries(cfg.stats_path)
+    assert summaries[0]["run_id"] == "run-1"
+    assert summaries[0]["success_count"] == 1
+    assert summaries[0]["failed_count"] == 1
+
+
+def test_encode_insertion(tmp_path):
     cfg = _cfg(tmp_path)
     src = tmp_path / "movie.mkv"
     src.write_bytes(b"x")
@@ -44,12 +132,14 @@ def test_stats_record_success_and_saved_bytes(tmp_path):
         duration_seconds=1.2,
     )
 
-    row = json.loads(cfg.stats_path.read_text().splitlines()[0])
-    assert row["status"] == "success"
-    assert row["saved_bytes"] == 400
+    conn = sqlite3.connect(str(cfg.stats_path))
+    row = conn.execute("SELECT status, saved_bytes FROM encodes").fetchone()
+    conn.close()
+    assert row[0] == "success"
+    assert row[1] == 400
 
 
-def test_stats_record_skip_and_failure(tmp_path):
+def test_run_summaries(tmp_path):
     cfg = _cfg(tmp_path)
     src = tmp_path / "movie.mkv"
     src.write_bytes(b"x")
@@ -76,5 +166,9 @@ def test_stats_record_skip_and_failure(tmp_path):
         err=RuntimeError("boom"),
     )
 
-    rows = [json.loads(line) for line in cfg.stats_path.read_text().splitlines()]
-    assert [r["status"] for r in rows] == ["skipped", "failed"]
+    summaries = fetch_run_summaries(cfg.stats_path)
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary["run_id"] == "r2"
+    assert summary["skipped_count"] == 1
+    assert summary["failed_count"] == 1

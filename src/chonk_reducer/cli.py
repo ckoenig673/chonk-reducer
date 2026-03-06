@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("run", help="Run transcoding pipeline (default)")
     sub.add_parser("healthcheck", help="Strict read-only healthcheck (no media processing)")
-    sub.add_parser("weekly-report", help="Generate weekly savings report from NDJSON stats")
+    sub.add_parser("weekly-report", help="Generate weekly savings report from SQLite stats")
 
     args = parser.parse_args(argv)
 

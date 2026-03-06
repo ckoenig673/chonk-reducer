@@ -242,8 +242,9 @@ These are passed to the **container** via `compose.yaml` (`environment:`). Movie
 | `WORK_CLEANUP_HOURS` | `0` | Delete temp files under WORK_ROOT older than this many hours. |
 | `LOG_RETENTION_DAYS` | `30` | Delete old transcode logs under `/work/logs` older than this many days. |
 | `BAK_RETENTION_DAYS` | `60` | Delete old `*.bak.*` files under MEDIA_ROOT older than this many days. |
-| `STATS_ENABLED` | `True` | Write per-file NDJSON stats to STATS_PATH. |
-| `STATS_PATH` | `/movies/.chonkstats.ndjson` | Where NDJSON stats are written (container path). |
+| `STATS_ENABLED` | `True` | Write per-file metrics into SQLite (`runs` + `encodes`) at STATS_PATH. |
+| `STATS_PATH` | `/config/chonk.db` | SQLite database location for metrics and weekly reporting. |
+| `WEEKLY_STATS_PATHS` | `/config/chonk.db` | Comma-separated SQLite database paths for `weekly-report`. |
 | `WEEKLY_REPORT_DAYS` | `7` | Lookback window (days) for the weekly report command. |
 | `REPORT_RETENTION_DAYS` | `0` | Delete weekly report files older than this many days (0 disables). |
 | `LOCK_STALE_HOURS` | `12` | Consider a lock stale after this many hours. |
@@ -253,7 +254,7 @@ These are passed to the **container** via `compose.yaml` (`environment:`). Movie
 ### Notes
 
 - Values are read from env and parsed as bool/int/float where applicable.
-- `STATS_PATH` should live on the media volume if you want one stats file per library.
+- `STATS_PATH` now points to a SQLite DB (default `/config/chonk.db`). On first startup, legacy `.chonkstats.ndjson` in MEDIA_ROOT is auto-migrated and renamed to `.chonkstats.ndjson.migrated`.
 - `REPORT_RETENTION_DAYS` is applied by the `weekly-report` command to prune old `weekly_*.md` files.
 
 ---
