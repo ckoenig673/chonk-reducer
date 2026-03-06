@@ -49,12 +49,19 @@ def _write_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
     fake_docker.write_text(
         "#!/bin/sh\n"
         "echo \"$*\" >>\"$DOCKER_CALLS\"\n"
-        "if [ \"${FAKE_IMAGES_FAIL:-0}\" = \"1\" ] && echo \"$*\" | grep -q \"images -q\"; then\n"
+        "if [ \"${FAKE_IMAGE_LOOKUP_FAIL:-0}\" = \"1\" ] && echo \"$*\" | grep -q \"config --images\"; then\n"
         "  exit 1\n"
         "fi\n"
+        "if [ \"${FAKE_IMAGE_LOOKUP_EMPTY:-0}\" = \"1\" ] && echo \"$*\" | grep -q \"config --images\"; then\n"
+        "  exit 0\n"
+        "fi\n"
         "case \"$*\" in\n"
-        "  *\"images -q\"*)\n"
-        "    [ -n \"${FAKE_IMAGE_ID:-}\" ] && echo \"$FAKE_IMAGE_ID\"\n"
+        "  *\"config --images\"*)\n"
+        "    echo \"${FAKE_SERVICE_IMAGE_NAME:-}\"\n"
+        "    ;;\n"
+        "  *\"image inspect\"*)\n"
+        "    [ \"${FAKE_IMAGE_INSPECT_FOUND:-1}\" = \"1\" ] && exit 0\n"
+        "    exit 1\n"
         "    ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -78,8 +85,10 @@ def _run_wrapper(
     script_path: Path,
     service: str,
     *,
-    fake_image_id: str = "img-123",
-    fake_images_fail: str = "0",
+    fake_service_image_name: str = "nas-transcoder-test-service",
+    fake_image_inspect_found: str = "1",
+    fake_image_lookup_fail: str = "0",
+    fake_image_lookup_empty: str = "0",
 ) -> tuple[int, str]:
     docker_calls = project / "docker_calls.log"
     python_calls = project / "python_calls.log"
@@ -99,8 +108,10 @@ def _run_wrapper(
             "RUN_PYTEST": "true",
             "REBUILD_IMAGE": "true",
             "REBUILD_NO_CACHE": "false",
-            "FAKE_IMAGE_ID": fake_image_id,
-            "FAKE_IMAGES_FAIL": fake_images_fail,
+            "FAKE_SERVICE_IMAGE_NAME": fake_service_image_name,
+            "FAKE_IMAGE_INSPECT_FOUND": fake_image_inspect_found,
+            "FAKE_IMAGE_LOOKUP_FAIL": fake_image_lookup_fail,
+            "FAKE_IMAGE_LOOKUP_EMPTY": fake_image_lookup_empty,
             "PATH": f"{bin_dir}:{env['PATH']}",
         }
     )
@@ -120,7 +131,7 @@ def test_task_skips_build_and_pytest_when_repo_unchanged(tmp_path: Path) -> None
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
     assert "[test] repository unchanged — skipping pytest" in log_text
-    assert "[build] repository up to date — skipping container rebuild" in log_text
+    assert "[build] repository up to date and local image exists — skipping container rebuild" in log_text
 
 
 def test_task_pulls_and_rebuilds_when_updates_detected(tmp_path: Path) -> None:
@@ -139,7 +150,7 @@ def test_task_builds_when_image_missing_even_without_repo_updates(tmp_path: Path
     project = _setup_git_clone(tmp_path)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-fresh", fake_image_id="")
+    rc, log_text = _run_wrapper(project, script_path, "svc-fresh", fake_image_inspect_found="0")
 
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
@@ -151,10 +162,21 @@ def test_task_builds_when_image_lookup_fails_even_without_repo_updates(tmp_path:
     project = _setup_git_clone(tmp_path)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-image-lookup-fail", fake_images_fail="1")
+    rc, log_text = _run_wrapper(project, script_path, "svc-image-lookup-fail", fake_image_lookup_fail="1")
 
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
-    assert "[build] image lookup failed for svc-image-lookup-fail (continuing with rebuild)" in log_text
     assert "[build] no local image found for svc-image-lookup-fail — building container" in log_text
     assert "[build] rebuilding image for service: svc-image-lookup-fail" in log_text
+
+
+def test_task_builds_when_image_name_lookup_returns_empty(tmp_path: Path) -> None:
+    project = _setup_git_clone(tmp_path)
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
+
+    rc, log_text = _run_wrapper(project, script_path, "svc-image-name-empty", fake_image_lookup_empty="1")
+
+    assert rc == 0
+    assert "[git] repository up to date — skipping pull" in log_text
+    assert "[build] no local image found for svc-image-name-empty — building container" in log_text
+    assert "[build] rebuilding image for service: svc-image-name-empty" in log_text

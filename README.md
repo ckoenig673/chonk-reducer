@@ -153,8 +153,9 @@ The task wrapper now checks for remote Git updates before rebuilding containers:
 1. `git fetch --all --prune`
 2. compare local `HEAD` with upstream remote head
 3. if commits changed: pull latest, run `pytest -q`, rebuild image
-4. if unchanged: skip pull/test/build and reuse existing image
-5. always run `docker compose run --rm <service>`
+4. if unchanged: resolve the Compose-built image name and skip pull/test/build when that local image exists
+5. if unchanged and image is missing: rebuild image, then run
+6. always run `docker compose run --rm <service>`
 
 This reduces NAS CPU usage by avoiding unnecessary Docker builds while still rebuilding whenever code changes are detected.
 
