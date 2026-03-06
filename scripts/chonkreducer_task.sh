@@ -123,18 +123,42 @@ fi
 # --- REBUILD IMAGE (only when code changed, or image missing) ---
 REBUILD_IMAGE="${REBUILD_IMAGE:-true}"
 REBUILD_NO_CACHE="${REBUILD_NO_CACHE:-true}"
+
+compose_service_image_exists() {
+  service="$1"
+
+  set +e
+  service_image_name="$($DOCKER compose -f "$COMPOSE" config --images "$service" 2>>"$TASK_LOG")"
+  image_name_rc=$?
+  set -e
+
+  if [ $image_name_rc -ne 0 ]; then
+    return 1
+  fi
+
+  service_image_name="$(printf '%s\n' "$service_image_name" | awk 'NF {print; exit}')"
+  if [ -z "$service_image_name" ]; then
+    return 1
+  fi
+
+  set +e
+  "$DOCKER" image inspect "$service_image_name" >/dev/null 2>>"$TASK_LOG"
+  image_inspect_rc=$?
+  set -e
+
+  if [ $image_inspect_rc -eq 0 ]; then
+    return 0
+  fi
+
+  return 1
+}
+
 if [ "$REBUILD_IMAGE" = "true" ]; then
   SHOULD_BUILD="$REPO_CHANGED"
   if [ "$SHOULD_BUILD" != "true" ]; then
-    set +e
-    EXISTING_IMAGE_ID="$($DOCKER compose -f "$COMPOSE" images -q "$SERVICE" 2>>"$TASK_LOG")"
-    IMAGE_LOOKUP_RC=$?
-    set -e
-    if [ $IMAGE_LOOKUP_RC -ne 0 ]; then
-      log "[build] image lookup failed for $SERVICE (continuing with rebuild)"
-      EXISTING_IMAGE_ID=""
-    fi
-    if [ -z "$EXISTING_IMAGE_ID" ]; then
+    if compose_service_image_exists "$SERVICE"; then
+      log "[build] repository up to date and local image exists — skipping container rebuild"
+    else
       SHOULD_BUILD="true"
       log "[build] no local image found for $SERVICE — building container"
     fi
@@ -148,7 +172,9 @@ if [ "$REBUILD_IMAGE" = "true" ]; then
     log "[build] rebuilding image for service: $SERVICE ($BUILD_ARGS)"
     "$DOCKER" compose -f "$COMPOSE" build $BUILD_ARGS "$SERVICE" >>"$TASK_LOG" 2>&1 || { log "[build] docker compose build failed; aborting"; exit 1; }
   else
-    log "[build] repository up to date — skipping container rebuild"
+    if [ "$REPO_CHANGED" = "true" ]; then
+      log "[build] repository up to date — skipping container rebuild"
+    fi
   fi
 fi
 
