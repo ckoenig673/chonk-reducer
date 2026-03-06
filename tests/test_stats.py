@@ -230,6 +230,62 @@ def test_migration_skips_duplicate_records(tmp_path):
     assert _count_rows(cfg.stats_path, "encodes") == 1
 
 
+
+
+def test_runs_table_migration_adds_summary_counter_columns(tmp_path):
+    cfg = _cfg(tmp_path)
+    db_path = cfg.stats_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY,
+            ts_start TEXT NOT NULL,
+            ts_end TEXT NOT NULL,
+            mode TEXT,
+            library TEXT,
+            version TEXT,
+            encoder TEXT,
+            quality INTEGER,
+            preset INTEGER,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            before_bytes INTEGER NOT NULL DEFAULT 0,
+            after_bytes INTEGER NOT NULL DEFAULT 0,
+            saved_bytes INTEGER NOT NULL DEFAULT 0,
+            duration_seconds REAL NOT NULL DEFAULT 0.0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    ensure_database(cfg, StubLogger())
+
+    conn = sqlite3.connect(str(db_path))
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    conn.close()
+
+    expected = {
+        "candidates_found",
+        "prefiltered_count",
+        "evaluated_count",
+        "processed_count",
+        "prefiltered_marker_count",
+        "prefiltered_backup_count",
+        "skipped_codec_count",
+        "skipped_resolution_count",
+        "skipped_min_savings_count",
+        "skipped_max_savings_count",
+        "skipped_dry_run_count",
+        "ignored_folder_count",
+        "ignored_file_count",
+    }
+    assert expected.issubset(cols)
+
 def test_encode_insertion(tmp_path):
     cfg = _cfg(tmp_path)
     src = tmp_path / "movie.mkv"
@@ -289,3 +345,5 @@ def test_run_summaries(tmp_path):
     assert summary["run_id"] == "r2"
     assert summary["skipped_count"] == 1
     assert summary["failed_count"] == 1
+    assert summary["candidates_found"] == 0
+    assert summary["processed_count"] == 0

@@ -214,3 +214,47 @@ def test_run_migrates_legacy_stats_with_zero_candidates(tmp_path, monkeypatch):
     count = conn.execute("SELECT COUNT(*) FROM encodes").fetchone()[0]
     conn.close()
     assert count == 1
+
+
+def test_run_persists_run_summary_counters(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, dry_run=True, max_files=1, stats_enabled=True, stats_path=tmp_path / "chonk.db")
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}))
+
+    rc = runner.run()
+
+    assert rc == 0
+    conn = sqlite3.connect(str(cfg.stats_path))
+    row = conn.execute(
+        """
+        SELECT
+            candidates_found,
+            prefiltered_count,
+            evaluated_count,
+            processed_count,
+            prefiltered_marker_count,
+            prefiltered_backup_count,
+            skipped_codec_count,
+            skipped_resolution_count,
+            skipped_min_savings_count,
+            skipped_max_savings_count,
+            skipped_dry_run_count,
+            ignored_folder_count,
+            ignored_file_count
+        FROM runs
+        ORDER BY ts_start DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    conn.close()
+
+    assert row == (1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0)

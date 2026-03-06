@@ -28,7 +28,20 @@ CREATE TABLE IF NOT EXISTS runs (
     before_bytes INTEGER NOT NULL DEFAULT 0,
     after_bytes INTEGER NOT NULL DEFAULT 0,
     saved_bytes INTEGER NOT NULL DEFAULT 0,
-    duration_seconds REAL NOT NULL DEFAULT 0.0
+    duration_seconds REAL NOT NULL DEFAULT 0.0,
+    candidates_found INTEGER NOT NULL DEFAULT 0,
+    prefiltered_count INTEGER NOT NULL DEFAULT 0,
+    evaluated_count INTEGER NOT NULL DEFAULT 0,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    prefiltered_marker_count INTEGER NOT NULL DEFAULT 0,
+    prefiltered_backup_count INTEGER NOT NULL DEFAULT 0,
+    skipped_codec_count INTEGER NOT NULL DEFAULT 0,
+    skipped_resolution_count INTEGER NOT NULL DEFAULT 0,
+    skipped_min_savings_count INTEGER NOT NULL DEFAULT 0,
+    skipped_max_savings_count INTEGER NOT NULL DEFAULT 0,
+    skipped_dry_run_count INTEGER NOT NULL DEFAULT 0,
+    ignored_folder_count INTEGER NOT NULL DEFAULT 0,
+    ignored_file_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS encodes (
@@ -66,6 +79,23 @@ CREATE INDEX IF NOT EXISTS idx_encodes_ts ON encodes(ts);
 CREATE INDEX IF NOT EXISTS idx_encodes_library_ts ON encodes(library, ts);
 CREATE INDEX IF NOT EXISTS idx_encodes_status_ts ON encodes(status, ts);
 """
+
+
+RUNS_COUNTER_COLUMNS = {
+    "candidates_found": "INTEGER NOT NULL DEFAULT 0",
+    "prefiltered_count": "INTEGER NOT NULL DEFAULT 0",
+    "evaluated_count": "INTEGER NOT NULL DEFAULT 0",
+    "processed_count": "INTEGER NOT NULL DEFAULT 0",
+    "prefiltered_marker_count": "INTEGER NOT NULL DEFAULT 0",
+    "prefiltered_backup_count": "INTEGER NOT NULL DEFAULT 0",
+    "skipped_codec_count": "INTEGER NOT NULL DEFAULT 0",
+    "skipped_resolution_count": "INTEGER NOT NULL DEFAULT 0",
+    "skipped_min_savings_count": "INTEGER NOT NULL DEFAULT 0",
+    "skipped_max_savings_count": "INTEGER NOT NULL DEFAULT 0",
+    "skipped_dry_run_count": "INTEGER NOT NULL DEFAULT 0",
+    "ignored_folder_count": "INTEGER NOT NULL DEFAULT 0",
+    "ignored_file_count": "INTEGER NOT NULL DEFAULT 0",
+}
 
 
 def _iso_ts() -> str:
@@ -108,7 +138,18 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.executescript(SCHEMA)
+    _ensure_runs_columns(conn)
     return conn
+
+
+def _ensure_runs_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(runs)").fetchall()
+    }
+    for col, col_type in RUNS_COUNTER_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
 
 
 def _legacy_stats_path(cfg: Config, db_path: Path) -> Path:
@@ -433,6 +474,72 @@ def record_dry_run(
         }
     )
     _record_event(cfg, logger, obj)
+
+
+def record_run_counters(
+    cfg: Config,
+    logger: Logger,
+    *,
+    run_id: str,
+    candidates_found: int,
+    prefiltered_count: int,
+    evaluated_count: int,
+    processed_count: int,
+    prefiltered_marker_count: int,
+    prefiltered_backup_count: int,
+    skipped_codec_count: int,
+    skipped_resolution_count: int,
+    skipped_min_savings_count: int,
+    skipped_max_savings_count: int,
+    skipped_dry_run_count: int,
+    ignored_folder_count: int,
+    ignored_file_count: int,
+) -> None:
+    if not getattr(cfg, "stats_enabled", False):
+        return
+    try:
+        db_path = ensure_database(cfg, logger)
+        conn = _connect(db_path)
+        with conn:
+            conn.execute(
+                """
+                UPDATE runs
+                SET
+                    candidates_found = ?,
+                    prefiltered_count = ?,
+                    evaluated_count = ?,
+                    processed_count = ?,
+                    prefiltered_marker_count = ?,
+                    prefiltered_backup_count = ?,
+                    skipped_codec_count = ?,
+                    skipped_resolution_count = ?,
+                    skipped_min_savings_count = ?,
+                    skipped_max_savings_count = ?,
+                    skipped_dry_run_count = ?,
+                    ignored_folder_count = ?,
+                    ignored_file_count = ?
+                WHERE run_id = ?
+                """,
+                (
+                    int(candidates_found),
+                    int(prefiltered_count),
+                    int(evaluated_count),
+                    int(processed_count),
+                    int(prefiltered_marker_count),
+                    int(prefiltered_backup_count),
+                    int(skipped_codec_count),
+                    int(skipped_resolution_count),
+                    int(skipped_min_savings_count),
+                    int(skipped_max_savings_count),
+                    int(skipped_dry_run_count),
+                    int(ignored_folder_count),
+                    int(ignored_file_count),
+                    str(run_id),
+                ),
+            )
+        conn.close()
+    except Exception as e:
+        logger.log(f"WARN: run summary stats update failed: {cfg.stats_path} ({e})")
 
 
 def fetch_encodes_since(db_paths: List[Path], start: datetime) -> List[Dict[str, Any]]:
