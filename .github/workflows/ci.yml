@@ -25,5 +25,3 @@ jobs:
 
       - name: Run pytest
         run: pytest -q
-
-
