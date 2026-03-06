@@ -72,6 +72,9 @@ def _write_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
     fake_python.write_text(
         "#!/bin/sh\n"
         "echo \"$*\" >>\"$PYTHON_CALLS\"\n"
+        "if [ \"${FAKE_PYTEST_FAIL:-0}\" = \"1\" ]; then\n"
+        "  exit 1\n"
+        "fi\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -89,7 +92,8 @@ def _run_wrapper(
     fake_image_inspect_found: str = "1",
     fake_image_lookup_fail: str = "0",
     fake_image_lookup_empty: str = "0",
-) -> tuple[int, str]:
+    fake_pytest_fail: str = "0",
+) -> tuple[int, str, str, str, Path]:
     docker_calls = project / "docker_calls.log"
     python_calls = project / "python_calls.log"
     compose = project / "compose.yaml"
@@ -112,6 +116,7 @@ def _run_wrapper(
             "FAKE_IMAGE_INSPECT_FOUND": fake_image_inspect_found,
             "FAKE_IMAGE_LOOKUP_FAIL": fake_image_lookup_fail,
             "FAKE_IMAGE_LOOKUP_EMPTY": fake_image_lookup_empty,
+            "FAKE_PYTEST_FAIL": fake_pytest_fail,
             "PATH": f"{bin_dir}:{env['PATH']}",
         }
     )
@@ -119,62 +124,117 @@ def _run_wrapper(
     run = subprocess.run(["/bin/sh", str(script_path), service], cwd=project, env=env, capture_output=True, text=True)
     task_logs = sorted((project / "logs").glob(f"{service}_*.task.log"))
     assert task_logs, "task log should be created"
-    return run.returncode, task_logs[-1].read_text(encoding="utf-8")
+    docker_text = docker_calls.read_text(encoding="utf-8") if docker_calls.exists() else ""
+    python_text = python_calls.read_text(encoding="utf-8") if python_calls.exists() else ""
+    return run.returncode, task_logs[-1].read_text(encoding="utf-8"), docker_text, python_text, project / ".task_state"
 
 
-def test_task_skips_build_and_pytest_when_repo_unchanged(tmp_path: Path) -> None:
+def test_repo_unchanged_and_commit_previously_validated_skips_pytest(tmp_path: Path) -> None:
     project = _setup_git_clone(tmp_path)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
+    state_dir = project / ".task_state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "svc-unchanged.last_tested_sha").write_text(f"{head_sha}\n", encoding="utf-8")
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-unchanged")
+    rc, log_text, docker_calls, python_calls, _ = _run_wrapper(project, script_path, "svc-unchanged")
 
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
-    assert "[test] repository unchanged — skipping pytest" in log_text
+    assert "[test] current commit already validated — skipping pytest" in log_text
+    assert python_calls == ""
     assert "[build] repository up to date and local image exists — skipping container rebuild" in log_text
+    assert "compose -f" in docker_calls
 
 
-def test_task_pulls_and_rebuilds_when_updates_detected(tmp_path: Path) -> None:
+def test_repo_changed_pytest_passes_records_commit_and_builds(tmp_path: Path) -> None:
     project = _setup_git_clone(tmp_path, with_remote_update=True)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-updated")
+    rc, log_text, _, _, state_root = _run_wrapper(project, script_path, "svc-updated")
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
 
     assert rc == 0
     assert "[git] updates detected — pulling latest changes" in log_text
-    assert "[test] running pytest..." in log_text
+    assert "[test] current commit not yet validated — running pytest" in log_text
+    assert f"[test] pytest passed for commit {head_sha[:7]}" in log_text
     assert "[build] rebuilding image for service: svc-updated" in log_text
+    assert (state_root / "svc-updated.last_tested_sha").read_text(encoding="utf-8").strip() == head_sha
 
 
-def test_task_builds_when_image_missing_even_without_repo_updates(tmp_path: Path) -> None:
+def test_repo_changed_pytest_fails_aborts_and_does_not_record_or_build(tmp_path: Path) -> None:
+    project = _setup_git_clone(tmp_path, with_remote_update=True)
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
+
+    rc, log_text, docker_calls, python_calls, state_root = _run_wrapper(
+        project,
+        script_path,
+        "svc-fail",
+        fake_pytest_fail="1",
+    )
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
+
+    assert rc != 0
+    assert "[test] current commit not yet validated — running pytest" in log_text
+    assert f"[test] pytest failed for commit {head_sha[:7]} — aborting" in log_text
+    assert "-m pytest -q" in python_calls
+    assert "compose -f" not in docker_calls or " build " not in docker_calls
+    assert " run --rm " not in docker_calls
+    assert not (state_root / "svc-fail.last_tested_sha").exists()
+
+
+def test_repo_unchanged_commit_not_validated_runs_pytest(tmp_path: Path) -> None:
     project = _setup_git_clone(tmp_path)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-fresh", fake_image_inspect_found="0")
+    rc, log_text, _, python_calls, state_root = _run_wrapper(project, script_path, "svc-unvalidated")
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
+
+    assert rc == 0
+    assert "[test] current commit not yet validated — running pytest" in log_text
+    assert "-m pytest -q" in python_calls
+    assert (state_root / "svc-unvalidated.last_tested_sha").read_text(encoding="utf-8").strip() == head_sha
+
+
+def test_repo_unchanged_image_missing_commit_validated_builds_without_pytest(tmp_path: Path) -> None:
+    project = _setup_git_clone(tmp_path)
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
+    state_dir = project / ".task_state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "svc-fresh.last_tested_sha").write_text(f"{head_sha}\n", encoding="utf-8")
+
+    rc, log_text, _, python_calls, _ = _run_wrapper(project, script_path, "svc-fresh", fake_image_inspect_found="0")
 
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
+    assert "[test] current commit already validated — skipping pytest" in log_text
+    assert python_calls == ""
     assert "[build] no local image found for svc-fresh — building container" in log_text
     assert "[build] rebuilding image for service: svc-fresh" in log_text
 
 
-def test_task_builds_when_image_lookup_fails_even_without_repo_updates(tmp_path: Path) -> None:
+def test_repo_unchanged_image_missing_commit_not_validated_runs_pytest_then_build(tmp_path: Path) -> None:
     project = _setup_git_clone(tmp_path)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-image-lookup-fail", fake_image_lookup_fail="1")
+    rc, log_text, _, python_calls, state_root = _run_wrapper(project, script_path, "svc-image-lookup-fail", fake_image_lookup_fail="1")
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, check=True, capture_output=True, text=True).stdout.strip()
 
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
+    assert "[test] current commit not yet validated — running pytest" in log_text
+    assert "-m pytest -q" in python_calls
     assert "[build] no local image found for svc-image-lookup-fail — building container" in log_text
     assert "[build] rebuilding image for service: svc-image-lookup-fail" in log_text
+    assert (state_root / "svc-image-lookup-fail.last_tested_sha").read_text(encoding="utf-8").strip() == head_sha
 
 
 def test_task_builds_when_image_name_lookup_returns_empty(tmp_path: Path) -> None:
     project = _setup_git_clone(tmp_path)
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
 
-    rc, log_text = _run_wrapper(project, script_path, "svc-image-name-empty", fake_image_lookup_empty="1")
+    rc, log_text, _, _, _ = _run_wrapper(project, script_path, "svc-image-name-empty", fake_image_lookup_empty="1")
 
     assert rc == 0
     assert "[git] repository up to date — skipping pull" in log_text
