@@ -288,6 +288,7 @@ These are passed to the **container** via `compose.yaml` (`environment:`). Movie
 
 - Values are read from env and parsed as bool/int/float where applicable.
 - `STATS_PATH` points to a shared SQLite DB (default `/config/chonk.db`) that can be used by multiple libraries (for example, movies and TV).
+- The `runs` table stores both aggregate encode results and operational run counters (candidates found, prefilter/skip breakdowns, evaluated/processed totals, and ignored folder/file counts).
 - On every startup, each library checks its own `MEDIA_ROOT/.chonkstats.ndjson`. If present, records are imported into SQLite and the file is renamed to `.chonkstats.ndjson.migrated`.
 - Migration is idempotent: already-migrated files are skipped and duplicate legacy records are not inserted again.
 - `REPORT_RETENTION_DAYS` is applied by the `weekly-report` command to prune old `weekly_*.md` files.

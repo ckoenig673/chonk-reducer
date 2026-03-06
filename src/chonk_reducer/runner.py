@@ -16,7 +16,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .skip_policy import evaluate_skip
-from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip
+from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters
 from . import __version__ as PKG_VERSION
 
 
@@ -554,6 +554,25 @@ def run() -> int:
         logger.log(f"Skipped (dry run):    {skipped_dry_run}")
         logger.log(f"Ignored folders:      {len(ignored_folders)}")
         logger.log(f"Ignored files:        {ignored_files}")
+
+        record_run_counters(
+            cfg,
+            logger,
+            run_id=run_id,
+            candidates_found=len(cands),
+            prefiltered_count=prefiltered,
+            evaluated_count=evaluated,
+            processed_count=processed,
+            prefiltered_marker_count=skipped_marker,
+            prefiltered_backup_count=skipped_backup,
+            skipped_codec_count=skipped_codec,
+            skipped_resolution_count=skipped_resolution,
+            skipped_min_savings_count=skipped_min_savings,
+            skipped_max_savings_count=skipped_max_savings,
+            skipped_dry_run_count=skipped_dry_run,
+            ignored_folder_count=len(ignored_folders),
+            ignored_file_count=ignored_files,
+        )
 
         if marked_failed:
             logger.log("===== FAILED FILES MARKED (.failed) =====")
