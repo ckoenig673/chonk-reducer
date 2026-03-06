@@ -44,6 +44,7 @@ def _base_cfg(tmp_path: Path, **overrides):
         skip_codecs=(),
         skip_min_height=0,
         skip_resolution_tags=(),
+        min_file_age_minutes=0,
         lock_stale_hours=12,
         lock_self_heal=True,
         work_cleanup_hours=0,
@@ -104,7 +105,7 @@ def test_run_dry_run_mode_skips_encode(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
-    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}))
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
 
     called = {"encode": 0, "dry": 0}
     monkeypatch.setattr(runner, "encode_qsv", lambda *a, **k: called.__setitem__("encode", called["encode"] + 1))
@@ -131,7 +132,7 @@ def test_run_stops_after_max_files(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
-    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2], {}))
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2], {}, []))
     monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
     monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
     monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
@@ -201,7 +202,7 @@ def test_run_migrates_legacy_stats_with_zero_candidates(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
-    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([], {}))
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([], {}, []))
 
     rc = runner.run()
 
@@ -228,7 +229,7 @@ def test_run_persists_run_summary_counters(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
     monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
-    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}))
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
 
     rc = runner.run()
 

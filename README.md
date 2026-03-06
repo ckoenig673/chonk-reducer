@@ -247,6 +247,7 @@ These are passed to the **container** via `compose.yaml` (`environment:`). Movie
 | `PREVIEW` | `False` | If true, behaves like a lightweight preview run (no swaps). |
 | `MAX_FILES` | `2` | Max number of files to attempt per run. |
 | `MIN_SIZE_GB` | `18.0` | Only consider files >= this size (GB). |
+| `MIN_FILE_AGE_MINUTES` | `0` | Skip files modified more recently than this many minutes (0 disables). |
 | `MAX_GB_PER_RUN` | `0.0` | Optional cap on total input size processed per run (0 disables). |
 | `FAIL_FAST` | `False` | Stop the run on the first hard failure (vs continue). |
 | `MIN_SAVINGS_PERCENT` | `15.0` | Minimum savings required to keep an encode result; otherwise treated as skip. |

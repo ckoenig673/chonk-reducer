@@ -30,11 +30,12 @@ def test_discovery_skips_optimized_and_backup_files(tmp_path):
     cfg = SimpleNamespace(media_root=media, min_size_gb=0, exclude_path_parts=())
     logger = StubLogger()
 
-    candidates, _ = gather_candidates(cfg, logger)
+    candidates, _, recent_skipped = gather_candidates(cfg, logger)
 
     assert large in candidates
     assert optimized not in candidates
     assert backup_like not in candidates
+    assert recent_skipped == []
 
 
 def test_discovery_respects_ignore_folders_and_size_threshold(tmp_path):
@@ -60,9 +61,53 @@ def test_discovery_respects_ignore_folders_and_size_threshold(tmp_path):
     )
     logger = StubLogger()
 
-    candidates, ignored_folders = gather_candidates(cfg, logger)
+    candidates, ignored_folders, recent_skipped = gather_candidates(cfg, logger)
 
     assert large in candidates
     assert small not in candidates
     assert ignored_file not in candidates
     assert ignored in ignored_folders
+    assert recent_skipped == []
+
+
+def test_discovery_skips_recently_modified_files(tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+
+    old_file = media / "old.mkv"
+    old_file.write_bytes(b"x" * 5000)
+
+    new_file = media / "new.mkv"
+    new_file.write_bytes(b"x" * 5000)
+
+    import time
+    old_ts = time.time() - (15 * 60)
+    new_ts = time.time() - (2 * 60)
+    import os
+    os.utime(old_file, (old_ts, old_ts))
+    os.utime(new_file, (new_ts, new_ts))
+
+    cfg = SimpleNamespace(media_root=media, min_size_gb=0, exclude_path_parts=(), min_file_age_minutes=10)
+    logger = StubLogger()
+
+    candidates, _, recent_skipped = gather_candidates(cfg, logger)
+
+    assert old_file in candidates
+    assert new_file not in candidates
+    assert any(p == new_file for p, _ in recent_skipped)
+
+
+def test_discovery_min_file_age_zero_disables_recent_skip(tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+
+    new_file = media / "new.mkv"
+    new_file.write_bytes(b"x" * 5000)
+
+    cfg = SimpleNamespace(media_root=media, min_size_gb=0, exclude_path_parts=(), min_file_age_minutes=0)
+    logger = StubLogger()
+
+    candidates, _, recent_skipped = gather_candidates(cfg, logger)
+
+    assert new_file in candidates
+    assert recent_skipped == []

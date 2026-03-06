@@ -123,6 +123,7 @@ def run() -> int:
     logger.log(f"SKIP_CODECS={','.join(getattr(cfg,'skip_codecs',()))}")
     logger.log(f"SKIP_MIN_HEIGHT={getattr(cfg,'skip_min_height',0)}")
     logger.log(f"SKIP_RESOLUTION_TAGS={','.join(getattr(cfg,'skip_resolution_tags',()))}")
+    logger.log(f"MIN_FILE_AGE_MINUTES={getattr(cfg,'min_file_age_minutes',0)}")
     logger.log(f"Run log: {run_log}")
 
     if not _validate_config(cfg, logger):
@@ -163,6 +164,7 @@ def run() -> int:
     failed = 0
     skipped_marker = 0
     skipped_backup = 0
+    skipped_recent = 0
     skipped_min_savings = 0
     skipped_max_savings = 0
     skipped_codec = 0
@@ -177,6 +179,7 @@ def run() -> int:
     # define for summary even if discovery fails early
     cands: list[Path] = []
     ignored_folders = {}
+    recent_skipped: list[tuple[Path, int]] = []
     marked_failed: list[Path] = []
 
     show_stats = {}  # show -> {files,before,after,elapsed}
@@ -208,7 +211,8 @@ def run() -> int:
                 return 2
 
         # Discovery (returns candidates + ignored folder counts)
-        cands, ignored_folders = gather_candidates(cfg, logger)
+        cands, ignored_folders, recent_skipped = gather_candidates(cfg, logger)
+        skipped_recent = len(recent_skipped)
         logger.log(f"Found {len(cands)} candidates")
 
         # Log top candidates by size (quick sanity)
@@ -536,7 +540,7 @@ def run() -> int:
         # Summary
                 logger.log("===== SUMMARY =====")
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
-        prefiltered = skipped_marker + skipped_backup
+        prefiltered = skipped_marker + skipped_backup + skipped_recent
         skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_max_savings + skipped_dry_run
         logger.log(f"Candidates found:     {len(cands)}")
         logger.log(f"Pre-filtered:         {prefiltered}")
@@ -547,6 +551,7 @@ def run() -> int:
         logger.log(f"Failed:               {failed}")
         logger.log(f"Pre-filtered (marker):     {skipped_marker}")
         logger.log(f"Pre-filtered (backup):     {skipped_backup}")
+        logger.log(f"Pre-filtered (recent):     {skipped_recent}")
         logger.log(f"Skipped (codec):      {skipped_codec}")
         logger.log(f"Skipped (resolution): {skipped_resolution}")
         logger.log(f"Skipped (min savings): {skipped_min_savings}")

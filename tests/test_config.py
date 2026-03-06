@@ -12,6 +12,7 @@ def test_load_config_returns_expected_defaults(monkeypatch):
         "MIN_SAVINGS_PERCENT",
         "OUT_MODE",
         "OUT_DIR_MODE",
+        "MIN_FILE_AGE_MINUTES",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -24,6 +25,7 @@ def test_load_config_returns_expected_defaults(monkeypatch):
     assert cfg.min_savings_percent == 15.0
     assert cfg.out_mode == int("664", 8)
     assert cfg.out_dir_mode == int("775", 8)
+    assert cfg.min_file_age_minutes == 0
 
 
 def test_invalid_config_values_fall_back_to_safe_defaults(monkeypatch):
@@ -36,3 +38,17 @@ def test_invalid_config_values_fall_back_to_safe_defaults(monkeypatch):
     assert cfg.max_files == 2
     assert cfg.min_size_gb == 18.0
     assert cfg.out_mode == int("664", 8)
+
+
+def test_min_file_age_minutes_parsing(monkeypatch):
+    monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "30")
+    cfg = load_config()
+    assert cfg.min_file_age_minutes == 30
+
+
+def test_min_file_age_minutes_invalid_or_negative_defaults_to_zero(monkeypatch):
+    monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "-5")
+    assert load_config().min_file_age_minutes == 0
+
+    monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "not-a-number")
+    assert load_config().min_file_age_minutes == 0
