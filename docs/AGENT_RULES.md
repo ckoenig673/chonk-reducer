@@ -204,3 +204,4 @@ These rules ensure that:
 
 Agents must follow these rules to maintain the integrity of the Chonk
 Reducer project.
+
