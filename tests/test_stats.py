@@ -15,8 +15,11 @@ from chonk_reducer.stats import (
 
 
 class StubLogger:
+    def __init__(self) -> None:
+        self.messages = []
+
     def log(self, msg: str) -> None:
-        pass
+        self.messages.append(msg)
 
 
 def _cfg(tmp_path: Path):
@@ -30,6 +33,32 @@ def _cfg(tmp_path: Path):
         qsv_quality=21,
         qsv_preset=7,
     )
+
+
+
+
+def _write_legacy_event(path: Path, *, run_id: str = "run-legacy") -> None:
+    row = {
+        "ts": "2026-01-01T00:00:01",
+        "run_id": run_id,
+        "version": "test",
+        "library": "movies",
+        "mode": "live",
+        "encoder": "hevc_qsv",
+        "quality": 21,
+        "preset": 7,
+        "status": "success",
+        "stage": "swap",
+        "path": "/movies/a.mkv",
+        "filename": "a.mkv",
+        "size_before_bytes": 100,
+        "size_after_bytes": 60,
+        "saved_bytes": 40,
+        "saved_pct": 40.0,
+        "duration_seconds": 1.2,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
 
 def _count_rows(db_path: Path, table: str) -> int:
@@ -111,6 +140,94 @@ def test_migration_from_ndjson(tmp_path):
     assert summaries[0]["run_id"] == "run-1"
     assert summaries[0]["success_count"] == 1
     assert summaries[0]["failed_count"] == 1
+
+
+
+
+def test_migration_runs_when_db_exists(tmp_path):
+    cfg = _cfg(tmp_path)
+    logger = StubLogger()
+    ensure_database(cfg, logger)
+
+    legacy = cfg.media_root / ".chonkstats.ndjson"
+    _write_legacy_event(legacy, run_id="run-db-exists")
+
+    ensure_database(cfg, logger)
+
+    migrated = legacy.with_suffix(legacy.suffix + ".migrated")
+    assert migrated.exists()
+    assert _count_rows(cfg.stats_path, "encodes") == 1
+
+
+def test_migration_is_idempotent_and_renames_file(tmp_path):
+    cfg = _cfg(tmp_path)
+    logger = StubLogger()
+    legacy = cfg.media_root / ".chonkstats.ndjson"
+    _write_legacy_event(legacy, run_id="run-idempotent")
+
+    ensure_database(cfg, logger)
+    first_count = _count_rows(cfg.stats_path, "encodes")
+
+    ensure_database(cfg, logger)
+
+    migrated = legacy.with_suffix(legacy.suffix + ".migrated")
+    assert migrated.exists()
+    assert not legacy.exists()
+    assert first_count == 1
+    assert _count_rows(cfg.stats_path, "encodes") == 1
+
+
+def test_migration_skips_duplicate_records(tmp_path):
+    cfg = _cfg(tmp_path)
+    logger = StubLogger()
+    ensure_database(cfg, logger)
+
+    src = tmp_path / "movie.mkv"
+    src.write_bytes(b"x")
+    record_success(
+        cfg,
+        logger,
+        run_id="run-dup",
+        mode="live",
+        stage="swap",
+        src=src,
+        before_bytes=100,
+        after_bytes=60,
+        codec_from="h264",
+        codec_to="hevc",
+        duration_seconds=1.2,
+    )
+
+    conn = sqlite3.connect(str(cfg.stats_path))
+    ts = conn.execute("SELECT ts FROM encodes WHERE run_id = ?", ("run-dup",)).fetchone()[0]
+    conn.close()
+
+    legacy = cfg.media_root / ".chonkstats.ndjson"
+    row = {
+        "ts": ts,
+        "run_id": "run-dup",
+        "version": "test",
+        "library": "movies",
+        "mode": "live",
+        "encoder": "hevc_qsv",
+        "quality": 21,
+        "preset": 7,
+        "status": "success",
+        "stage": "swap",
+        "path": str(src),
+        "filename": src.name,
+        "size_before_bytes": 100,
+        "size_after_bytes": 60,
+        "saved_bytes": 40,
+        "saved_pct": 40.0,
+        "duration_seconds": 1.2,
+    }
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    ensure_database(cfg, logger)
+
+    assert _count_rows(cfg.stats_path, "encodes") == 1
 
 
 def test_encode_insertion(tmp_path):

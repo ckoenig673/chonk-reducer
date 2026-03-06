@@ -20,7 +20,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-Current Version: v1.6.0
+Current Version: v1.6.2
 
 Chonk Reducer is a **policy-driven NAS media optimization pipeline** built for Synology + Docker environments.
 
@@ -198,6 +198,21 @@ git commit -m "Describe your change"
 
 ---
 
+
+## Legacy NDJSON Migration
+
+Chonk Reducer uses SQLite as the primary stats backend, but can still import legacy NDJSON stats files.
+
+- Migration runs during stats initialization on **every startup**.
+- Migration is evaluated per library path (`MEDIA_ROOT`), not by whether the shared DB already exists.
+- If `MEDIA_ROOT/.chonkstats.ndjson` exists, rows are streamed line-by-line into SQLite.
+- After a successful import, the file is renamed to `.chonkstats.ndjson.migrated`.
+- If `.chonkstats.ndjson.migrated` already exists, migration is skipped for that library.
+
+This allows multiple libraries that share `/config/chonk.db` to migrate independently without losing historical data.
+
+---
+
 ## Environment Variables
 
 These are passed to the **container** via `compose.yaml` (`environment:`). Movie and TV services should use the same keys.
@@ -254,7 +269,9 @@ These are passed to the **container** via `compose.yaml` (`environment:`). Movie
 ### Notes
 
 - Values are read from env and parsed as bool/int/float where applicable.
-- `STATS_PATH` now points to a SQLite DB (default `/config/chonk.db`). On first startup, legacy `.chonkstats.ndjson` in MEDIA_ROOT is auto-migrated and renamed to `.chonkstats.ndjson.migrated`.
+- `STATS_PATH` points to a shared SQLite DB (default `/config/chonk.db`) that can be used by multiple libraries (for example, movies and TV).
+- On every startup, each library checks its own `MEDIA_ROOT/.chonkstats.ndjson`. If present, records are imported into SQLite and the file is renamed to `.chonkstats.ndjson.migrated`.
+- Migration is idempotent: already-migrated files are skipped and duplicate legacy records are not inserted again.
 - `REPORT_RETENTION_DAYS` is applied by the `weekly-report` command to prune old `weekly_*.md` files.
 
 ---
