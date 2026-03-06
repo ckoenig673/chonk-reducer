@@ -111,9 +111,9 @@ class Config:
     skip_min_height: int = 0
     skip_resolution_tags: tuple[str, ...] = ()
 
-    # Stats (NDJSON)
+    # Stats (SQLite)
     stats_enabled: bool = False
-    stats_path: Path = Path("/work/.chonkstats.ndjson")
+    stats_path: Path = Path("/config/chonk.db")
     library: str = ""
     version: str = "unknown"
     encoder: str = "hevc_qsv"
@@ -132,7 +132,7 @@ def load_config() -> Config:
 
     # Stats defaults
     stats_enabled = _env_bool("STATS_ENABLED", True)
-    default_stats_path = media_root / ".chonkstats.ndjson"
+    default_stats_path = Path("/config/chonk.db")
     stats_path = Path(_env("STATS_PATH", str(default_stats_path)))
     library = _env("LIBRARY", "")
     encoder = _env("ENCODER", "hevc_qsv")

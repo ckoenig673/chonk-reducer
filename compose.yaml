@@ -15,11 +15,11 @@ x-common-env: &common-env
   FAIL_FAST: "true"                        # if true, abort run on first hard failure
 
   # ---- Stats / Reporting ----
-  STATS_ENABLED: "true"                    # append NDJSON rows to STATS_PATH for success/skip/fail events
-  APP_VERSION: "v1.6.0"                    # version stamp written into stats + startup banner
+  STATS_ENABLED: "true"                    # write SQLite rows to STATS_PATH for success/skip/fail events
+  APP_VERSION: "v1.6.1"                    # version stamp written into stats + startup banner
   REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
   WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
-  WEEKLY_STATS_PATHS: "/tv_shows/.chonkstats.ndjson,/movies/.chonkstats.ndjson"  # comma list of NDJSON inputs
+  WEEKLY_STATS_PATHS: "/config/chonk.db"  # comma list of SQLite DB inputs
   REPORT_RETENTION_DAYS: "30"              # delete weekly reports older than N days (weekly-report)
 
   # ---- Retries ----
@@ -94,7 +94,7 @@ services:
       # ---- Roots ----
       MEDIA_ROOT: /movies                    # media library root inside the container
       WORK_ROOT: /work                       # writable work root (logs/reports/tmp)
-      STATS_PATH: /movies/.chonkstats.ndjson # per-library NDJSON stats file
+      STATS_PATH: /config/chonk.db          # SQLite stats database
 
       # ---- Library-specific selection ----
       MIN_SIZE_GB: "17"                      # minimum file size to consider as a candidate
@@ -130,7 +130,7 @@ services:
       # ---- Roots ----
       MEDIA_ROOT: /tv_shows                  # media library root inside the container
       WORK_ROOT: /work                       # writable work root (logs/reports/tmp)
-      STATS_PATH: /tv_shows/.chonkstats.ndjson # per-library NDJSON stats file
+      STATS_PATH: /config/chonk.db          # SQLite stats database
 
       # ---- Library-specific selection ----
       MIN_SIZE_GB: "8"                       # minimum file size to consider as a candidate
