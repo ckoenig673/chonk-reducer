@@ -12,9 +12,9 @@ if [ -z "$SERVICE" ]; then
 fi
 
 # --- CONFIG ---
-PROJ_DIR="/volume1/docker/projects/nas-transcoder"
-COMPOSE="$PROJ_DIR/compose.yaml"
-DOCKER="/usr/local/bin/docker"
+PROJ_DIR="${PROJ_DIR:-/volume1/docker/projects/nas-transcoder}"
+COMPOSE="${COMPOSE:-$PROJ_DIR/compose.yaml}"
+DOCKER="${DOCKER:-/usr/local/bin/docker}"
 
 # Discord notifications
 DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
@@ -66,41 +66,83 @@ fi
 touch "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
 
-# --- SYNC LATEST CODE (git pull) ---
+# --- SYNC LATEST CODE (git fetch + compare HEAD) ---
+REPO_CHANGED="false"
 if command -v git >/dev/null 2>&1 && [ -d ".git" ]; then
-  log "[sync] fetching latest from git..."
-  # Prefer fast-forward only to avoid accidental merges on the NAS
-  if ! git pull --ff-only >>"$TASK_LOG" 2>&1; then
-    # If upstream isn't configured, fall back to origin/main
-    git fetch origin >>"$TASK_LOG" 2>&1 || true
-    git reset --hard origin/main >>"$TASK_LOG" 2>&1 || true
+  log "[git] checking for updates..."
+  git fetch --all --prune >>"$TASK_LOG" 2>&1 || true
+
+  LOCAL_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+  UPSTREAM_REF="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)"
+  REMOTE_HEAD=""
+
+  if [ -n "$UPSTREAM_REF" ]; then
+    REMOTE_HEAD="$(git rev-parse "$UPSTREAM_REF" 2>/dev/null || true)"
   fi
-  log "[sync] now at $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+
+  if [ -z "$REMOTE_HEAD" ]; then
+    REMOTE_HEAD="$(git rev-parse origin/HEAD 2>/dev/null || true)"
+  fi
+  if [ -z "$REMOTE_HEAD" ]; then
+    REMOTE_HEAD="$(git rev-parse origin/main 2>/dev/null || true)"
+  fi
+  if [ -z "$REMOTE_HEAD" ]; then
+    REMOTE_HEAD="$(git rev-parse origin/master 2>/dev/null || true)"
+  fi
+
+  if [ -n "$LOCAL_HEAD" ] && [ -n "$REMOTE_HEAD" ] && [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+    REPO_CHANGED="true"
+    log "[git] updates detected — pulling latest changes"
+    # Prefer fast-forward only to avoid accidental merges on the NAS
+    if ! git pull --ff-only >>"$TASK_LOG" 2>&1; then
+      # If upstream isn't configured, fall back to origin/main
+      git fetch origin >>"$TASK_LOG" 2>&1 || true
+      git reset --hard origin/main >>"$TASK_LOG" 2>&1 || true
+    fi
+    log "[git] now at $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+  else
+    log "[git] repository up to date — skipping pull"
+  fi
 else
-  log "[sync] git not available or repo not initialized; skipping git pull"
+  log "[git] git not available or repo not initialized; skipping update check"
 fi
 
-# --- QUICK SAFETY CHECK (pytest) ---
+# --- QUICK SAFETY CHECK (pytest, only after repo changes) ---
 RUN_PYTEST="${RUN_PYTEST:-true}"
-if [ "$RUN_PYTEST" = "true" ]; then
+if [ "$RUN_PYTEST" = "true" ] && [ "$REPO_CHANGED" = "true" ]; then
   if command -v python3 >/dev/null 2>&1; then
     log "[test] running pytest..."
     PYTHONPATH=src python3 -m pytest -q >>"$TASK_LOG" 2>&1 || { log "[test] pytest failed; aborting"; exit 1; }
   else
     log "[test] python3 not found; skipping pytest"
   fi
+elif [ "$RUN_PYTEST" = "true" ]; then
+  log "[test] repository unchanged — skipping pytest"
 fi
 
-# --- REBUILD IMAGE (so container runs latest code) ---
+# --- REBUILD IMAGE (only when code changed, or image missing) ---
 REBUILD_IMAGE="${REBUILD_IMAGE:-true}"
 REBUILD_NO_CACHE="${REBUILD_NO_CACHE:-true}"
 if [ "$REBUILD_IMAGE" = "true" ]; then
+  SHOULD_BUILD="$REPO_CHANGED"
+  if [ "$SHOULD_BUILD" != "true" ]; then
+    EXISTING_IMAGE_ID="$($DOCKER compose -f "$COMPOSE" images -q "$SERVICE" 2>>"$TASK_LOG" || true)"
+    if [ -z "$EXISTING_IMAGE_ID" ]; then
+      SHOULD_BUILD="true"
+      log "[build] no local image found for $SERVICE — building container"
+    fi
+  fi
+
   BUILD_ARGS=""
   if [ "$REBUILD_NO_CACHE" = "true" ]; then
     BUILD_ARGS="--no-cache"
   fi
-  log "[build] rebuilding image for service: $SERVICE ($BUILD_ARGS)"
-  "$DOCKER" compose -f "$COMPOSE" build $BUILD_ARGS "$SERVICE" >>"$TASK_LOG" 2>&1 || { log "[build] docker compose build failed; aborting"; exit 1; }
+  if [ "$SHOULD_BUILD" = "true" ]; then
+    log "[build] rebuilding image for service: $SERVICE ($BUILD_ARGS)"
+    "$DOCKER" compose -f "$COMPOSE" build $BUILD_ARGS "$SERVICE" >>"$TASK_LOG" 2>&1 || { log "[build] docker compose build failed; aborting"; exit 1; }
+  else
+    log "[build] repository up to date — skipping container rebuild"
+  fi
 fi
 
 # --- DRY_RUN visibility (optional) ---

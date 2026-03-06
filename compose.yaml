@@ -16,7 +16,7 @@ x-common-env: &common-env
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"                    # write SQLite rows to STATS_PATH for success/skip/fail events
-  APP_VERSION: "v1.6.3"                    # version stamp written into stats + startup banner
+  APP_VERSION: "v1.7.0"                    # version stamp written into stats + startup banner
   REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
   WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
   WEEKLY_STATS_PATHS: "/config/chonk.db"  # comma list of SQLite DB inputs
