@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -41,9 +43,12 @@ def _setup_git_clone(tmp_path: Path, with_remote_update: bool = False) -> Path:
     return project
 
 
-def _write_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+def _write_fake_tools(project: Path) -> tuple[Path, Path]:
+    # Synology NAS can mount /tmp with noexec, so place shims in a repo-local
+    # directory that remains executable across NAS + GitHub Actions.
+    tools_root = Path(__file__).resolve().parents[1] / ".pytest-exec-tools"
+    tools_root.mkdir(exist_ok=True)
+    bin_dir = Path(tempfile.mkdtemp(prefix=f"{project.name}-", dir=tools_root))
 
     fake_docker = bin_dir / "docker"
     fake_docker.write_text(
@@ -124,12 +129,15 @@ def _run_wrapper(
         }
     )
 
-    run = subprocess.run(["/bin/sh", str(script_path), service], cwd=project, env=env, capture_output=True, text=True)
-    task_logs = sorted((project / "logs").glob(f"{service}_*.task.log"))
-    assert task_logs, "task log should be created"
-    docker_text = docker_calls.read_text(encoding="utf-8") if docker_calls.exists() else ""
-    python_text = python_calls.read_text(encoding="utf-8") if python_calls.exists() else ""
-    return run.returncode, task_logs[-1].read_text(encoding="utf-8"), docker_text, python_text, project / ".task_state"
+    try:
+        run = subprocess.run(["/bin/sh", str(script_path), service], cwd=project, env=env, capture_output=True, text=True)
+        task_logs = sorted((project / "logs").glob(f"{service}_*.task.log"))
+        assert task_logs, "task log should be created"
+        docker_text = docker_calls.read_text(encoding="utf-8") if docker_calls.exists() else ""
+        python_text = python_calls.read_text(encoding="utf-8") if python_calls.exists() else ""
+        return run.returncode, task_logs[-1].read_text(encoding="utf-8"), docker_text, python_text, project / ".task_state"
+    finally:
+        shutil.rmtree(bin_dir, ignore_errors=True)
 
 
 def test_repo_unchanged_and_commit_previously_validated_skips_pytest(tmp_path: Path) -> None:
