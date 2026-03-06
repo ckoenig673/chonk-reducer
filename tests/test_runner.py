@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import types
 from pathlib import Path
 
@@ -165,3 +167,50 @@ def test_run_exits_when_free_space_too_low(tmp_path, monkeypatch):
     rc = runner.run()
 
     assert rc == 2
+
+
+def test_run_migrates_legacy_stats_with_zero_candidates(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, stats_enabled=True, stats_path=tmp_path / "chonk.db")
+    legacy = cfg.media_root / ".chonkstats.ndjson"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy_row = {
+        "ts": "2026-01-01T00:00:01",
+        "run_id": "run-zero-cands",
+        "version": "test",
+        "library": "movies",
+        "mode": "live",
+        "encoder": "hevc_qsv",
+        "quality": 21,
+        "preset": 7,
+        "status": "success",
+        "stage": "swap",
+        "path": "/movies/a.mkv",
+        "filename": "a.mkv",
+        "size_before_bytes": 100,
+        "size_after_bytes": 60,
+        "saved_bytes": 40,
+        "saved_pct": 40.0,
+        "duration_seconds": 1.2,
+    }
+    legacy.write_text(json.dumps(legacy_row) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([], {}))
+
+    rc = runner.run()
+
+    assert rc == 0
+    migrated = legacy.with_suffix(legacy.suffix + ".migrated")
+    assert migrated.exists()
+    assert not legacy.exists()
+
+    conn = sqlite3.connect(str(cfg.stats_path))
+    count = conn.execute("SELECT COUNT(*) FROM encodes").fetchone()[0]
+    conn.close()
+    assert count == 1
