@@ -46,4 +46,4 @@ jobs:
 
       - name: Run config healthcheck
         run: |
-          python main.py healthcheck
+          PYTHONPATH=src python -m chonk_reducer healthcheck
