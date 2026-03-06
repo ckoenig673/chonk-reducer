@@ -16,7 +16,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .skip_policy import evaluate_skip
-from .stats import record_success, record_failure, record_dry_run, record_skip
+from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip
 from . import __version__ as PKG_VERSION
 
 
@@ -130,6 +130,9 @@ def run() -> int:
         logger.log(f"RUN DURATION: {_fmt_hms(run_duration)}")
         logger.log("===== END =====")
         return 1
+
+    if getattr(cfg, "stats_enabled", False):
+        ensure_database(cfg, logger)
 
     # Global pause (no cleanup/discovery/processing)
     pause_file = cfg.media_root / ".chonkpause"
