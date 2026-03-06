@@ -102,6 +102,7 @@ services:
     volumes:
       - /volume1/movies:/movies:rw
       - /volume1/data/transcodework:/work:rw
+      - /volume1/docker/projects/nas-transcoder:/config:rw
       - /volume1/docker/projects/nas-transcoder:/project:ro
       - /usr/share/zoneinfo/America/Chicago:/etc/localtime:ro
     devices:
@@ -138,6 +139,7 @@ services:
     volumes:
       - /volume1/tv_shows:/tv_shows:rw
       - /volume1/data/transcodework:/work:rw
+      - /volume1/docker/projects/nas-transcoder:/config:rw
       - /volume1/docker/projects/nas-transcoder:/project:ro
       - /usr/share/zoneinfo/America/Chicago:/etc/localtime:ro
     devices:
