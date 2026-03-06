@@ -20,7 +20,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-Current Version: v1.6.2
+Current Version: v1.7.0
 
 Chonk Reducer is a **policy-driven NAS media optimization pipeline** built for Synology + Docker environments.
 
@@ -145,6 +145,18 @@ Example DSM task using wrapper:
 /bin/sh scripts/chonkreducer_task.sh tv-transcoder
 /bin/sh scripts/chonkreducer_task.sh movie-transcoder
 ```
+
+### NAS task workflow optimization
+
+The task wrapper now checks for remote Git updates before rebuilding containers:
+
+1. `git fetch --all --prune`
+2. compare local `HEAD` with upstream remote head
+3. if commits changed: pull latest, run `pytest -q`, rebuild image
+4. if unchanged: skip pull/test/build and reuse existing image
+5. always run `docker compose run --rm <service>`
+
+This reduces NAS CPU usage by avoiding unnecessary Docker builds while still rebuilding whenever code changes are detected.
 
 ---
 
