@@ -49,6 +49,9 @@ def _write_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
     fake_docker.write_text(
         "#!/bin/sh\n"
         "echo \"$*\" >>\"$DOCKER_CALLS\"\n"
+        "if [ \"${FAKE_IMAGES_FAIL:-0}\" = \"1\" ] && echo \"$*\" | grep -q \"images -q\"; then\n"
+        "  exit 1\n"
+        "fi\n"
         "case \"$*\" in\n"
         "  *\"images -q\"*)\n"
         "    [ -n \"${FAKE_IMAGE_ID:-}\" ] && echo \"$FAKE_IMAGE_ID\"\n"
@@ -70,7 +73,14 @@ def _write_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
     return fake_docker, bin_dir
 
 
-def _run_wrapper(project: Path, script_path: Path, service: str, *, fake_image_id: str = "img-123") -> tuple[int, str]:
+def _run_wrapper(
+    project: Path,
+    script_path: Path,
+    service: str,
+    *,
+    fake_image_id: str = "img-123",
+    fake_images_fail: str = "0",
+) -> tuple[int, str]:
     docker_calls = project / "docker_calls.log"
     python_calls = project / "python_calls.log"
     compose = project / "compose.yaml"
@@ -90,6 +100,7 @@ def _run_wrapper(project: Path, script_path: Path, service: str, *, fake_image_i
             "REBUILD_IMAGE": "true",
             "REBUILD_NO_CACHE": "false",
             "FAKE_IMAGE_ID": fake_image_id,
+            "FAKE_IMAGES_FAIL": fake_images_fail,
             "PATH": f"{bin_dir}:{env['PATH']}",
         }
     )
@@ -134,3 +145,16 @@ def test_task_builds_when_image_missing_even_without_repo_updates(tmp_path: Path
     assert "[git] repository up to date — skipping pull" in log_text
     assert "[build] no local image found for svc-fresh — building container" in log_text
     assert "[build] rebuilding image for service: svc-fresh" in log_text
+
+
+def test_task_builds_when_image_lookup_fails_even_without_repo_updates(tmp_path: Path) -> None:
+    project = _setup_git_clone(tmp_path)
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "chonkreducer_task.sh"
+
+    rc, log_text = _run_wrapper(project, script_path, "svc-image-lookup-fail", fake_images_fail="1")
+
+    assert rc == 0
+    assert "[git] repository up to date — skipping pull" in log_text
+    assert "[build] image lookup failed for svc-image-lookup-fail (continuing with rebuild)" in log_text
+    assert "[build] no local image found for svc-image-lookup-fail — building container" in log_text
+    assert "[build] rebuilding image for service: svc-image-lookup-fail" in log_text
