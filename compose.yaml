@@ -134,7 +134,7 @@ services:
       STATS_PATH: /config/chonk.db          # SQLite stats database
 
       # ---- Library-specific selection ----
-      MIN_SIZE_GB: "10"                       # minimum file size to consider as a candidate
+      MIN_SIZE_GB: "8"                       # minimum file size to consider as a candidate
 
     volumes:
       - /volume1/tv_shows:/tv_shows:rw
