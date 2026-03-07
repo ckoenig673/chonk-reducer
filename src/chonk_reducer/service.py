@@ -166,6 +166,7 @@ class ChonkService:
     def home_page_html(self) -> str:
         movies_status = self._latest_run_status("movies")
         tv_status = self._latest_run_status("tv")
+        recent_runs = self._recent_runs(limit=10)
         return """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -185,9 +186,15 @@ class ChonkService:
     <button type=\"submit\">Run TV</button>
   </form>
   %s
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Recent Runs</h2>
+  %s
 </body>
 </html>
-""" % (self._status_block_html(movies_status), self._status_block_html(tv_status))
+""" % (
+            self._status_block_html(movies_status),
+            self._status_block_html(tv_status),
+            self._recent_runs_html(recent_runs),
+        )
 
     def health_payload(self) -> dict:
         return {"status": "ok"}
@@ -318,6 +325,71 @@ class ChonkService:
             status["duration_seconds"],
         )
 
+    def _recent_runs(self, limit: int = 10) -> List[Dict[str, str]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT ts_end, ts_start, library, success_count, failed_count, skipped_count, duration_seconds, saved_bytes
+                FROM runs
+                ORDER BY ts_end DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+            conn.close()
+        except Exception:
+            return []
+
+        result: List[Dict[str, str]] = []
+        for row in rows:
+            status = _derive_run_status(
+                success_count=int(row["success_count"] or 0),
+                failed_count=int(row["failed_count"] or 0),
+                skipped_count=int(row["skipped_count"] or 0),
+            )
+            result.append(
+                {
+                    "time": str(row["ts_end"] or row["ts_start"] or "Unknown"),
+                    "library": str(row["library"] or "Unknown"),
+                    "status": status,
+                    "duration": _format_duration_seconds(row["duration_seconds"]),
+                    "saved": _format_saved_bytes(row["saved_bytes"]),
+                }
+            )
+        return result
+
+    def _recent_runs_html(self, rows: List[Dict[str, str]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No recent runs recorded yet.</div>'
+
+        row_html = []
+        for row in rows:
+            row_html.append(
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                % (row["time"], row["library"], row["status"], row["duration"], row["saved"])
+            )
+
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <thead>
+    <tr>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Time</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Status</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Duration</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
+    </tr>
+  </thead>
+  <tbody>
+    %s
+  </tbody>
+</table>""" % "".join(row_html)
+
     def _run_library_once(self, library: str, trigger: str) -> None:
         with library_environment(library):
             LOGGER.info("Starting %s %s run", trigger, library)
@@ -416,6 +488,26 @@ def _format_duration_seconds(value) -> str:
     if seconds < 0:
         return "Unknown"
     return "%.1fs" % seconds
+
+
+def _format_saved_bytes(value) -> str:
+    try:
+        saved_bytes = int(value)
+    except Exception:
+        return "Unknown"
+
+    if saved_bytes < 0:
+        return "Unknown"
+    if saved_bytes < 1024:
+        return "%d B" % saved_bytes
+
+    units = ["KB", "MB", "GB", "TB"]
+    scaled = float(saved_bytes)
+    for unit in units:
+        scaled = scaled / 1024.0
+        if scaled < 1024.0 or unit == units[-1]:
+            return "%.1f %s" % (scaled, unit)
+    return "%d B" % saved_bytes
 
 
 def _run_simple_http_server(

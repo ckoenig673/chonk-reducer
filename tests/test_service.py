@@ -63,7 +63,16 @@ def _call_post(service, path):
     return (202 if result["status"] == "started" else 409), result
 
 
-def _seed_run(db_path, library, ts_end, success_count=0, failed_count=0, skipped_count=0, duration_seconds=0.0):
+def _seed_run(
+    db_path,
+    library,
+    ts_end,
+    success_count=0,
+    failed_count=0,
+    skipped_count=0,
+    duration_seconds=0.0,
+    saved_bytes=0,
+):
     conn = sqlite3.connect(str(db_path))
     conn.execute(
         """
@@ -109,7 +118,7 @@ def _seed_run(db_path, library, ts_end, success_count=0, failed_count=0, skipped
             int(skipped_count),
             0,
             0,
-            0,
+            int(saved_bytes),
             float(duration_seconds),
         ),
     )
@@ -174,6 +183,7 @@ def test_home_page_route_returns_minimal_operator_page():
     assert "Chonk Reducer" in body
     assert "Run Movies" in body
     assert "Run TV" in body
+    assert "Recent Runs" in body
 
 
 def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch):
@@ -187,6 +197,7 @@ def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch
 
     assert status_code == 200
     assert body.count("No runs recorded yet") == 2
+    assert "No recent runs recorded yet" in body
 
 
 def test_home_page_shows_latest_movies_run_information(tmp_path, monkeypatch):
@@ -246,6 +257,100 @@ def test_home_page_shows_latest_tv_run_information(tmp_path, monkeypatch):
     assert "2026-01-02T11:00:00" in body
     assert "Status:</strong> failed" in body
     assert "Duration:</strong> 2.0s" in body
+
+
+def test_home_page_shows_recent_runs_table_with_latest_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T08:00:00",
+        success_count=2,
+        failed_count=0,
+        skipped_count=0,
+        duration_seconds=12.0,
+        saved_bytes=1024,
+    )
+    _seed_run(
+        db_path,
+        library="tv",
+        ts_end="2026-01-02T09:00:00",
+        success_count=0,
+        failed_count=1,
+        skipped_count=0,
+        duration_seconds=9.0,
+        saved_bytes=0,
+    )
+    _seed_run(
+        db_path,
+        library="tv",
+        ts_end="2026-01-02T10:00:00",
+        success_count=0,
+        failed_count=0,
+        skipped_count=3,
+        duration_seconds=4.0,
+        saved_bytes=0,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert "Recent Runs" in body
+    assert "<th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Time</th>" in body
+    assert "2026-01-02T10:00:00" in body
+    assert "2026-01-02T09:00:00" in body
+    assert "2026-01-02T08:00:00" in body
+    recent_runs_start = body.index("Recent Runs")
+    recent_runs_html = body[recent_runs_start:]
+    assert recent_runs_html.index("2026-01-02T10:00:00") < recent_runs_html.index("2026-01-02T09:00:00")
+    assert recent_runs_html.index("2026-01-02T09:00:00") < recent_runs_html.index("2026-01-02T08:00:00")
+    assert "<td>skipped</td>" in body
+    assert "<td>failed</td>" in body
+    assert "<td>success</td>" in body
+    assert "<td>1.0 KB</td>" in body
+
+
+def test_home_page_recent_runs_empty_state_when_runs_table_has_no_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            ts_start TEXT NOT NULL,
+            ts_end TEXT NOT NULL,
+            mode TEXT,
+            library TEXT,
+            version TEXT,
+            encoder TEXT,
+            quality INTEGER,
+            preset INTEGER,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            before_bytes INTEGER NOT NULL DEFAULT 0,
+            after_bytes INTEGER NOT NULL DEFAULT 0,
+            saved_bytes INTEGER NOT NULL DEFAULT 0,
+            duration_seconds REAL NOT NULL DEFAULT 0.0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert "Recent Runs" in body
+    assert "No recent runs recorded yet" in body
 
 
 def test_health_endpoint_payload():
