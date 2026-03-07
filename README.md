@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.15.0
+**Current Version:** v1.16.0
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -249,6 +249,7 @@ Chonk Reducer supports an optional long-running service mode for internal schedu
 - Routes available in this foundation release:
   - `/dashboard`
   - `/runs`
+  - `/runs/{run_id}`
   - `/activity`
   - `/settings`
   - `/system` (placeholder)
@@ -294,9 +295,11 @@ open http://localhost:8080/runs
 
 The Runs page is backed by the SQLite `runs` table and provides a recent run history view across libraries.
 
+Runs now include links to a Run Detail page for each `run_id`, which shows per-run summary data from `runs` plus file-level entries from `encodes`.
+
 It is intentionally minimal and currently focuses on operator history visibility (status, counts, duration, and saved space).
 
-Detailed raw logs remain in log files and are unchanged.
+Detailed raw logs remain in log files and are unchanged (the UI is not a full log viewer).
 
 Settings page:
 

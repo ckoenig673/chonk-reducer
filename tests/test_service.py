@@ -41,10 +41,34 @@ def _call_get(service, path):
                         return 200, result.body.decode("utf-8"), None
                     return 200, result, None
 
-    handler = service.app.routes["GET %s" % path]
-    result = handler()
+    if isinstance(service.app.routes, dict):
+        handler = service.app.routes.get("GET %s" % path)
+        if handler is None and path.startswith("/runs/"):
+            handler = service.app.routes["GET /runs/{run_id}"]
+            result = handler(path.split("/runs/", 1)[1])
+            if hasattr(result, "status_code") and hasattr(result, "body"):
+                return int(result.status_code), result.body.decode("utf-8"), None
+            return 200, result, None
+        result = handler()
+    else:
+        result = None
+        for route in service.app.routes:
+            methods = getattr(route, "methods", set())
+            route_path = getattr(route, "path", None)
+            if route_path == path and "GET" in methods:
+                result = route.endpoint()
+                break
+            if route_path == "/runs/{run_id}" and path.startswith("/runs/") and "GET" in methods:
+                run_id = path.split("/runs/", 1)[1]
+                result = route.endpoint(run_id)
+                break
+        if result is None:
+            raise KeyError("No GET route for %s" % path)
+
     if path == "/health":
         return 200, None, result
+    if hasattr(result, "status_code") and hasattr(result, "body"):
+        return int(result.status_code), result.body.decode("utf-8"), None
     return 200, result, None
 
 
@@ -116,6 +140,19 @@ def _seed_run(
             after_bytes INTEGER NOT NULL DEFAULT 0,
             saved_bytes INTEGER NOT NULL DEFAULT 0,
             duration_seconds REAL NOT NULL DEFAULT 0.0
+            ,candidates_found INTEGER NOT NULL DEFAULT 0
+            ,prefiltered_count INTEGER NOT NULL DEFAULT 0
+            ,evaluated_count INTEGER NOT NULL DEFAULT 0
+            ,processed_count INTEGER NOT NULL DEFAULT 0
+            ,prefiltered_marker_count INTEGER NOT NULL DEFAULT 0
+            ,prefiltered_backup_count INTEGER NOT NULL DEFAULT 0
+            ,skipped_codec_count INTEGER NOT NULL DEFAULT 0
+            ,skipped_resolution_count INTEGER NOT NULL DEFAULT 0
+            ,skipped_min_savings_count INTEGER NOT NULL DEFAULT 0
+            ,skipped_max_savings_count INTEGER NOT NULL DEFAULT 0
+            ,skipped_dry_run_count INTEGER NOT NULL DEFAULT 0
+            ,ignored_folder_count INTEGER NOT NULL DEFAULT 0
+            ,ignored_file_count INTEGER NOT NULL DEFAULT 0
         )
         """
     )
@@ -157,6 +194,75 @@ def _read_activity_rows(db_path):
     ).fetchall()
     conn.close()
     return rows
+
+
+def _seed_encode(
+    db_path,
+    run_id,
+    ts,
+    status,
+    path,
+    codec_from="h264",
+    codec_to="hevc",
+    size_before_bytes=0,
+    size_after_bytes=0,
+    saved_bytes=0,
+    skip_reason=None,
+    skip_detail=None,
+    fail_stage=None,
+    error_type=None,
+    error_msg=None,
+):
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS encodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            path TEXT,
+            filename TEXT,
+            codec_from TEXT,
+            codec_to TEXT,
+            size_before_bytes INTEGER,
+            size_after_bytes INTEGER,
+            saved_bytes INTEGER,
+            skip_reason TEXT,
+            skip_detail TEXT,
+            fail_stage TEXT,
+            error_type TEXT,
+            error_msg TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO encodes(
+            ts, run_id, status, path, codec_from, codec_to,
+            size_before_bytes, size_after_bytes, saved_bytes,
+            skip_reason, skip_detail, fail_stage, error_type, error_msg
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            ts,
+            run_id,
+            status,
+            path,
+            codec_from,
+            codec_to,
+            int(size_before_bytes),
+            int(size_after_bytes),
+            int(saved_bytes),
+            skip_reason,
+            skip_detail,
+            fail_stage,
+            error_type,
+            error_msg,
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 def test_service_settings_from_env(monkeypatch):
     monkeypatch.setenv("SERVICE_MODE", "true")
@@ -668,7 +774,99 @@ def test_runs_page_renders_history_table_with_expected_columns(tmp_path, monkeyp
     assert "<td>1</td>" in body
     assert "<td>0</td>" in body
     assert "<td>1.0 KB</td>" in body
-    assert "<td>movies-2026-01-02T08:00:00</td>" in body
+    assert 'href="/runs/movies-2026-01-02T08:00:00"' in body
+
+
+def test_run_detail_page_renders_summary_and_file_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T08:00:00",
+        success_count=1,
+        failed_count=1,
+        skipped_count=1,
+        duration_seconds=15.0,
+        saved_bytes=1024 * 1024,
+    )
+    run_id = "movies-2026-01-02T08:00:00"
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T08:00:01",
+        status="success",
+        path="/movies/A.mkv",
+        size_before_bytes=4 * 1024,
+        size_after_bytes=3 * 1024,
+        saved_bytes=1024,
+    )
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T08:00:02",
+        status="skipped",
+        path="/movies/B.mkv",
+        skip_reason="min_savings",
+        skip_detail="below threshold",
+    )
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T08:00:03",
+        status="failed",
+        path="/movies/C.mkv",
+        error_type="encode_error",
+        error_msg="ffmpeg failed",
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "<h1>Run Detail</h1>" in body
+    assert "Run Summary" in body
+    assert "<strong>Run ID:</strong> %s" % run_id in body
+    assert "<strong>Result:</strong> failed" in body
+    assert "<strong>Duration:</strong> 15.0s" in body
+    assert "<strong>Saved:</strong> 1.0 MB" in body
+    assert "File-Level Entries" in body
+    assert "/movies/A.mkv" in body
+    assert "/movies/B.mkv" in body
+    assert "/movies/C.mkv" in body
+    assert "min_savings: below threshold" in body
+    assert "encode_error: ffmpeg failed" in body
+
+
+def test_run_detail_page_shows_no_file_entries_message(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(db_path, library="tv", ts_end="2026-01-02T09:00:00", skipped_count=1)
+    run_id = "tv-2026-01-02T09:00:00"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "No file-level entries recorded for this run" in body
+
+
+def test_run_detail_page_returns_404_for_unknown_run(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00")
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs/does-not-exist")
+
+    assert status_code == 404
+    assert "Run Not Found" in body
 
 
 def test_runs_page_sorts_newest_first(tmp_path, monkeypatch):
