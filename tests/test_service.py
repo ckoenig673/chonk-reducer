@@ -5,9 +5,17 @@ import os
 import sqlite3
 import threading
 
+import pytest
+
 from chonk_reducer import cli
 from chonk_reducer import service as service_module
 from chonk_reducer.service import ChonkService, ServiceSettings, library_environment
+
+
+@pytest.fixture(autouse=True)
+def _service_settings_db_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATS_PATH", str(tmp_path / "chonk.db"))
+
 
 
 def _call_get(service, path):

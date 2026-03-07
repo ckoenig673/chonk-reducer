@@ -56,6 +56,7 @@ class ServiceSettings:
     port: int
     movie_schedule: str
     tv_schedule: str
+    settings_db_path: str = ""
 
     @classmethod
     def from_env(cls) -> "ServiceSettings":
@@ -65,6 +66,7 @@ class ServiceSettings:
             port=_env_int("SERVICE_PORT", 8080),
             movie_schedule=_env("MOVIE_SCHEDULE", ""),
             tv_schedule=_env("TV_SCHEDULE", ""),
+            settings_db_path=_env("STATS_PATH", "/config/chonk.db"),
         )
 
 
@@ -131,6 +133,8 @@ class _FallbackFastAPI:
 
 class ChonkService:
     def __init__(self, settings: ServiceSettings):
+        settings_db_path = (settings.settings_db_path or _env("STATS_PATH", "/config/chonk.db")).strip() or "/config/chonk.db"
+        self._settings_db_path = Path(settings_db_path)
         self._editable_settings = self._bootstrap_editable_settings()
         self.settings = ServiceSettings(
             enabled=settings.enabled,
@@ -138,6 +142,7 @@ class ChonkService:
             port=settings.port,
             movie_schedule=settings.movie_schedule or self._editable_settings.get("movie_schedule", ""),
             tv_schedule=settings.tv_schedule or self._editable_settings.get("tv_schedule", ""),
+            settings_db_path=settings_db_path,
         )
         self.scheduler = self._build_scheduler()
         self.app = self._build_app()
@@ -311,8 +316,7 @@ class ChonkService:
         return {"status": "ok"}
 
     def _bootstrap_editable_settings(self) -> Dict[str, str]:
-        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
-        conn = _connect_settings_db(db_path)
+        conn = _connect_settings_db(self._settings_db_path)
         values: Dict[str, str] = {}
         with conn:
             for key, meta in EDITABLE_SETTINGS.items():
@@ -332,8 +336,7 @@ class ChonkService:
     def update_editable_settings(self, updates: Dict[str, str]) -> None:
         if not updates:
             return
-        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
-        conn = _connect_settings_db(db_path)
+        conn = _connect_settings_db(self._settings_db_path)
         with conn:
             for key in EDITABLE_SETTINGS:
                 if key not in updates:
