@@ -240,14 +240,19 @@ Synology DSM task example:
 
 ---
 
-# Long-Running Service Mode (Transition Foundation)
+# Long-Running Service Mode (Arr-Style Foundation)
 
-Chonk Reducer now supports an optional long-running service mode for internal scheduling.
+Chonk Reducer supports an optional long-running service mode for internal scheduling and operator workflows.
 
 - Existing DSM Task Scheduler + one-shot container runs are still supported.
-- Service mode now includes a very small operator page for manual troubleshooting runs.
-- The home page provides manual Run Movies/Run TV buttons, lightweight last-run status summaries for Movies and TV, a Recent Runs table, and a lifetime reclaimed storage summary from SQLite when available.
-- This is an early operator surface, not a full dashboard.
+- Service mode now uses an Arr-style shell with persistent left navigation.
+- Routes available in this foundation release:
+  - `/dashboard`
+  - `/runs` (placeholder)
+  - `/activity` (placeholder)
+  - `/settings`
+  - `/system` (placeholder)
+- `/` renders the dashboard in the new shell.
 
 Enable service mode:
 
@@ -267,33 +272,52 @@ Returns:
 {"status":"ok"}
 ```
 
-Service operator page:
+Dashboard:
 
 ```bash
-open http://localhost:8080/
+open http://localhost:8080/dashboard
 ```
 
-The home page provides:
+The dashboard preserves existing operator controls and visibility:
 
 - **Run Movies** (`POST /run/movies`)
 - **Run TV** (`POST /run/tv`)
-- Basic last-run status for Movies and TV
-- A small Recent Runs view (latest run rows from `runs` in SQLite)
-- A **Lifetime Savings** summary (Movies reclaimed, TV reclaimed, total reclaimed, files optimized)
+- Last run status for Movies and TV
+- Recent Runs table (from SQLite `runs`)
+- Lifetime savings summary
 
-Manual trigger behavior:
+Settings page:
 
-- Requests reuse the same service orchestration path used by scheduled runs.
-- Library locks prevent overlap (if a library run is active, manual requests return `{"status":"busy"}`).
-- Intended for troubleshooting and operational validation, not as a final dashboard.
+```bash
+open http://localhost:8080/settings
+```
+
+The settings page is backed by SQLite (`STATS_PATH`) and currently manages a small editable subset:
+
+- `movie_schedule`
+- `tv_schedule`
+- `min_file_age_minutes`
+- `max_files`
+- `min_savings_percent`
+
+Settings precedence / bootstrap model:
+
+1. Environment/compose values are bootstrap defaults.
+2. On first startup, missing settings rows are initialized from those environment values.
+3. After initialization, SQLite settings values are used by service-driven runs.
+
+Scheduler notes:
+
+- `movie_schedule` and `tv_schedule` are read from SQLite-backed settings at service startup.
+- If schedules are changed in `/settings`, restart the service for new cron schedules to be applied.
 
 Service scheduler environment variables:
 
 - `SERVICE_MODE=true|false` (default: false)
 - `SERVICE_HOST` (default: `0.0.0.0`)
 - `SERVICE_PORT` (default: `8080`)
-- `MOVIE_SCHEDULE` (cron expression; blank disables movie schedule)
-- `TV_SCHEDULE` (cron expression; blank disables TV schedule)
+- `MOVIE_SCHEDULE` (bootstrap default; blank disables movie schedule)
+- `TV_SCHEDULE` (bootstrap default; blank disables TV schedule)
 
 Library-specific service overrides (optional):
 
