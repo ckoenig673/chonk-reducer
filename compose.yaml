@@ -163,7 +163,7 @@ services:
 
       SERVICE_MODE: "true"
       SERVICE_HOST: "0.0.0.0"
-      SERVICE_PORT: "8080"
+      SERVICE_PORT: "8085"
       MOVIE_SCHEDULE: "0 2 * * *"
       TV_SCHEDULE: "0 4 * * *"
 
@@ -188,5 +188,5 @@ services:
     group_add:
       - "937"
     ports:
-      - "8080:8080"
+      - "8085:8080"
     restart: unless-stopped
