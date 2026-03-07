@@ -40,16 +40,23 @@ def _call_get(service, path):
     return 200, result, None
 
 
-def _call_post(service, path):
+def _call_post(service, path, data=None):
     can_use_test_client = service_module.FastAPI is not None and isinstance(service.app, service_module.FastAPI)
     if can_use_test_client:
         try:
             from starlette.testclient import TestClient
 
             with TestClient(service.app) as client:
-                response = client.post(path)
-            return response.status_code, response.json()
+                response = client.post(path, data=data or {})
+            try:
+                payload = response.json()
+            except Exception:
+                payload = response.text
+            return response.status_code, payload
         except Exception:
+            if path == "/settings" and data is not None:
+                service.update_editable_settings(data)
+                return 200, service.settings_page_html("Settings saved.")
             for route in service.app.routes:
                 methods = getattr(route, "methods", set())
                 if getattr(route, "path", None) == path and "POST" in methods:
@@ -59,6 +66,14 @@ def _call_post(service, path):
                     return (202 if result["status"] == "started" else 409), result
 
     handler = service.app.routes["POST %s" % path]
+    if data is None:
+        result = handler()
+        return (202 if result["status"] == "started" else 409), result
+
+    if hasattr(handler, "__call__") and getattr(handler, "__name__", "") == "save_settings":
+        service.update_editable_settings(data)
+        return 200, service.settings_page_html("Settings saved.")
+
     result = handler()
     return (202 if result["status"] == "started" else 409), result
 
@@ -569,3 +584,139 @@ def test_cli_no_service_mode_defaults_to_one_shot(monkeypatch):
     rc = cli.main([])
 
     assert rc == 7
+
+def test_dashboard_route_renders_in_shell():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Dashboard" in body
+    assert "href=\"/settings\"" in body
+
+
+def test_shell_routes_render_placeholders():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    for path, heading in (("/runs", "Runs"), ("/activity", "Activity"), ("/system", "System")):
+        status_code, body, _ = _call_get(service, path)
+        assert status_code == 200
+        assert "href=\"/dashboard\"" in body
+        assert "<h1>%s</h1>" % heading in body
+
+
+def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("MAX_FILES", "9")
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/settings")
+
+    assert status_code == 200
+    assert "<h1>Settings</h1>" in body
+    assert "name=\"movie_schedule\"" in body
+    assert "name=\"tv_schedule\"" in body
+    assert "name=\"min_file_age_minutes\"" in body
+    assert "name=\"max_files\"" in body
+    assert "value=\"9\"" in body
+
+
+def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 5 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "30 6 * * *")
+    monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "22")
+    monkeypatch.setenv("MAX_FILES", "3")
+    monkeypatch.setenv("MIN_SAVINGS_PERCENT", "18")
+
+    ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+    conn.close()
+
+    assert {row["key"] for row in rows} == {
+        "movie_schedule",
+        "tv_schedule",
+        "min_file_age_minutes",
+        "max_files",
+        "min_savings_percent",
+    }
+    values = {row["key"]: row["value"] for row in rows}
+    assert values["movie_schedule"] == "0 5 * * *"
+    assert values["tv_schedule"] == "30 6 * * *"
+    assert values["min_file_age_minutes"] == "22"
+    assert values["max_files"] == "3"
+    assert values["min_savings_percent"] == "18"
+
+
+def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body = _call_post(
+        service,
+        "/settings",
+        data={
+            "movie_schedule": "15 1 * * *",
+            "tv_schedule": "45 2 * * *",
+            "min_file_age_minutes": "40",
+            "max_files": "6",
+            "min_savings_percent": "25",
+        },
+    )
+
+    assert status_code == 200
+    assert "Settings saved" in body
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    values = {
+        row["key"]: row["value"]
+        for row in conn.execute("SELECT key, value FROM settings").fetchall()
+    }
+    conn.close()
+
+    assert values["movie_schedule"] == "15 1 * * *"
+    assert values["tv_schedule"] == "45 2 * * *"
+    assert values["min_file_age_minutes"] == "40"
+    assert values["max_files"] == "6"
+    assert values["min_savings_percent"] == "25"
+
+
+def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("MAX_FILES", "2")
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    service.update_editable_settings({"max_files": "11", "min_file_age_minutes": "7"})
+
+    captured = {}
+
+    def fake_run_once():
+        captured["max_files"] = os.getenv("MAX_FILES")
+        captured["min_file_age_minutes"] = os.getenv("MIN_FILE_AGE_MINUTES")
+        return 0
+
+    monkeypatch.setattr(service_module, "run", fake_run_once)
+
+    service._run_library_once("movies", "manual")
+
+    assert captured["max_files"] == "11"
+    assert captured["min_file_age_minutes"] == "7"
