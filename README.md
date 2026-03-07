@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.7.5
+**Current Version:** v1.8.0
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -158,9 +158,10 @@ DSM Task Scheduler
                     → metrics
 ```
 
-Each run is **stateless and isolated**.
+Each run can run in one of two modes:
 
-There are **no long‑running daemons**.
+- **One-shot mode (existing):** stateless and isolated runs (DSM task friendly).
+- **Service mode (new):** a long-running container that schedules movie/TV runs internally and exposes a health endpoint.
 
 ---
 
@@ -236,6 +237,52 @@ Synology DSM task example:
 ```
 
 ---
+
+---
+
+# Long-Running Service Mode (Transition Foundation)
+
+Chonk Reducer now supports an optional long-running service mode for internal scheduling.
+
+- Existing DSM Task Scheduler + one-shot container runs are still supported.
+- Service mode is the foundation for future API/reporting/dashboard work.
+- This release does **not** include dashboard pages yet.
+
+Enable service mode:
+
+```bash
+docker compose up -d chonk-service
+```
+
+Health endpoint:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Returns:
+
+```json
+{"status":"ok"}
+```
+
+Service scheduler environment variables:
+
+- `SERVICE_MODE=true|false` (default: false)
+- `SERVICE_HOST` (default: `0.0.0.0`)
+- `SERVICE_PORT` (default: `8080`)
+- `MOVIE_SCHEDULE` (cron expression; blank disables movie schedule)
+- `TV_SCHEDULE` (cron expression; blank disables TV schedule)
+
+Library-specific service overrides (optional):
+
+- `MOVIE_MEDIA_ROOT`, `MOVIE_MIN_SIZE_GB`, `MOVIE_LOG_PREFIX`, `MOVIE_LIBRARY`
+- `TV_MEDIA_ROOT`, `TV_MIN_SIZE_GB`, `TV_LOG_PREFIX`, `TV_LIBRARY`
+
+If `SERVICE_MODE` is unset/false, Chonk keeps the existing one-shot behavior.
+
+---
+
 
 # Scheduling Model (Recommended)
 

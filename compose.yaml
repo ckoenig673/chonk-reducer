@@ -16,7 +16,7 @@ x-common-env: &common-env
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"                    # write SQLite rows to STATS_PATH for success/skip/fail events
-  APP_VERSION: "v1.7.7"                    # version stamp written into stats + startup banner
+  APP_VERSION: "v1.8.0"                    # version stamp written into stats + startup banner
   REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
   WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
   WEEKLY_STATS_PATHS: "/config/chonk.db"  # comma list of SQLite DB inputs
@@ -148,3 +148,45 @@ services:
     group_add:
       - "937"
     restart: "no"
+
+
+  # ============================================================
+  # LONG-RUNNING SERVICE (internal scheduler + health endpoint)
+  # ============================================================
+  chonk-service:
+    build: .
+    container_name: chonk-service
+    entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
+
+    environment:
+      <<: *common-env
+
+      SERVICE_MODE: "true"
+      SERVICE_HOST: "0.0.0.0"
+      SERVICE_PORT: "8080"
+      MOVIE_SCHEDULE: "0 2 * * *"
+      TV_SCHEDULE: "0 4 * * *"
+
+      MOVIE_MEDIA_ROOT: /movies
+      MOVIE_MIN_SIZE_GB: "17"
+      TV_MEDIA_ROOT: /tv_shows
+      TV_MIN_SIZE_GB: "8"
+
+      WORK_ROOT: /work
+      STATS_PATH: /config/chonk.db
+      TZ: America/Chicago
+
+    volumes:
+      - /volume1/movies:/movies:rw
+      - /volume1/tv_shows:/tv_shows:rw
+      - /volume1/data/transcodework:/work:rw
+      - /volume1/docker/projects/nas-transcoder:/config:rw
+      - /volume1/docker/projects/nas-transcoder:/project:ro
+      - /usr/share/zoneinfo/America/Chicago:/etc/localtime:ro
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "937"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
