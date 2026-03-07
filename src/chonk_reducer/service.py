@@ -167,6 +167,7 @@ class ChonkService:
         movies_status = self._latest_run_status("movies")
         tv_status = self._latest_run_status("tv")
         recent_runs = self._recent_runs(limit=10)
+        lifetime_savings = self._lifetime_savings()
         return """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -186,6 +187,8 @@ class ChonkService:
     <button type=\"submit\">Run TV</button>
   </form>
   %s
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Lifetime Savings</h2>
+  %s
   <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Recent Runs</h2>
   %s
 </body>
@@ -193,6 +196,7 @@ class ChonkService:
 """ % (
             self._status_block_html(movies_status),
             self._status_block_html(tv_status),
+            self._lifetime_savings_html(lifetime_savings),
             self._recent_runs_html(recent_runs),
         )
 
@@ -389,6 +393,55 @@ class ChonkService:
     %s
   </tbody>
 </table>""" % "".join(row_html)
+
+    def _lifetime_savings(self) -> Optional[Dict[str, int]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return None
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN library = 'movies' THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS movies_saved,
+                    COALESCE(SUM(CASE WHEN library = 'tv' THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS tv_saved,
+                    COALESCE(SUM(COALESCE(saved_bytes, 0)), 0) AS total_saved,
+                    COALESCE(SUM(CASE WHEN COALESCE(success_count, 0) > 0 THEN COALESCE(success_count, 0) ELSE 0 END), 0) AS files_optimized
+                FROM runs
+                WHERE COALESCE(success_count, 0) > 0
+                """
+            ).fetchone()
+            conn.close()
+        except Exception:
+            return None
+
+        if row is None:
+            return None
+
+        return {
+            "movies_saved": int(row["movies_saved"] or 0),
+            "tv_saved": int(row["tv_saved"] or 0),
+            "total_saved": int(row["total_saved"] or 0),
+            "files_optimized": int(row["files_optimized"] or 0),
+        }
+
+    def _lifetime_savings_html(self, savings: Optional[Dict[str, int]]) -> str:
+        if savings is None or savings["files_optimized"] <= 0:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No reclaimed storage recorded yet.</div>'
+
+        return """<div style=\"padding: 0.5rem; border: 1px solid #ddd;\">
+  <div><strong>Movies reclaimed:</strong> %s</div>
+  <div><strong>TV reclaimed:</strong> %s</div>
+  <div><strong>Total reclaimed:</strong> %s</div>
+  <div><strong>Files optimized:</strong> %d</div>
+</div>""" % (
+            _format_saved_bytes(savings["movies_saved"]),
+            _format_saved_bytes(savings["tv_saved"]),
+            _format_saved_bytes(savings["total_saved"]),
+            savings["files_optimized"],
+        )
 
     def _run_library_once(self, library: str, trigger: str) -> None:
         with library_environment(library):
