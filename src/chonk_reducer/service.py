@@ -8,11 +8,20 @@ import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import strftime
 from typing import Callable, Dict, Iterator, List, Optional
 from urllib.parse import parse_qs, unquote
+
+try:
+    from zoneinfo import ZoneInfo  # type: ignore
+except Exception:  # pragma: no cover - fallback for Python 3.8 runtime
+    try:
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+    except Exception:  # pragma: no cover - best-effort timezone display
+        ZoneInfo = None
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
@@ -36,6 +45,7 @@ except Exception:  # pragma: no cover - exercised by fallback tests
     uvicorn = None
 
 from .runner import run
+from . import __version__
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
@@ -187,7 +197,7 @@ class ChonkService:
 
         @self.app.get("/system")
         def system_page():
-            return self._html_response(self._render_placeholder_page("System", "System page coming soon."))
+            return self._html_response(self.system_page_html())
 
         @self.app.get("/settings")
         def settings_page():
@@ -305,6 +315,128 @@ class ChonkService:
         content += '<h2 style="margin-top: 1rem;">File-Level Entries</h2>'
         content += self._run_encodes_html(encodes)
         return self._render_shell_html("Runs", content), 200
+
+    def system_page_html(self) -> str:
+        service_mode = "Enabled" if self.settings.enabled else "Disabled"
+        scheduler_running = self._scheduler_running_label()
+
+        movie_schedule = self.settings.movie_schedule.strip() or "Not set"
+        tv_schedule = self.settings.tv_schedule.strip() or "Not set"
+        movie_next_run = self._next_run_label("movies")
+        tv_next_run = self._next_run_label("tv")
+
+        work_root = (_env("WORK_ROOT", "") or "").strip() or "Not set"
+        movie_root = (_env("MOVIE_MEDIA_ROOT", _library_values("movies").get("MEDIA_ROOT", "")) or "").strip() or "Not set"
+        tv_root = (_env("TV_MEDIA_ROOT", _library_values("tv").get("MEDIA_ROOT", "")) or "").strip() or "Not set"
+        now_label = self._current_time_label()
+
+        content = """
+  <h1>System</h1>
+  <p>Operator-facing service and scheduler status for this instance.</p>
+
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Service Information</h2>
+  <table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+    <tbody>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Version</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Service Mode</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Service Host</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; padding: 0.35rem;\">Service Port</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Scheduler Information</h2>
+  <table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+    <tbody>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Scheduler Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Movie Schedule</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\"><code>%s</code></td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">TV Schedule</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\"><code>%s</code></td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Movie Run</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; padding: 0.35rem;\">Next TV Run</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Runtime / Storage Information</h2>
+  <table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+    <tbody>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Stats Database Path</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Work / Log Path</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Movie Media Root</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">TV Media Root</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+      <tr><th style=\"text-align: left; padding: 0.35rem;\">Current Time</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Settings Source Information</h2>
+  <ul style=\"line-height: 1.5; margin-top: 0;\">
+    <li>Editable service settings are persisted in SQLite at <code>%s</code>.</li>
+    <li>Bootstrap defaults still come from environment/compose values on first startup.</li>
+  </ul>
+""" % (
+            _escape_html(__version__),
+            _escape_html(service_mode),
+            _escape_html(self.settings.host),
+            _escape_html(str(self.settings.port)),
+            _escape_html(scheduler_running),
+            _escape_html(movie_schedule),
+            _escape_html(tv_schedule),
+            _escape_html(movie_next_run),
+            _escape_html(tv_next_run),
+            _escape_html(self.settings.settings_db_path or "Not set"),
+            _escape_html(work_root),
+            _escape_html(movie_root),
+            _escape_html(tv_root),
+            _escape_html(now_label),
+            _escape_html(self.settings.settings_db_path or "Not set"),
+        )
+
+        return self._render_shell_html("System", content)
+
+    def _scheduler_running_label(self) -> str:
+        running = getattr(self.scheduler, "running", None)
+        if running is True:
+            return "Running"
+        if running is False:
+            return "Stopped"
+        return "Unknown"
+
+    def _next_run_label(self, library: str) -> str:
+        if library == "movies":
+            schedule = (self.settings.movie_schedule or "").strip()
+        else:
+            schedule = (self.settings.tv_schedule or "").strip()
+        if not schedule:
+            return "Not scheduled"
+
+        job = None
+        get_job = getattr(self.scheduler, "get_job", None)
+        if callable(get_job):
+            try:
+                job = get_job("%s-schedule" % library)
+            except Exception:
+                job = None
+        if job is None:
+            jobs = getattr(self.scheduler, "get_jobs", lambda: [])() or []
+            for candidate in jobs:
+                if getattr(candidate, "id", "") == "%s-schedule" % library:
+                    job = candidate
+                    break
+        if job is None:
+            return "Unknown"
+
+        next_run_time = getattr(job, "next_run_time", None)
+        if next_run_time is None:
+            return "Unknown"
+        return str(next_run_time)
+
+    def _current_time_label(self) -> str:
+        tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
+        if ZoneInfo is None:
+            return "%s (timezone data unavailable)" % datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        try:
+            now = datetime.now(ZoneInfo(tz_name))
+            return "%s (%s)" % (now.strftime("%Y-%m-%d %H:%M:%S"), tz_name)
+        except Exception:
+            return "%s (timezone: %s unavailable)" % (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), tz_name)
 
     def _render_placeholder_page(self, title: str, message: str) -> str:
         content = "<h1>%s</h1><p>%s</p>" % (_escape_html(title), _escape_html(message))
@@ -1054,7 +1186,7 @@ class ChonkService:
                     self.run_detail_page_html,
                     self.settings_page_html,
                     self.activity_page_html,
-                    self._render_placeholder_page,
+                    self.system_page_html,
                     self.update_editable_settings,
                     self.manual_run_payload,
                 )
@@ -1231,7 +1363,7 @@ def _run_simple_http_server(
     run_detail_html_fn: Callable[[str], tuple],
     settings_html_fn: Callable[[str], str],
     activity_html_fn: Callable[[], str],
-    placeholder_html_fn: Callable[[str, str], str],
+    system_html_fn: Callable[[], str],
     update_settings_fn: Callable[[Dict[str, str]], None],
     manual_run_fn: Callable[[str], tuple],
 ) -> None:
@@ -1284,12 +1416,8 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            placeholders = {
-                "/system": ("System", "System page coming soon."),
-            }
-            if self.path in placeholders:
-                title, message = placeholders[self.path]
-                payload = placeholder_html_fn(title, message).encode("utf-8")
+            if self.path == "/system":
+                payload = system_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))

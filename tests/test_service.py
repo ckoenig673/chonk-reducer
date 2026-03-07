@@ -720,7 +720,7 @@ def test_dashboard_route_renders_in_shell():
     assert "href=\"/settings\"" in body
 
 
-def test_shell_routes_render_placeholders():
+def test_shell_routes_render_expected_pages():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
@@ -730,6 +730,96 @@ def test_shell_routes_render_placeholders():
         assert status_code == 200
         assert "href=\"/dashboard\"" in body
         assert "<h1>%s</h1>" % heading in body
+
+
+
+
+def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("WORK_ROOT", "/work")
+    monkeypatch.setenv("MOVIE_MEDIA_ROOT", "/data/movies")
+    monkeypatch.setenv("TV_MEDIA_ROOT", "/data/tv")
+    monkeypatch.setenv("TZ", "UTC")
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="0 2 * * *", tv_schedule="0 4 * * *")
+    )
+
+    class FakeJob:
+        def __init__(self, job_id, next_run_time):
+            self.id = job_id
+            self.next_run_time = next_run_time
+
+    class FakeScheduler:
+        running = True
+
+        def __init__(self):
+            self._jobs = {
+                "movies-schedule": FakeJob("movies-schedule", "2026-01-08 02:00:00+00:00"),
+                "tv-schedule": FakeJob("tv-schedule", "2026-01-08 04:00:00+00:00"),
+            }
+
+        def get_job(self, job_id):
+            return self._jobs.get(job_id)
+
+        def get_jobs(self):
+            return list(self._jobs.values())
+
+    service.scheduler = FakeScheduler()
+
+    status_code, body, _ = _call_get(service, "/system")
+
+    assert status_code == 200
+    assert "Service Information" in body
+    assert "Scheduler Information" in body
+    assert "Runtime / Storage Information" in body
+    assert "Version</th>" in body
+    assert "Service Mode</th><td" in body and "Enabled" in body
+    assert "Scheduler Status</th><td" in body and "Running" in body
+    assert "<code>0 2 * * *</code>" in body
+    assert "<code>0 4 * * *</code>" in body
+    assert "2026-01-08 02:00:00+00:00" in body
+    assert "2026-01-08 04:00:00+00:00" in body
+    assert str(db_path) in body
+    assert "/work" in body
+    assert "/data/movies" in body
+    assert "/data/tv" in body
+    assert "Settings Source Information" in body
+    assert "environment/compose values" in body
+
+
+def test_system_page_shows_placeholders_for_missing_schedule_data(monkeypatch, tmp_path):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.delenv("WORK_ROOT", raising=False)
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="127.0.0.1", port=9090, movie_schedule="", tv_schedule="")
+    )
+
+    class EmptyScheduler:
+        running = False
+
+        def get_job(self, job_id):
+            del job_id
+            return None
+
+        def get_jobs(self):
+            return []
+
+    service.scheduler = EmptyScheduler()
+
+    status_code, body, _ = _call_get(service, "/system")
+
+    assert status_code == 200
+    assert "Service Host</th><td" in body and "127.0.0.1" in body
+    assert "Service Port</th><td" in body and "9090" in body
+    assert "Scheduler Status</th><td" in body and "Stopped" in body
+    assert "<code>Not set</code>" in body
+    assert "Next Movie Run</th><td" in body and "Not scheduled" in body
+    assert "Next TV Run</th><td" in body and "Not scheduled" in body
+    assert "Work / Log Path</th><td" in body and "Not set" in body
 
 
 def test_runs_page_renders_history_table_with_expected_columns(tmp_path, monkeypatch):

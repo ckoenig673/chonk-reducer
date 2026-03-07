@@ -252,7 +252,7 @@ Chonk Reducer supports an optional long-running service mode for internal schedu
   - `/runs/{run_id}`
   - `/activity`
   - `/settings`
-  - `/system` (placeholder)
+  - `/system`
 - `/` renders the dashboard in the new shell.
 
 Enable service mode:
@@ -333,6 +333,22 @@ It includes recent service events such as:
 - busy overlap rejections
 
 Raw detailed run logs are unchanged and still written to log files. The Activity page is intentionally a small recent-events view, not a full raw log replacement.
+
+System page:
+
+```bash
+open http://localhost:8080/system
+```
+
+The System page provides lightweight operator visibility into the running service, including:
+
+- service/runtime information (version, host/port, service mode)
+- scheduler status
+- configured movie/tv schedules
+- next scheduled run times when available from scheduler metadata
+- SQLite database path and runtime/work path visibility
+
+It is intentionally minimal and is not a full diagnostics framework.
 
 Settings precedence / bootstrap model:
 
