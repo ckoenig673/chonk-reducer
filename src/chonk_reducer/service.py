@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional
 
 try:
@@ -162,6 +164,8 @@ class ChonkService:
             return payload
 
     def home_page_html(self) -> str:
+        movies_status = self._latest_run_status("movies")
+        tv_status = self._latest_run_status("tv")
         return """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -171,15 +175,19 @@ class ChonkService:
 <body style=\"font-family: sans-serif; max-width: 540px; margin: 2rem auto;\">
   <h1>Chonk Reducer</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
-  <form method=\"post\" action=\"/run/movies\" style=\"margin-bottom: 0.75rem;\">
+  <h2 style=\"margin-bottom: 0.5rem;\">Movies</h2>
+  <form method=\"post\" action=\"/run/movies\" style=\"margin-bottom: 0.5rem;\">
     <button type=\"submit\">Run Movies</button>
   </form>
-  <form method=\"post\" action=\"/run/tv\">
+  %s
+  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">TV</h2>
+  <form method=\"post\" action=\"/run/tv\" style=\"margin-bottom: 0.5rem;\">
     <button type=\"submit\">Run TV</button>
   </form>
+  %s
 </body>
 </html>
-"""
+""" % (self._status_block_html(movies_status), self._status_block_html(tv_status))
 
     def health_payload(self) -> dict:
         return {"status": "ok"}
@@ -258,6 +266,58 @@ class ChonkService:
         finally:
             lock.release()
 
+    def _latest_run_status(self, library: str) -> Optional[Dict[str, str]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return None
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT library, ts_end, ts_start, success_count, failed_count, skipped_count, duration_seconds
+                FROM runs
+                WHERE library = ?
+                ORDER BY ts_end DESC
+                LIMIT 1
+                """,
+                (library,),
+            ).fetchone()
+            conn.close()
+        except Exception:
+            return None
+
+        if row is None:
+            return None
+
+        status = _derive_run_status(
+            success_count=int(row["success_count"] or 0),
+            failed_count=int(row["failed_count"] or 0),
+            skipped_count=int(row["skipped_count"] or 0),
+        )
+        return {
+            "library": str(row["library"] or library),
+            "ts_end": str(row["ts_end"] or ""),
+            "ts_start": str(row["ts_start"] or ""),
+            "status": status,
+            "duration_seconds": _format_duration_seconds(row["duration_seconds"]),
+        }
+
+    def _status_block_html(self, status: Optional[Dict[str, str]]) -> str:
+        if status is None:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No runs recorded yet.</div>'
+
+        return """<div style=\"padding: 0.5rem; border: 1px solid #ddd;\">
+  <div><strong>Status:</strong> %s</div>
+  <div><strong>Last run:</strong> %s</div>
+  <div><strong>Duration:</strong> %s</div>
+</div>""" % (
+            status["status"],
+            status["ts_end"] or status["ts_start"] or "Unknown",
+            status["duration_seconds"],
+        )
+
     def _run_library_once(self, library: str, trigger: str) -> None:
         with library_environment(library):
             LOGGER.info("Starting %s %s run", trigger, library)
@@ -335,6 +395,27 @@ def _is_valid_crontab(expr: str) -> bool:
     if len(parts) != 5:
         return False
     return all(bool(part.strip()) for part in parts)
+
+
+def _derive_run_status(success_count: int, failed_count: int, skipped_count: int) -> str:
+    """Map run counters to a compact status label for the operator page."""
+    if failed_count > 0:
+        return "failed"
+    if success_count > 0:
+        return "success"
+    if skipped_count > 0:
+        return "skipped"
+    return "completed"
+
+
+def _format_duration_seconds(value) -> str:
+    try:
+        seconds = float(value)
+    except Exception:
+        return "Unknown"
+    if seconds < 0:
+        return "Unknown"
+    return "%.1fs" % seconds
 
 
 def _run_simple_http_server(

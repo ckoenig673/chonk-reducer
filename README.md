@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.8.0
+**Current Version:** v1.10.0
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -246,6 +246,7 @@ Chonk Reducer now supports an optional long-running service mode for internal sc
 
 - Existing DSM Task Scheduler + one-shot container runs are still supported.
 - Service mode now includes a very small operator page for manual troubleshooting runs.
+- The home page provides manual Run Movies/Run TV buttons and a lightweight last-run status summary for Movies and TV from SQLite when available.
 - This is an early operator surface, not a full dashboard.
 
 Enable service mode:
