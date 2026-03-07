@@ -148,6 +148,16 @@ def _seed_run(
     conn.commit()
     conn.close()
 
+
+def _read_activity_rows(db_path):
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT event_type, library, message FROM activity_events ORDER BY id ASC"
+    ).fetchall()
+    conn.close()
+    return rows
+
 def test_service_settings_from_env(monkeypatch):
     monkeypatch.setenv("SERVICE_MODE", "true")
     monkeypatch.setenv("SERVICE_HOST", "127.0.0.1")
@@ -614,6 +624,137 @@ def test_shell_routes_render_placeholders():
         assert status_code == 200
         assert "href=\"/dashboard\"" in body
         assert "<h1>%s</h1>" % heading in body
+
+
+def test_activity_table_created_automatically(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='activity_events'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+
+
+def test_run_forever_records_service_and_scheduler_start_activity(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="127.0.0.1", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service.scheduler, "start", lambda: None)
+    monkeypatch.setattr(service.scheduler, "shutdown", lambda wait=False: None)
+    monkeypatch.setattr(service_module, "uvicorn", None)
+    monkeypatch.setattr(service_module, "_run_simple_http_server", lambda *args, **kwargs: None)
+
+    rc = service.run_forever()
+
+    assert rc == 0
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "service_start" in event_types
+    assert "scheduler_start" in event_types
+
+
+def test_schedule_registration_records_activity_entries(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(
+            enabled=True,
+            host="0.0.0.0",
+            port=8080,
+            movie_schedule="0 1 * * *",
+            tv_schedule="15 2 * * *",
+        )
+    )
+
+    service.register_jobs()
+
+    rows = _read_activity_rows(db_path)
+    assert [row["event_type"] for row in rows].count("schedule_registered") == 2
+    assert any(row["library"] == "movies" for row in rows)
+    assert any(row["library"] == "tv" for row in rows)
+
+
+def test_manual_run_records_requested_and_busy_activity(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    lock = service._library_locks["movies"]
+    lock.acquire()
+    try:
+        payload, status_code = service.manual_run_payload("movies")
+    finally:
+        lock.release()
+
+    assert status_code == 409
+    assert payload == {"status": "busy", "library": "movies"}
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "manual_run_requested" in event_types
+    assert "run_rejected_busy" in event_types
+
+
+def test_scheduled_busy_rejection_records_activity(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    lock = service._library_locks["movies"]
+    lock.acquire()
+    try:
+        started = service.trigger_library("movies")
+    finally:
+        lock.release()
+
+    assert started is False
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "scheduled_run_requested" in event_types
+    assert "run_rejected_busy" in event_types
+
+
+def test_run_start_and_completion_recorded(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service_module, "run", lambda: 0)
+
+    service._run_library_once("movies", "manual")
+
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "run_started" in event_types
+    assert "run_completed" in event_types
+
+
+def test_activity_page_shows_recent_entries(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service._record_activity("manual_run_requested", "Manual run requested for Movies", library="movies")
+    service._record_activity("run_started", "Movies run started", library="movies")
+
+    status_code, body, _ = _call_get(service, "/activity")
+
+    assert status_code == 200
+    assert "<h1>Activity</h1>" in body
+    assert "manual_run_requested" in body
+    assert "Movies run started" in body
+
+
+def test_activity_page_shows_empty_state(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, body, _ = _call_get(service, "/activity")
+
+    assert status_code == 200
+    assert "No recent activity recorded yet" in body
 
 
 def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch):

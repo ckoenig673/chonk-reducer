@@ -249,7 +249,7 @@ Chonk Reducer supports an optional long-running service mode for internal schedu
 - Routes available in this foundation release:
   - `/dashboard`
   - `/runs` (placeholder)
-  - `/activity` (placeholder)
+  - `/activity`
   - `/settings`
   - `/system` (placeholder)
 - `/` renders the dashboard in the new shell.
@@ -299,6 +299,25 @@ The settings page is backed by SQLite (`STATS_PATH`) and currently manages a sma
 - `min_file_age_minutes`
 - `max_files`
 - `min_savings_percent`
+
+Activity page:
+
+```bash
+open http://localhost:8080/activity
+```
+
+The Activity page is a lightweight operator-facing event feed stored in SQLite (`activity_events` table in `STATS_PATH`).
+
+It includes recent service events such as:
+
+- service startup
+- scheduler start
+- schedule registration
+- manual and scheduled run requests
+- run start/completion
+- busy overlap rejections
+
+Raw detailed run logs are unchanged and still written to log files. The Activity page is intentionally a small recent-events view, not a full raw log replacement.
 
 Settings precedence / bootstrap model:
 
