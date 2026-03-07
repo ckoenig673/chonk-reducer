@@ -245,8 +245,8 @@ Synology DSM task example:
 Chonk Reducer now supports an optional long-running service mode for internal scheduling.
 
 - Existing DSM Task Scheduler + one-shot container runs are still supported.
-- Service mode is the foundation for future API/reporting/dashboard work.
-- This release does **not** include dashboard pages yet.
+- Service mode now includes a very small operator page for manual troubleshooting runs.
+- This is an early operator surface, not a full dashboard.
 
 Enable service mode:
 
@@ -265,6 +265,23 @@ Returns:
 ```json
 {"status":"ok"}
 ```
+
+Service operator page:
+
+```bash
+open http://localhost:8080/
+```
+
+The home page provides two minimal buttons:
+
+- **Run Movies** (`POST /run/movies`)
+- **Run TV** (`POST /run/tv`)
+
+Manual trigger behavior:
+
+- Requests reuse the same service orchestration path used by scheduled runs.
+- Library locks prevent overlap (if a library run is active, manual requests return `{"status":"busy"}`).
+- Intended for troubleshooting and operational validation, not as a final dashboard.
 
 Service scheduler environment variables:
 
