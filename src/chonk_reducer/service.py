@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -177,7 +178,7 @@ class ChonkService:
 
         @self.app.get("/activity")
         def activity_page():
-            return self._html_response(self._render_placeholder_page("Activity", "Activity page coming soon."))
+            return self._html_response(self.activity_page_html())
 
         @self.app.get("/system")
         def system_page():
@@ -274,6 +275,12 @@ class ChonkService:
             rows
         )
         return self._render_shell_html("Settings", content)
+
+    def activity_page_html(self) -> str:
+        rows = self._recent_activity(limit=25)
+        content = "<h1>Activity</h1><p>Recent operator-facing service events from SQLite.</p>"
+        content += self._recent_activity_html(rows)
+        return self._render_shell_html("Activity", content)
 
     def _render_placeholder_page(self, title: str, message: str) -> str:
         content = "<h1>%s</h1><p>%s</p>" % (_escape_html(title), _escape_html(message))
@@ -387,11 +394,27 @@ class ChonkService:
             replace_existing=True,
         )
         LOGGER.info("Registered %s schedule: %s", library, schedule)
+        self._record_activity(
+            event_type="schedule_registered",
+            message="Scheduler registered %s schedule" % library.title(),
+            library=library,
+        )
 
     def trigger_library(self, library: str) -> bool:
+        self._record_activity(
+            event_type="scheduled_run_requested",
+            message="Scheduled run requested for %s" % library.title(),
+            library=library,
+        )
         lock = self._library_locks[library]
         if not lock.acquire(blocking=False):
             LOGGER.info("%s run already in progress; skipping overlapping schedule", library)
+            self._record_activity(
+                event_type="run_rejected_busy",
+                message="%s run skipped because library is already busy" % library.title(),
+                library=library,
+                level="warning",
+            )
             return False
 
         try:
@@ -402,6 +425,11 @@ class ChonkService:
 
     def manual_run_payload(self, library: str):
         LOGGER.info("Manual %s run request received", library)
+        self._record_activity(
+            event_type="manual_run_requested",
+            message="Manual run requested for %s" % library.title(),
+            library=library,
+        )
         started = self._start_manual_run(library)
         payload = {
             "status": "started" if started else "busy",
@@ -412,6 +440,12 @@ class ChonkService:
             return payload, 202
 
         LOGGER.info("Manual %s run rejected; run already in progress", library)
+        self._record_activity(
+            event_type="run_rejected_busy",
+            message="%s run skipped because library is already busy" % library.title(),
+            library=library,
+            level="warning",
+        )
         return payload, 409
 
     def _start_manual_run(self, library: str) -> bool:
@@ -595,17 +629,112 @@ class ChonkService:
             savings["files_optimized"],
         )
 
+    def _recent_activity(self, limit: int = 25) -> List[Dict[str, str]]:
+        conn = _connect_settings_db(self._settings_db_path)
+        rows = conn.execute(
+            """
+            SELECT ts, library, event_type, message
+            FROM activity_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+        conn.close()
+
+        return [
+            {
+                "ts": str(row["ts"]),
+                "library": str(row["library"] or "-"),
+                "event_type": str(row["event_type"]),
+                "message": str(row["message"]),
+            }
+            for row in rows
+        ]
+
+    def _recent_activity_html(self, rows: List[Dict[str, str]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No recent activity recorded yet.</div>'
+
+        row_html = []
+        for row in rows:
+            row_html.append(
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                % (
+                    _escape_html(row["ts"]),
+                    _escape_html(row["library"]),
+                    _escape_html(row["event_type"]),
+                    _escape_html(row["message"]),
+                )
+            )
+
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <thead>
+    <tr>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Timestamp</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Event Type</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Message</th>
+    </tr>
+  </thead>
+  <tbody>
+    %s
+  </tbody>
+</table>""" % "".join(row_html)
+
+    def _record_activity(
+        self,
+        event_type: str,
+        message: str,
+        library: Optional[str] = None,
+        run_id: Optional[str] = None,
+        level: str = "info",
+    ) -> None:
+        conn = _connect_settings_db(self._settings_db_path)
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO activity_events(ts, level, library, run_id, event_type, message)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utc_timestamp(),
+                    str(level),
+                    str(library) if library is not None else None,
+                    str(run_id) if run_id is not None else None,
+                    str(event_type),
+                    str(message),
+                ),
+            )
+        conn.close()
+
     def _run_library_once(self, library: str, trigger: str) -> None:
+        run_id = str(uuid.uuid4())
+        self._record_activity(
+            event_type="run_started",
+            message="%s run started" % library.title(),
+            library=library,
+            run_id=run_id,
+        )
+
         with editable_settings_environment(self._editable_settings):
             with library_environment(library):
                 LOGGER.info("Starting %s %s run", trigger, library)
                 rc = run()
                 LOGGER.info("Finished %s %s run with exit code %s", trigger, library, rc)
+        self._record_activity(
+            event_type="run_completed",
+            message="%s run completed" % library.title(),
+            library=library,
+            run_id=run_id,
+        )
 
     def run_forever(self) -> int:
+        self._record_activity(event_type="service_start", message="Service startup complete")
         self.register_jobs()
         self.scheduler.start()
         LOGGER.info("Service scheduler started")
+        self._record_activity(event_type="scheduler_start", message="Scheduler started")
 
         try:
             if uvicorn is not None and FastAPI is not None and isinstance(self.app, FastAPI):
@@ -617,6 +746,7 @@ class ChonkService:
                     self.health_payload,
                     self.home_page_html,
                     self.settings_page_html,
+                    self.activity_page_html,
                     self._render_placeholder_page,
                     self.update_editable_settings,
                     self.manual_run_payload,
@@ -708,6 +838,19 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS activity_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            level TEXT NOT NULL,
+            library TEXT,
+            run_id TEXT,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL
+        )
+        """
+    )
     return conn
 
 
@@ -778,6 +921,7 @@ def _run_simple_http_server(
     health_fn: Callable[[], dict],
     home_html_fn: Callable[[], str],
     settings_html_fn: Callable[[str], str],
+    activity_html_fn: Callable[[], str],
     placeholder_html_fn: Callable[[str, str], str],
     update_settings_fn: Callable[[Dict[str, str]], None],
     manual_run_fn: Callable[[str], tuple],
@@ -802,9 +946,17 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
+            if self.path == "/activity":
+                payload = activity_html_fn().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
             placeholders = {
                 "/runs": ("Runs", "Runs page coming soon."),
-                "/activity": ("Activity", "Activity page coming soon."),
                 "/system": ("System", "System page coming soon."),
             }
             if self.path in placeholders:
