@@ -183,6 +183,7 @@ def test_home_page_route_returns_minimal_operator_page():
     assert "Chonk Reducer" in body
     assert "Run Movies" in body
     assert "Run TV" in body
+    assert "Lifetime Savings" in body
     assert "Recent Runs" in body
 
 
@@ -197,7 +198,84 @@ def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch
 
     assert status_code == 200
     assert body.count("No runs recorded yet") == 2
+    assert "No reclaimed storage recorded yet" in body
     assert "No recent runs recorded yet" in body
+
+
+def test_home_page_shows_lifetime_savings_values_for_movies_and_tv(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T08:00:00",
+        success_count=2,
+        failed_count=0,
+        skipped_count=0,
+        saved_bytes=3 * 1024 * 1024 * 1024,
+    )
+    _seed_run(
+        db_path,
+        library="tv",
+        ts_end="2026-01-02T09:00:00",
+        success_count=3,
+        failed_count=0,
+        skipped_count=1,
+        saved_bytes=2 * 1024 * 1024 * 1024,
+    )
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T10:00:00",
+        success_count=0,
+        failed_count=1,
+        skipped_count=0,
+        saved_bytes=1 * 1024 * 1024 * 1024,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert "Lifetime Savings" in body
+    assert "Movies reclaimed:</strong> 3.0 GB" in body
+    assert "TV reclaimed:</strong> 2.0 GB" in body
+    assert "Total reclaimed:</strong> 5.0 GB" in body
+    assert "Files optimized:</strong> 5" in body
+
+
+def test_home_page_shows_lifetime_savings_empty_state_when_no_successful_runs(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-03T09:00:00",
+        success_count=0,
+        failed_count=1,
+        skipped_count=0,
+        saved_bytes=0,
+    )
+    _seed_run(
+        db_path,
+        library="tv",
+        ts_end="2026-01-03T10:00:00",
+        success_count=0,
+        failed_count=0,
+        skipped_count=2,
+        saved_bytes=0,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert "Lifetime Savings" in body
+    assert "No reclaimed storage recorded yet" in body
 
 
 def test_home_page_shows_latest_movies_run_information(tmp_path, monkeypatch):

@@ -246,7 +246,7 @@ Chonk Reducer now supports an optional long-running service mode for internal sc
 
 - Existing DSM Task Scheduler + one-shot container runs are still supported.
 - Service mode now includes a very small operator page for manual troubleshooting runs.
-- The home page provides manual Run Movies/Run TV buttons, lightweight last-run status summaries for Movies and TV, and a Recent Runs table from SQLite when available.
+- The home page provides manual Run Movies/Run TV buttons, lightweight last-run status summaries for Movies and TV, a Recent Runs table, and a lifetime reclaimed storage summary from SQLite when available.
 - This is an early operator surface, not a full dashboard.
 
 Enable service mode:
@@ -279,6 +279,7 @@ The home page provides:
 - **Run TV** (`POST /run/tv`)
 - Basic last-run status for Movies and TV
 - A small Recent Runs view (latest run rows from `runs` in SQLite)
+- A **Lifetime Savings** summary (Movies reclaimed, TV reclaimed, total reclaimed, files optimized)
 
 Manual trigger behavior:
 
