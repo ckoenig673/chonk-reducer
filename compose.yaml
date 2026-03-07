@@ -163,7 +163,7 @@ services:
 
       SERVICE_MODE: "true"
       SERVICE_HOST: "0.0.0.0"
-      SERVICE_PORT: "8085"
+      SERVICE_PORT: "8080"
       MOVIE_SCHEDULE: "0 2 * * *"
       TV_SCHEDULE: "0 4 * * *"
 
