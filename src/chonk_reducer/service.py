@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import strftime
 from typing import Callable, Dict, Iterator, List, Optional
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
@@ -176,6 +176,11 @@ class ChonkService:
         def runs_page():
             return self._html_response(self.runs_page_html())
 
+        @self.app.get("/runs/{run_id}")
+        def run_detail_page(run_id: str):
+            html, status_code = self.run_detail_page_html(run_id)
+            return self._html_response(html, status_code=status_code)
+
         @self.app.get("/activity")
         def activity_page():
             return self._html_response(self.activity_page_html())
@@ -215,9 +220,9 @@ class ChonkService:
                 return JSONResponse(content=payload, status_code=status_code)
             return payload
 
-    def _html_response(self, html: str):
+    def _html_response(self, html: str, status_code: int = 200):
         if HTMLResponse is not None:
-            return HTMLResponse(content=html)
+            return HTMLResponse(content=html, status_code=status_code)
         return html
 
     def home_page_html(self) -> str:
@@ -287,6 +292,19 @@ class ChonkService:
         content = "<h1>Runs</h1><p>Recent run history from SQLite.</p>"
         content += self._runs_history_html(rows)
         return self._render_shell_html("Runs", content)
+
+    def run_detail_page_html(self, run_id: str) -> tuple:
+        run = self._run_detail(run_id)
+        if run is None:
+            content = "<h1>Run Not Found</h1><p>No run exists for run_id: <code>%s</code>.</p>" % _escape_html(run_id)
+            return self._render_shell_html("Runs", content), 404
+
+        encodes = self._encodes_for_run(run_id)
+        content = "<h1>Run Detail</h1><p>Operator-facing summary for this run from SQLite.</p>"
+        content += self._run_summary_html(run)
+        content += '<h2 style="margin-top: 1rem;">File-Level Entries</h2>'
+        content += self._run_encodes_html(encodes)
+        return self._render_shell_html("Runs", content), 200
 
     def _render_placeholder_page(self, title: str, message: str) -> str:
         content = "<h1>%s</h1><p>%s</p>" % (_escape_html(title), _escape_html(message))
@@ -607,6 +625,126 @@ class ChonkService:
             )
         return result
 
+    def _run_detail(self, run_id: str) -> Optional[Dict[str, str]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return None
+
+        requested_columns = [
+            "run_id",
+            "ts_start",
+            "ts_end",
+            "library",
+            "candidates_found",
+            "evaluated_count",
+            "processed_count",
+            "success_count",
+            "skipped_count",
+            "failed_count",
+            "saved_bytes",
+            "duration_seconds",
+            "prefiltered_count",
+            "prefiltered_marker_count",
+            "prefiltered_backup_count",
+            "prefiltered_recent_count",
+            "skipped_codec_count",
+            "skipped_resolution_count",
+            "skipped_min_savings_count",
+            "skipped_max_savings_count",
+            "skipped_dry_run_count",
+            "ignored_folder_count",
+            "ignored_file_count",
+        ]
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            existing_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+            columns = [col for col in requested_columns if col in existing_columns]
+            if not columns:
+                conn.close()
+                return None
+            row = conn.execute(
+                "SELECT %s FROM runs WHERE run_id = ? LIMIT 1" % ", ".join(columns),
+                (run_id,),
+            ).fetchone()
+            conn.close()
+        except Exception:
+            return None
+
+        if row is None:
+            return None
+
+        result: Dict[str, str] = {
+            "result": _derive_run_status(
+                success_count=int(row["success_count"] or 0),
+                failed_count=int(row["failed_count"] or 0),
+                skipped_count=int(row["skipped_count"] or 0),
+            )
+        }
+        for key in requested_columns:
+            if key in row.keys():
+                result[key] = row[key]
+        return result
+
+    def _encodes_for_run(self, run_id: str) -> List[Dict[str, str]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT ts, path, filename, status, codec_from, codec_to,
+                       size_before_bytes, size_after_bytes, saved_bytes,
+                       skip_reason, skip_detail, fail_stage, error_type, error_msg
+                FROM encodes
+                WHERE run_id = ?
+                ORDER BY ts ASC, id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+            conn.close()
+        except Exception:
+            return []
+
+        result: List[Dict[str, str]] = []
+        for row in rows:
+            reason = ""
+            if row["skip_reason"]:
+                reason = str(row["skip_reason"])
+                if row["skip_detail"]:
+                    reason += ": %s" % str(row["skip_detail"])
+            elif row["error_type"]:
+                reason = str(row["error_type"])
+                if row["error_msg"]:
+                    reason += ": %s" % str(row["error_msg"])
+            elif row["fail_stage"]:
+                reason = "fail_stage: %s" % str(row["fail_stage"])
+
+            path = str(row["path"] or row["filename"] or "-")
+            codec_info = "-"
+            if row["codec_from"] and row["codec_to"]:
+                codec_info = "%s -> %s" % (row["codec_from"], row["codec_to"])
+            elif row["codec_from"]:
+                codec_info = str(row["codec_from"])
+
+            result.append(
+                {
+                    "ts": str(row["ts"] or ""),
+                    "path": path,
+                    "status": str(row["status"] or "unknown"),
+                    "codec_info": codec_info,
+                    "before": _format_saved_bytes(row["size_before_bytes"]),
+                    "after": _format_saved_bytes(row["size_after_bytes"]),
+                    "saved": _format_saved_bytes(row["saved_bytes"]),
+                    "reason": reason or "-",
+                }
+            )
+        return result
+
     def _recent_runs_html(self, rows: List[Dict[str, str]]) -> str:
         if not rows:
             return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No recent runs recorded yet.</div>'
@@ -639,6 +777,7 @@ class ChonkService:
 
         row_html = []
         for row in rows:
+            run_id = _escape_html(row["run_id"])
             row_html.append(
                 "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
@@ -651,7 +790,7 @@ class ChonkService:
                     _escape_html(row["skipped"]),
                     _escape_html(row["failed"]),
                     _escape_html(row["saved"]),
-                    _escape_html(row["run_id"]),
+                    '<a href="/runs/%s">%s</a>' % (run_id, run_id),
                 )
             )
 
@@ -674,6 +813,77 @@ class ChonkService:
     %s
   </tbody>
 </table>""" % "".join(row_html)
+
+    def _run_summary_html(self, run: Dict[str, str]) -> str:
+        items = [
+            ("Run ID", _escape_html(str(run.get("run_id") or "-"))),
+            ("Timestamp", _escape_html(str(run.get("ts_end") or run.get("ts_start") or "Unknown"))),
+            ("Library", _escape_html(str(run.get("library") or "Unknown"))),
+            ("Result", _escape_html(str(run.get("result") or "completed"))),
+            ("Duration", _escape_html(_format_duration_seconds(run.get("duration_seconds")))),
+            ("Candidates Found", _escape_html(str(run.get("candidates_found") or 0))),
+            ("Evaluated", _escape_html(str(run.get("evaluated_count") or 0))),
+            ("Processed", _escape_html(str(run.get("processed_count") or 0))),
+            ("Success", _escape_html(str(run.get("success_count") or 0))),
+            ("Skipped", _escape_html(str(run.get("skipped_count") or 0))),
+            ("Failed", _escape_html(str(run.get("failed_count") or 0))),
+            ("Saved", _escape_html(_format_saved_bytes(run.get("saved_bytes")))),
+        ]
+        optional_fields = [
+            ("Prefiltered", "prefiltered_count"),
+            ("Prefiltered Marker", "prefiltered_marker_count"),
+            ("Prefiltered Backup", "prefiltered_backup_count"),
+            ("Prefiltered Recent", "prefiltered_recent_count"),
+            ("Skipped Codec", "skipped_codec_count"),
+            ("Skipped Resolution", "skipped_resolution_count"),
+            ("Skipped Min Savings", "skipped_min_savings_count"),
+            ("Skipped Max Savings", "skipped_max_savings_count"),
+            ("Skipped Dry Run", "skipped_dry_run_count"),
+            ("Ignored Folder", "ignored_folder_count"),
+            ("Ignored File", "ignored_file_count"),
+        ]
+        for label, key in optional_fields:
+            if key in run:
+                items.append((label, _escape_html(str(run.get(key) or 0))))
+
+        lines = ["<li><strong>%s:</strong> %s</li>" % (label, value) for label, value in items]
+        return '<h2>Run Summary</h2><ul style="line-height:1.5;">%s</ul>' % "".join(lines)
+
+    def _run_encodes_html(self, rows: List[Dict[str, str]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No file-level entries recorded for this run.</div>'
+
+        body_rows = []
+        for row in rows:
+            body_rows.append(
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                % (
+                    _escape_html(row["path"]),
+                    _escape_html(row["status"]),
+                    _escape_html(row["codec_info"]),
+                    _escape_html(row["before"]),
+                    _escape_html(row["after"]),
+                    _escape_html(row["saved"]),
+                    _escape_html(row["reason"]),
+                )
+            )
+
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <thead>
+    <tr>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Path</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Status</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Codec</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Before</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">After</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Reason / Detail</th>
+    </tr>
+  </thead>
+  <tbody>
+    %s
+  </tbody>
+</table>""" % "".join(body_rows)
 
     def _lifetime_savings(self) -> Optional[Dict[str, int]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
@@ -841,6 +1051,7 @@ class ChonkService:
                     self.health_payload,
                     self.home_page_html,
                     self.runs_page_html,
+                    self.run_detail_page_html,
                     self.settings_page_html,
                     self.activity_page_html,
                     self._render_placeholder_page,
@@ -1017,6 +1228,7 @@ def _run_simple_http_server(
     health_fn: Callable[[], dict],
     home_html_fn: Callable[[], str],
     runs_html_fn: Callable[[], str],
+    run_detail_html_fn: Callable[[str], tuple],
     settings_html_fn: Callable[[str], str],
     activity_html_fn: Callable[[], str],
     placeholder_html_fn: Callable[[str, str], str],
@@ -1046,6 +1258,17 @@ def _run_simple_http_server(
             if self.path == "/runs":
                 payload = runs_html_fn().encode("utf-8")
                 self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if self.path.startswith("/runs/"):
+                run_id = unquote(self.path[len("/runs/") :])
+                html, status_code = run_detail_html_fn(run_id)
+                payload = html.encode("utf-8")
+                self.send_response(status_code)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
