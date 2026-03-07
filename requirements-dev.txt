@@ -3,3 +3,4 @@ pytest-mock
 fastapi
 uvicorn
 apscheduler
+httpx

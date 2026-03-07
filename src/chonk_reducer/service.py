@@ -18,8 +18,11 @@ except Exception:  # pragma: no cover - exercised by fallback tests
 
 try:
     from fastapi import FastAPI  # type: ignore
+    from fastapi.responses import HTMLResponse, JSONResponse  # type: ignore
 except Exception:  # pragma: no cover - exercised by fallback tests
     FastAPI = None
+    HTMLResponse = None
+    JSONResponse = None
 
 try:
     import uvicorn  # type: ignore
@@ -95,11 +98,18 @@ class _FallbackScheduler:
 
 class _FallbackFastAPI:
     def __init__(self):
-        self.routes: Dict[str, Callable[[], dict]] = {}
+        self.routes: Dict[str, Callable] = {}
 
     def get(self, path: str):
         def decorator(fn):
-            self.routes[path] = fn
+            self.routes["GET %s" % path] = fn
+            return fn
+
+        return decorator
+
+    def post(self, path: str):
+        def decorator(fn):
+            self.routes["POST %s" % path] = fn
             return fn
 
         return decorator
@@ -127,9 +137,49 @@ class ChonkService:
         return _FallbackFastAPI()
 
     def _configure_routes(self) -> None:
+        @self.app.get("/")
+        def home():
+            if HTMLResponse is not None:
+                return HTMLResponse(content=self.home_page_html())
+            return self.home_page_html()
+
         @self.app.get("/health")
         def health() -> dict:
             return self.health_payload()
+
+        @self.app.post("/run/movies")
+        def run_movies():
+            payload, status_code = self.manual_run_payload("movies")
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=status_code)
+            return payload
+
+        @self.app.post("/run/tv")
+        def run_tv():
+            payload, status_code = self.manual_run_payload("tv")
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=status_code)
+            return payload
+
+    def home_page_html(self) -> str:
+        return """<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <title>Chonk Reducer Operator Page</title>
+</head>
+<body style=\"font-family: sans-serif; max-width: 540px; margin: 2rem auto;\">
+  <h1>Chonk Reducer</h1>
+  <p>Manual run controls for troubleshooting and operational checks.</p>
+  <form method=\"post\" action=\"/run/movies\" style=\"margin-bottom: 0.75rem;\">
+    <button type=\"submit\">Run Movies</button>
+  </form>
+  <form method=\"post\" action=\"/run/tv\">
+    <button type=\"submit\">Run TV</button>
+  </form>
+</body>
+</html>
+"""
 
     def health_payload(self) -> dict:
         return {"status": "ok"}
@@ -167,22 +217,52 @@ class ChonkService:
         )
         LOGGER.info("Registered %s schedule: %s", library, schedule)
 
-    def trigger_library(self, library: str) -> None:
+    def trigger_library(self, library: str) -> bool:
         lock = self._library_locks[library]
         if not lock.acquire(blocking=False):
             LOGGER.info("%s run already in progress; skipping overlapping schedule", library)
-            return
+            return False
 
         try:
-            self._run_library_once(library)
+            self._run_library_once(library, trigger="schedule")
+        finally:
+            lock.release()
+        return True
+
+    def manual_run_payload(self, library: str):
+        LOGGER.info("Manual %s run request received", library)
+        started = self._start_manual_run(library)
+        payload = {
+            "status": "started" if started else "busy",
+            "library": library,
+        }
+        if started:
+            LOGGER.info("Manual %s run accepted and started", library)
+            return payload, 202
+
+        LOGGER.info("Manual %s run rejected; run already in progress", library)
+        return payload, 409
+
+    def _start_manual_run(self, library: str) -> bool:
+        lock = self._library_locks[library]
+        if not lock.acquire(blocking=False):
+            return False
+
+        thread = threading.Thread(target=self._run_manual_library_once, args=(library, lock), daemon=True)
+        thread.start()
+        return True
+
+    def _run_manual_library_once(self, library: str, lock: threading.Lock) -> None:
+        try:
+            self._run_library_once(library, trigger="manual")
         finally:
             lock.release()
 
-    def _run_library_once(self, library: str) -> None:
+    def _run_library_once(self, library: str, trigger: str) -> None:
         with library_environment(library):
-            LOGGER.info("Starting scheduled %s run", library)
+            LOGGER.info("Starting %s %s run", trigger, library)
             rc = run()
-            LOGGER.info("Finished scheduled %s run with exit code %s", library, rc)
+            LOGGER.info("Finished %s %s run with exit code %s", trigger, library, rc)
 
     def run_forever(self) -> int:
         self.register_jobs()
@@ -193,7 +273,13 @@ class ChonkService:
             if uvicorn is not None and FastAPI is not None and isinstance(self.app, FastAPI):
                 uvicorn.run(self.app, host=self.settings.host, port=self.settings.port)
             else:
-                _run_simple_health_server(self.settings.host, self.settings.port, self.health_payload)
+                _run_simple_http_server(
+                    self.settings.host,
+                    self.settings.port,
+                    self.health_payload,
+                    self.home_page_html,
+                    self.manual_run_payload,
+                )
         finally:
             self.scheduler.shutdown(wait=False)
 
@@ -251,9 +337,24 @@ def _is_valid_crontab(expr: str) -> bool:
     return all(bool(part.strip()) for part in parts)
 
 
-def _run_simple_health_server(host: str, port: int, health_fn: Callable[[], dict]) -> None:
+def _run_simple_http_server(
+    host: str,
+    port: int,
+    health_fn: Callable[[], dict],
+    home_html_fn: Callable[[], str],
+    manual_run_fn: Callable[[str], tuple],
+) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
+            if self.path == "/":
+                payload = home_html_fn().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
             if self.path != "/health":
                 self.send_response(404)
                 self.end_headers()
@@ -265,6 +366,23 @@ def _run_simple_health_server(host: str, port: int, health_fn: Callable[[], dict
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+
+        def do_POST(self):  # noqa: N802
+            if self.path == "/run/movies":
+                payload, status_code = manual_run_fn("movies")
+            elif self.path == "/run/tv":
+                payload, status_code = manual_run_fn("tv")
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            encoded = json.dumps(payload).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
 
         def log_message(self, format, *args):  # noqa: A003
             del format, args
