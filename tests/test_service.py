@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import threading
 
 from chonk_reducer import cli
@@ -9,17 +11,27 @@ from chonk_reducer.service import ChonkService, ServiceSettings, library_environ
 
 
 def _call_get(service, path):
-    if service_module.FastAPI is not None and isinstance(service.app, service_module.FastAPI):
-        from starlette.testclient import TestClient
-
-        with TestClient(service.app) as client:
-            response = client.get(path)
-        body = response.text
+    can_use_test_client = service_module.FastAPI is not None and isinstance(service.app, service_module.FastAPI)
+    if can_use_test_client:
         try:
-            payload = response.json()
+            from starlette.testclient import TestClient
+
+            with TestClient(service.app) as client:
+                response = client.get(path)
+            body = response.text
+            try:
+                payload = response.json()
+            except Exception:
+                payload = None
+            return response.status_code, body, payload
         except Exception:
-            payload = None
-        return response.status_code, body, payload
+            for route in service.app.routes:
+                methods = getattr(route, "methods", set())
+                if getattr(route, "path", None) == path and "GET" in methods:
+                    result = route.endpoint()
+                    if hasattr(result, "body"):
+                        return 200, result.body.decode("utf-8"), None
+                    return 200, result, None
 
     handler = service.app.routes["GET %s" % path]
     result = handler()
@@ -29,20 +41,80 @@ def _call_get(service, path):
 
 
 def _call_post(service, path):
-    if service_module.FastAPI is not None and isinstance(service.app, service_module.FastAPI):
-        from starlette.testclient import TestClient
+    can_use_test_client = service_module.FastAPI is not None and isinstance(service.app, service_module.FastAPI)
+    if can_use_test_client:
+        try:
+            from starlette.testclient import TestClient
 
-        with TestClient(service.app) as client:
-            response = client.post(path)
-        return response.status_code, response.json()
+            with TestClient(service.app) as client:
+                response = client.post(path)
+            return response.status_code, response.json()
+        except Exception:
+            for route in service.app.routes:
+                methods = getattr(route, "methods", set())
+                if getattr(route, "path", None) == path and "POST" in methods:
+                    result = route.endpoint()
+                    if hasattr(result, "status_code") and hasattr(result, "body"):
+                        return int(result.status_code), json.loads(result.body.decode("utf-8"))
+                    return (202 if result["status"] == "started" else 409), result
 
     handler = service.app.routes["POST %s" % path]
-    if path == "/run/movies":
-        result = handler()
-    else:
-        result = handler()
+    result = handler()
     return (202 if result["status"] == "started" else 409), result
 
+
+def _seed_run(db_path, library, ts_end, success_count=0, failed_count=0, skipped_count=0, duration_seconds=0.0):
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            ts_start TEXT NOT NULL,
+            ts_end TEXT NOT NULL,
+            mode TEXT,
+            library TEXT,
+            version TEXT,
+            encoder TEXT,
+            quality INTEGER,
+            preset INTEGER,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            before_bytes INTEGER NOT NULL DEFAULT 0,
+            after_bytes INTEGER NOT NULL DEFAULT 0,
+            saved_bytes INTEGER NOT NULL DEFAULT 0,
+            duration_seconds REAL NOT NULL DEFAULT 0.0
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO runs(
+            run_id, ts_start, ts_end, mode, library, version, encoder, quality, preset,
+            success_count, failed_count, skipped_count, before_bytes, after_bytes, saved_bytes, duration_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"{library}-{ts_end}",
+            ts_end,
+            ts_end,
+            "normal",
+            library,
+            "test",
+            "hevc_qsv",
+            21,
+            7,
+            int(success_count),
+            int(failed_count),
+            int(skipped_count),
+            0,
+            0,
+            0,
+            float(duration_seconds),
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 def test_service_settings_from_env(monkeypatch):
     monkeypatch.setenv("SERVICE_MODE", "true")
@@ -102,6 +174,78 @@ def test_home_page_route_returns_minimal_operator_page():
     assert "Chonk Reducer" in body
     assert "Run Movies" in body
     assert "Run TV" in body
+
+
+def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert body.count("No runs recorded yet") == 2
+
+
+def test_home_page_shows_latest_movies_run_information(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-01T09:00:00",
+        success_count=0,
+        failed_count=0,
+        skipped_count=2,
+        duration_seconds=5.0,
+    )
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-01T10:00:00",
+        success_count=3,
+        failed_count=0,
+        skipped_count=1,
+        duration_seconds=12.4,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert "Movies" in body
+    assert "2026-01-01T10:00:00" in body
+    assert "Status:</strong> success" in body
+    assert "Duration:</strong> 12.4s" in body
+
+
+def test_home_page_shows_latest_tv_run_information(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="tv",
+        ts_end="2026-01-02T11:00:00",
+        success_count=0,
+        failed_count=1,
+        skipped_count=0,
+        duration_seconds=2.0,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/")
+
+    assert status_code == 200
+    assert "TV" in body
+    assert "2026-01-02T11:00:00" in body
+    assert "Status:</strong> failed" in body
+    assert "Duration:</strong> 2.0s" in body
 
 
 def test_health_endpoint_payload():
