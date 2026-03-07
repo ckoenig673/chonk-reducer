@@ -174,7 +174,7 @@ class ChonkService:
 
         @self.app.get("/runs")
         def runs_page():
-            return self._html_response(self._render_placeholder_page("Runs", "Runs page coming soon."))
+            return self._html_response(self.runs_page_html())
 
         @self.app.get("/activity")
         def activity_page():
@@ -281,6 +281,12 @@ class ChonkService:
         content = "<h1>Activity</h1><p>Recent operator-facing service events from SQLite.</p>"
         content += self._recent_activity_html(rows)
         return self._render_shell_html("Activity", content)
+
+    def runs_page_html(self) -> str:
+        rows = self._run_history(limit=50)
+        content = "<h1>Runs</h1><p>Recent run history from SQLite.</p>"
+        content += self._runs_history_html(rows)
+        return self._render_shell_html("Runs", content)
 
     def _render_placeholder_page(self, title: str, message: str) -> str:
         content = "<h1>%s</h1><p>%s</p>" % (_escape_html(title), _escape_html(message))
@@ -554,6 +560,53 @@ class ChonkService:
             )
         return result
 
+    def _run_history(self, limit: int = 50) -> List[Dict[str, str]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT run_id, ts_end, ts_start, library, success_count, failed_count, skipped_count,
+                       duration_seconds, saved_bytes
+                FROM runs
+                ORDER BY ts_end DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+            conn.close()
+        except Exception:
+            return []
+
+        result: List[Dict[str, str]] = []
+        for row in rows:
+            success_count = int(row["success_count"] or 0)
+            failed_count = int(row["failed_count"] or 0)
+            skipped_count = int(row["skipped_count"] or 0)
+            result.append(
+                {
+                    "time": str(row["ts_end"] or row["ts_start"] or "Unknown"),
+                    "library": str(row["library"] or "Unknown"),
+                    "result": _derive_run_status(
+                        success_count=success_count,
+                        failed_count=failed_count,
+                        skipped_count=skipped_count,
+                    ),
+                    "duration": _format_duration_seconds(row["duration_seconds"]),
+                    "processed": str(success_count + failed_count + skipped_count),
+                    "success": str(success_count),
+                    "skipped": str(skipped_count),
+                    "failed": str(failed_count),
+                    "saved": _format_saved_bytes(row["saved_bytes"]),
+                    "run_id": str(row["run_id"] or "-"),
+                }
+            )
+        return result
+
     def _recent_runs_html(self, rows: List[Dict[str, str]]) -> str:
         if not rows:
             return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No recent runs recorded yet.</div>'
@@ -573,6 +626,48 @@ class ChonkService:
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Status</th>
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Duration</th>
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
+    </tr>
+  </thead>
+  <tbody>
+    %s
+  </tbody>
+</table>""" % "".join(row_html)
+
+    def _runs_history_html(self, rows: List[Dict[str, str]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No runs recorded yet.</div>'
+
+        row_html = []
+        for row in rows:
+            row_html.append(
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                % (
+                    _escape_html(row["time"]),
+                    _escape_html(row["library"]),
+                    _escape_html(row["result"]),
+                    _escape_html(row["duration"]),
+                    _escape_html(row["processed"]),
+                    _escape_html(row["success"]),
+                    _escape_html(row["skipped"]),
+                    _escape_html(row["failed"]),
+                    _escape_html(row["saved"]),
+                    _escape_html(row["run_id"]),
+                )
+            )
+
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <thead>
+    <tr>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Time</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Result</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Duration</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Processed</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Success</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Skipped</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Failed</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Run ID</th>
     </tr>
   </thead>
   <tbody>
@@ -745,6 +840,7 @@ class ChonkService:
                     self.settings.port,
                     self.health_payload,
                     self.home_page_html,
+                    self.runs_page_html,
                     self.settings_page_html,
                     self.activity_page_html,
                     self._render_placeholder_page,
@@ -920,6 +1016,7 @@ def _run_simple_http_server(
     port: int,
     health_fn: Callable[[], dict],
     home_html_fn: Callable[[], str],
+    runs_html_fn: Callable[[], str],
     settings_html_fn: Callable[[str], str],
     activity_html_fn: Callable[[], str],
     placeholder_html_fn: Callable[[str, str], str],
@@ -946,6 +1043,15 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
+            if self.path == "/runs":
+                payload = runs_html_fn().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
             if self.path == "/activity":
                 payload = activity_html_fn().encode("utf-8")
                 self.send_response(200)
@@ -956,7 +1062,6 @@ def _run_simple_http_server(
                 return
 
             placeholders = {
-                "/runs": ("Runs", "Runs page coming soon."),
                 "/system": ("System", "System page coming soon."),
             }
             if self.path in placeholders:

@@ -619,11 +619,114 @@ def test_shell_routes_render_placeholders():
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
 
-    for path, heading in (("/runs", "Runs"), ("/activity", "Activity"), ("/system", "System")):
+    for path, heading in (("/activity", "Activity"), ("/system", "System")):
         status_code, body, _ = _call_get(service, path)
         assert status_code == 200
         assert "href=\"/dashboard\"" in body
         assert "<h1>%s</h1>" % heading in body
+
+
+def test_runs_page_renders_history_table_with_expected_columns(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T08:00:00",
+        success_count=2,
+        failed_count=0,
+        skipped_count=1,
+        duration_seconds=12.0,
+        saved_bytes=1024,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs")
+
+    assert status_code == 200
+    assert "<h1>Runs</h1>" in body
+    assert "Recent run history from SQLite" in body
+    for heading in (
+        "Time",
+        "Library",
+        "Result",
+        "Duration",
+        "Processed",
+        "Success",
+        "Skipped",
+        "Failed",
+        "Saved",
+        "Run ID",
+    ):
+        assert ">%s<" % heading in body
+    assert "<td>movies</td>" in body
+    assert "<td>success</td>" in body
+    assert "<td>3</td>" in body
+    assert "<td>2</td>" in body
+    assert "<td>1</td>" in body
+    assert "<td>0</td>" in body
+    assert "<td>1.0 KB</td>" in body
+    assert "<td>movies-2026-01-02T08:00:00</td>" in body
+
+
+def test_runs_page_sorts_newest_first(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00")
+    _seed_run(db_path, library="tv", ts_end="2026-01-02T09:00:00")
+    _seed_run(db_path, library="tv", ts_end="2026-01-02T10:00:00")
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs")
+
+    assert status_code == 200
+    assert body.index("2026-01-02T10:00:00") < body.index("2026-01-02T09:00:00")
+    assert body.index("2026-01-02T09:00:00") < body.index("2026-01-02T08:00:00")
+
+
+def test_runs_page_shows_empty_state_when_no_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs")
+
+    assert status_code == 200
+    assert "No runs recorded yet" in body
+
+
+@pytest.mark.parametrize(
+    ("saved_bytes", "expected_saved"),
+    [
+        (500, "<td>500 B</td>"),
+        (1024 * 1024 * 3, "<td>3.0 MB</td>"),
+        (1024 * 1024 * 1024 * 2, "<td>2.0 GB</td>"),
+    ],
+)
+def test_runs_page_saved_bytes_formatting(tmp_path, monkeypatch, saved_bytes, expected_saved):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T10:00:00",
+        success_count=1,
+        saved_bytes=saved_bytes,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs")
+
+    assert status_code == 200
+    assert expected_saved in body
 
 
 def test_activity_table_created_automatically(tmp_path, monkeypatch):
