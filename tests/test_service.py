@@ -190,7 +190,7 @@ def _read_activity_rows(db_path):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT event_type, library, message FROM activity_events ORDER BY id ASC"
+        "SELECT event_type, library, run_id, message FROM activity_events ORDER BY id ASC"
     ).fetchall()
     conn.close()
     return rows
@@ -1136,6 +1136,61 @@ def test_activity_page_shows_recent_entries(tmp_path, monkeypatch):
     assert "manual_run_requested" in body
     assert "Movies run started" in body
 
+
+
+
+def test_activity_page_links_run_id_when_present(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service._record_activity(
+        "run_completed",
+        "Run completed: movies",
+        library="movies",
+        run_id="fd2b992c",
+    )
+
+    status_code, body, _ = _call_get(service, "/activity")
+
+    assert status_code == 200
+    assert 'href="/runs/fd2b992c"' in body
+    assert '>fd2b992c</a>' in body
+
+
+def test_activity_page_run_id_plain_when_missing(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service._record_activity("manual_run_requested", "Manual run requested for Movies", library="movies")
+
+    status_code, body, _ = _call_get(service, "/activity")
+
+    assert status_code == 200
+    assert "<td>-</td>" in body
+
+
+def test_activity_page_run_id_link_uses_existing_run_detail_route(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    run_ts = "fd2b992c"
+    _seed_run(db_path, library="movies", ts_end=run_ts)
+    run_id = "movies-%s" % run_ts
+
+    service._record_activity(
+        "run_completed",
+        "Run completed: movies",
+        library="movies",
+        run_id=run_id,
+    )
+
+    activity_status, activity_body, _ = _call_get(service, "/activity")
+    run_status, run_body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert activity_status == 200
+    assert 'href="/runs/%s"' % run_id in activity_body
+    assert run_status == 200
+    assert "<h1>Run Detail</h1>" in run_body
 
 def test_activity_page_shows_empty_state(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
