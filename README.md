@@ -341,7 +341,10 @@ The dashboard preserves existing operator controls and visibility:
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
-- Current runtime status block (idle/queued/running, current library, trigger, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters: candidates/evaluated/processed/success/skipped/failed/bytes saved so far)
+- Current runtime status block (idle/queued/running, current library, trigger, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
+- Active runs now render a lightweight progress panel with an HTML progress bar (`files_processed / candidates_found` when available), plus Current Library, Current File, Files Evaluated, Files Processed, Files Skipped, Files Failed, and Total Saved
+- Library cards show inline running progress (`Progress: processed / candidates files`) for the currently active library
+- Runtime progress snapshot clears after run completion so idle dashboards return to baseline
 
 Runs page:
 

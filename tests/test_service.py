@@ -831,6 +831,7 @@ def test_dashboard_and_system_show_runtime_status():
     assert "Queue Depth" in dashboard_body
     assert "Current File" in dashboard_body
     assert "Candidates Found" in dashboard_body
+    assert "Run Progress" not in dashboard_body
 
     assert system_code == 200
     assert "Current Job Status" in system_body
@@ -994,10 +995,12 @@ def test_dashboard_library_card_displays_runtime_statuses(monkeypatch):
     with service._job_condition:
         service._current_job = service_module.RuntimeJob(library_id=2, library_name="TV", trigger="manual", priority=100)
         service._current_job_started_at = "2026-01-05T00:00:00"
+        service._current_run_snapshot = {"files_processed": "8", "candidates_found": "20"}
         service._job_queue = service_module.deque()
 
     _, running_body, _ = _call_get(service, "/dashboard")
     assert "Status:</strong> Running" in running_body
+    assert "Progress:</strong> 8 / 20 files" in running_body
 
 def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     service = ChonkService(
@@ -1074,12 +1077,101 @@ def test_dashboard_runtime_status_shows_current_file_and_live_snapshot():
     assert "Current Library</th><td" in body and "Movies" in body
     assert "Current File</th><td" in body and "/movies/Example.mkv" in body
     assert "Candidates Found</th><td" in body and ">10<" in body
-    assert "Evaluated</th><td" in body and ">6<" in body
-    assert "Processed</th><td" in body and ">4<" in body
-    assert "Success</th><td" in body and ">3<" in body
-    assert "Skipped</th><td" in body and ">1<" in body
-    assert "Failed</th><td" in body and ">0<" in body
+    assert "Files Evaluated</th><td" in body and ">6<" in body
+    assert "Files Processed</th><td" in body and ">4<" in body
+    assert "Files Skipped</th><td" in body and ">1<" in body
+    assert "Files Failed</th><td" in body and ">0<" in body
     assert "Bytes Saved So Far</th><td" in body and "5.0 MB" in body
+
+def test_dashboard_progress_bar_renders_for_active_run():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    with service._job_condition:
+        service._current_job = service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="manual", priority=100)
+        service._current_run_snapshot = {
+            "current_file": "/movies/Example.mkv",
+            "candidates_found": "20",
+            "files_evaluated": "12",
+            "files_processed": "8",
+            "files_skipped": "3",
+            "files_failed": "0",
+            "bytes_saved": str(4 * 1024 * 1024 * 1024),
+        }
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Run Progress" in body
+    assert "8 / 20 files processed" in body
+    assert "Current Library:</strong> Movies" in body
+    assert "Current File:</strong> /movies/Example.mkv" in body
+    assert "Files Processed:</strong> 8" in body
+    assert "Files Skipped:</strong> 3" in body
+    assert "Files Failed:</strong> 0" in body
+    assert "Total Saved:</strong> 4.0 GB" in body
+
+
+def test_dashboard_progress_renders_without_candidates_total():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    with service._job_condition:
+        service._current_job = service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="manual", priority=100)
+        service._current_run_snapshot = {
+            "files_processed": "3",
+        }
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "3 files processed" in body
+
+
+def test_runtime_progress_snapshot_resets_after_job_completion(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_run_once(library, trigger):
+        service._update_runtime_progress({
+            "current_file": "/movies/Example.mkv",
+            "candidates_found": 10,
+            "files_processed": 4,
+            "files_skipped": 1,
+            "files_failed": 0,
+            "bytes_saved": 1024,
+        })
+        entered.set()
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", fake_run_once)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert entered.wait(timeout=1)
+
+    during = service.current_job_status()
+    assert during["status"] == "Running"
+    assert during["current_file"] == "/movies/Example.mkv"
+    assert during["files_processed"] == "4"
+
+    release.set()
+    for _ in range(20):
+        done = service.current_job_status()
+        if done["status"] == "Idle":
+            break
+        threading.Event().wait(0.01)
+
+    assert done["status"] == "Idle"
+    assert done["current_file"] == ""
+    assert done["files_processed"] == ""
 
 
 def test_dashboard_route_renders_in_shell():

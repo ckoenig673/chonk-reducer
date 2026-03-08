@@ -53,6 +53,7 @@ from . import __version__
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
+_ENV_MUTATION_LOCK = threading.RLock()
 
 WEEKDAY_CHOICES = [
     ("Su", "0"),
@@ -143,7 +144,8 @@ class ServiceSettings:
 
 
 def _env(name: str, default: str) -> str:
-    return (os.getenv(name) or default).strip()
+    with _ENV_MUTATION_LOCK:
+        return (os.getenv(name) or default).strip()
 
 
 def _env_int(name: str, default: int) -> int:
@@ -450,17 +452,19 @@ class ChonkService:
         if current_library != library.name.strip().lower():
             return ""
         current_file = str(snapshot.get("current_file") or "").strip() or "Waiting for first file"
+        files_processed = self._snapshot_int(snapshot, "files_processed")
+        candidates_found = self._snapshot_int(snapshot, "candidates_found")
+        if candidates_found > 0:
+            progress_label = "%s / %s files" % (files_processed, candidates_found)
+        else:
+            progress_label = "%s files" % files_processed
         return (
             '<div style="margin-top: 0.4rem; padding: 0.4rem; border: 1px solid #e3ebf6; background: #f7faff;">'
-            '<strong>Active:</strong> %s<br /><strong>Processed:</strong> %s  '
-            '<strong>Success:</strong> %s  <strong>Skipped:</strong> %s  <strong>Failed:</strong> %s'
+            '<strong>Active:</strong> %s<br /><strong>Progress:</strong> %s'
             "</div>"
         ) % (
             _escape_html(current_file),
-            _escape_html(snapshot.get("processed_count", "-")),
-            _escape_html(snapshot.get("success_count", "-")),
-            _escape_html(snapshot.get("skipped_count", "-")),
-            _escape_html(snapshot.get("failed_count", "-")),
+            _escape_html(progress_label),
         )
 
     def settings_page_html(self, message: str = "") -> str:
@@ -682,12 +686,15 @@ class ChonkService:
             "started_at": snapshot["started_at"],
             "current_file": snapshot["current_file"],
             "candidates_found": snapshot["candidates_found"],
-            "evaluated_count": snapshot["evaluated_count"],
-            "processed_count": snapshot["processed_count"],
-            "success_count": snapshot["success_count"],
-            "skipped_count": snapshot["skipped_count"],
-            "failed_count": snapshot["failed_count"],
+            "files_evaluated": snapshot["files_evaluated"],
+            "files_processed": snapshot["files_processed"],
+            "files_skipped": snapshot["files_skipped"],
+            "files_failed": snapshot["files_failed"],
             "bytes_saved": snapshot["bytes_saved"],
+            "evaluated_count": snapshot["files_evaluated"],
+            "processed_count": snapshot["files_processed"],
+            "skipped_count": snapshot["files_skipped"],
+            "failed_count": snapshot["files_failed"],
         }
 
     def _runtime_job_status_html(self) -> str:
@@ -1550,11 +1557,10 @@ class ChonkService:
             "started_at": started_at,
             "current_file": str(run_snapshot.get("current_file", "")),
             "candidates_found": str(run_snapshot.get("candidates_found", "")),
-            "evaluated_count": str(run_snapshot.get("evaluated_count", "")),
-            "processed_count": str(run_snapshot.get("processed_count", "")),
-            "success_count": str(run_snapshot.get("success_count", "")),
-            "skipped_count": str(run_snapshot.get("skipped_count", "")),
-            "failed_count": str(run_snapshot.get("failed_count", "")),
+            "files_evaluated": str(run_snapshot.get("files_evaluated", run_snapshot.get("evaluated_count", ""))),
+            "files_processed": str(run_snapshot.get("files_processed", run_snapshot.get("processed_count", ""))),
+            "files_skipped": str(run_snapshot.get("files_skipped", run_snapshot.get("skipped_count", ""))),
+            "files_failed": str(run_snapshot.get("files_failed", run_snapshot.get("failed_count", ""))),
             "bytes_saved": str(run_snapshot.get("bytes_saved", "")),
         }
 
@@ -1576,14 +1582,13 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Started At</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current File</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Candidates Found</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Evaluated</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Processed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Success</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Skipped</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Failed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Evaluated</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Processed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Skipped</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Failed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td style=\"padding: 0.35rem;\">%s</td></tr>
   </tbody>
-</table>""" % (
+</table>%s""" % (
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
@@ -1592,22 +1597,84 @@ class ChonkService:
             _escape_html(started_at),
             _escape_html(current_file),
             _escape_html(snapshot["candidates_found"] or "-"),
-            _escape_html(snapshot["evaluated_count"] or "-"),
-            _escape_html(snapshot["processed_count"] or "-"),
-            _escape_html(snapshot["success_count"] or "-"),
-            _escape_html(snapshot["skipped_count"] or "-"),
-            _escape_html(snapshot["failed_count"] or "-"),
+            _escape_html(snapshot["files_evaluated"] or "-"),
+            _escape_html(snapshot["files_processed"] or "-"),
+            _escape_html(snapshot["files_skipped"] or "-"),
+            _escape_html(snapshot["files_failed"] or "-"),
             _escape_html(_format_saved_bytes(snapshot["bytes_saved"]) if snapshot["bytes_saved"] else "-"),
+            self._runtime_progress_overview_html(snapshot),
         )
+
+    def _runtime_progress_overview_html(self, snapshot: Dict[str, str]) -> str:
+        if snapshot.get("status") != "Running":
+            return ""
+
+        processed = self._snapshot_int(snapshot, "files_processed")
+        candidates = self._snapshot_int(snapshot, "candidates_found")
+        if candidates > 0:
+            ratio = min(1.0, float(processed) / float(candidates))
+            progress_label = "%s / %s files processed" % (processed, candidates)
+        else:
+            ratio = 1.0 if processed > 0 else 0.0
+            progress_label = "%s files processed" % processed
+        pct_label = "%.0f%%" % (ratio * 100.0)
+
+        return """
+<div style=\"margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;\">
+  <div style=\"font-weight:600; margin-bottom:0.35rem;\">Run Progress</div>
+  <div style=\"border:1px solid #c8d8f0; background:#eef4ff; width:100%%; height:18px;\">
+    <div style=\"background:#2a6fd6; width:%s; height:100%%;\"></div>
+  </div>
+  <div style=\"margin-top:0.35rem;\">%s (%s)</div>
+  <div style=\"margin-top:0.55rem;\"><strong>Current Library:</strong> %s</div>
+  <div><strong>Current File:</strong> %s</div>
+  <div style=\"margin-top:0.4rem;\"><strong>Files Evaluated:</strong> %s</div>
+  <div><strong>Files Processed:</strong> %s</div>
+  <div><strong>Files Skipped:</strong> %s</div>
+  <div><strong>Files Failed:</strong> %s</div>
+  <div><strong>Total Saved:</strong> %s</div>
+</div>
+""" % (
+            _escape_html(pct_label),
+            _escape_html(progress_label),
+            _escape_html(pct_label),
+            _escape_html(snapshot.get("current_library") or "-"),
+            _escape_html(snapshot.get("current_file") or "Waiting for first file"),
+            _escape_html(str(self._snapshot_int(snapshot, "files_evaluated"))),
+            _escape_html(str(processed)),
+            _escape_html(str(self._snapshot_int(snapshot, "files_skipped"))),
+            _escape_html(str(self._snapshot_int(snapshot, "files_failed"))),
+            _escape_html(_format_saved_bytes(snapshot["bytes_saved"]) if snapshot["bytes_saved"] else "0 B"),
+        )
+
+    def _snapshot_int(self, snapshot: Dict[str, str], key: str) -> int:
+        raw_value = str(snapshot.get(key, "") or "").strip()
+        if not raw_value:
+            return 0
+        try:
+            return int(raw_value)
+        except Exception:
+            return 0
 
     def _update_runtime_progress(self, values: Dict[str, object]) -> None:
         if not values:
             return
+        aliases = {
+            "evaluated_count": "files_evaluated",
+            "processed_count": "files_processed",
+            "skipped_count": "files_skipped",
+            "failed_count": "files_failed",
+        }
         with self._job_condition:
             for key, value in values.items():
                 if value is None:
                     continue
-                self._current_run_snapshot[str(key)] = str(value)
+                key_text = str(key)
+                value_text = str(value)
+                self._current_run_snapshot[key_text] = value_text
+                alias_key = aliases.get(key_text)
+                if alias_key:
+                    self._current_run_snapshot[alias_key] = value_text
 
     def _latest_run_status(self, library: str) -> Optional[Dict[str, str]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
@@ -2354,6 +2421,8 @@ class ChonkService:
 
         with editable_settings_environment(self._editable_settings):
             with library_runtime_environment(library_record):
+                original_stats_path = os.environ.get("STATS_PATH")
+                os.environ["STATS_PATH"] = str(self._settings_db_path)
                 LOGGER.info("Starting %s %s run", trigger, library_record.name)
                 try:
                     try:
@@ -2365,6 +2434,11 @@ class ChonkService:
                 except Exception as exc:
                     self._notify_run_failure(library_record.name, run_id, str(exc))
                     raise
+                finally:
+                    if original_stats_path is None:
+                        os.environ.pop("STATS_PATH", None)
+                    else:
+                        os.environ["STATS_PATH"] = original_stats_path
                 LOGGER.info("Finished %s %s run with exit code %s", trigger, library_record.name, rc)
 
         if rc == 0:
@@ -2475,16 +2549,17 @@ def library_runtime_environment(library: RuntimeLibrary) -> Iterator[None]:
     }
     original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
 
-    try:
-        for key, value in values.items():
-            os.environ[key] = value
-        yield
-    finally:
-        for key, value in original.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
+    with _ENV_MUTATION_LOCK:
+        try:
+            for key, value in values.items():
                 os.environ[key] = value
+            yield
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 @contextmanager
@@ -2492,16 +2567,17 @@ def library_environment(library: str) -> Iterator[None]:
     values = _library_values(library)
     original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
 
-    try:
-        for key, value in values.items():
-            os.environ[key] = value
-        yield
-    finally:
-        for key, value in original.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
+    with _ENV_MUTATION_LOCK:
+        try:
+            for key, value in values.items():
                 os.environ[key] = value
+            yield
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 @contextmanager
@@ -2521,17 +2597,18 @@ def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
     }
     original: Dict[str, Optional[str]] = {name: os.environ.get(name) for name in env_map.values()}
 
-    try:
-        for key, env_name in env_map.items():
-            if key in values:
-                os.environ[env_name] = str(values[key])
-        yield
-    finally:
-        for env_name, value in original.items():
-            if value is None:
-                os.environ.pop(env_name, None)
-            else:
-                os.environ[env_name] = value
+    with _ENV_MUTATION_LOCK:
+        try:
+            for key, env_name in env_map.items():
+                if key in values:
+                    os.environ[env_name] = str(values[key])
+            yield
+        finally:
+            for env_name, value in original.items():
+                if value is None:
+                    os.environ.pop(env_name, None)
+                else:
+                    os.environ[env_name] = value
 
 
 def _library_values(library: str) -> Dict[str, str]:
