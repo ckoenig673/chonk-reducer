@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import sqlite3
 import threading
 import uuid
@@ -46,6 +47,7 @@ except Exception:  # pragma: no cover - exercised by fallback tests
     uvicorn = None
 
 from .runner import run
+from . import notifications
 from . import __version__
 
 
@@ -75,7 +77,13 @@ EDITABLE_SETTINGS = {
     "validate_seconds": {"env": "VALIDATE_SECONDS", "default": "10"},
     "log_retention_days": {"env": "LOG_RETENTION_DAYS", "default": "30"},
     "bak_retention_days": {"env": "BAK_RETENTION_DAYS", "default": "60"},
+    "discord_webhook_url": {"env": "DISCORD_WEBHOOK_URL", "default": ""},
+    "generic_webhook_url": {"env": "GENERIC_WEBHOOK_URL", "default": ""},
+    "enable_run_complete_notifications": {"env": "ENABLE_RUN_COMPLETE_NOTIFICATIONS", "default": "0"},
+    "enable_run_failure_notifications": {"env": "ENABLE_RUN_FAILURE_NOTIFICATIONS", "default": "0"},
 }
+
+CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications"}
 
 RESTART_REQUIRED_SETTINGS = set()
 
@@ -140,6 +148,10 @@ def _env_int(name: str, default: int) -> int:
 def _env_bool(name: str, default: bool) -> bool:
     value = _env(name, "1" if default else "0").lower()
     return value in ("1", "true", "yes", "y", "on")
+
+
+def _env_bool_text(value: str) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 class _ScheduledJob:
@@ -266,8 +278,9 @@ class ChonkService:
         @self.app.post("/settings")
         async def save_settings(request: Request = None):  # type: ignore[assignment]
             values = await self._request_form_values(request)
-            self.update_editable_settings(values)
-            return self._html_response(self.settings_page_html(self.settings_saved_message(values)))
+            normalized = self._normalize_settings_updates(values)
+            self.update_editable_settings(normalized)
+            return self._html_response(self.settings_page_html(self.settings_saved_message(normalized)))
 
         @self.app.post("/settings/libraries/create")
         async def create_library(request: Request = None):  # type: ignore[assignment]
@@ -399,15 +412,27 @@ class ChonkService:
             restart_badge = ""
             if key in RESTART_REQUIRED_SETTINGS:
                 restart_badge = ' <span style="color: #8a4f00; font-size: 0.9rem;">(restart required)</span>'
-            rows.append(
-                """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong>{restart_badge}</label>
-  <input id=\"{key}\" name=\"{key}\" value=\"{value}\" style=\"width: 100%; max-width: 420px;\" />""".format(
-                    key=key,
-                    label=key.replace("_", " ").title(),
-                    restart_badge=restart_badge,
-                    value=_escape_html(value),
+            if key in CHECKBOX_SETTINGS:
+                checked = "checked" if _env_bool_text(value) else ""
+                rows.append(
+                    """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong>{restart_badge}</label>
+  <input id=\"{key}\" name=\"{key}\" type=\"checkbox\" value=\"1\" {checked} />""".format(
+                        key=key,
+                        label=key.replace("_", " ").title(),
+                        restart_badge=restart_badge,
+                        checked=checked,
+                    )
                 )
-            )
+            else:
+                rows.append(
+                    """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong>{restart_badge}</label>
+  <input id=\"{key}\" name=\"{key}\" value=\"{value}\" style=\"width: 100%; max-width: 420px;\" />""".format(
+                        key=key,
+                        label=key.replace("_", " ").title(),
+                        restart_badge=restart_badge,
+                        value=_escape_html(value),
+                    )
+                )
 
         content = "<h1>Settings</h1>"
         if message:
@@ -439,6 +464,13 @@ class ChonkService:
         if any(key in RESTART_REQUIRED_SETTINGS for key in updates):
             return "Settings saved. Some changes require a service restart to take effect."
         return "Settings saved."
+
+    def _normalize_settings_updates(self, updates: Dict[str, str]) -> Dict[str, str]:
+        normalized = dict(updates)
+        for key in CHECKBOX_SETTINGS:
+            if key not in normalized:
+                normalized[key] = "0"
+        return normalized
 
     def activity_page_html(self) -> str:
         rows = self._recent_activity(limit=25)
@@ -693,6 +725,7 @@ class ChonkService:
     def update_editable_settings(self, updates: Dict[str, str]) -> None:
         if not updates:
             return
+        updates = self._normalize_settings_updates(updates)
         conn = _connect_settings_db(self._settings_db_path)
         with conn:
             for key in EDITABLE_SETTINGS:
@@ -2083,14 +2116,63 @@ class ChonkService:
         with editable_settings_environment(self._editable_settings):
             with library_runtime_environment(library_record):
                 LOGGER.info("Starting %s %s run", trigger, library_record.name)
-                rc = run()
+                try:
+                    rc = run()
+                except Exception as exc:
+                    self._notify_run_failure(library_record.name, run_id, str(exc))
+                    raise
                 LOGGER.info("Finished %s %s run with exit code %s", trigger, library_record.name, rc)
+
+        if rc == 0:
+            self._notify_run_complete(library_record.name, run_id)
+        else:
+            self._notify_run_failure(library_record.name, run_id, "Run exited with code %s" % rc)
+
         self._record_activity(
             event_type="run_completed",
             message="%s run completed" % library_record.name,
             library=library_record.name,
             run_id=run_id,
         )
+
+    def _latest_run_summary_row(self, library: str) -> Optional[sqlite3.Row]:
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT candidates_found, success_count, saved_bytes, duration_seconds
+                FROM runs
+                WHERE lower(COALESCE(library, '')) = ?
+                ORDER BY ts_end DESC
+                LIMIT 1
+                """,
+                (str(library).strip().lower(),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        conn.close()
+        return row
+
+    def _notify_run_complete(self, library: str, run_id: str) -> None:
+        row = self._latest_run_summary_row(library)
+        run_summary = notifications.build_run_complete_summary(library=library, run_id=run_id, row=row)
+        run_summary["host"] = socket.gethostname()
+        try:
+            notifications.send_run_complete(run_summary, settings_db_path=str(self._settings_db_path))
+        except Exception:
+            LOGGER.warning("Run complete notification raised unexpectedly", exc_info=True)
+
+    def _notify_run_failure(self, library: str, run_id: str, error_message: str) -> None:
+        run_summary = {
+            "library": library,
+            "run_id": run_id,
+            "error_message": str(error_message),
+            "host": socket.gethostname(),
+        }
+        try:
+            notifications.send_run_failure(run_summary, settings_db_path=str(self._settings_db_path))
+        except Exception:
+            LOGGER.warning("Run failure notification raised unexpectedly", exc_info=True)
 
     def stop_background_worker(self) -> None:
         worker_thread = self._worker_thread
@@ -2569,6 +2651,9 @@ def _run_simple_http_server(
                 content_length = int(self.headers.get("Content-Length", "0") or "0")
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
                 updates = {key: values[-1] for key, values in parse_qs(body, keep_blank_values=True).items() if values}
+                for key in CHECKBOX_SETTINGS:
+                    if key not in updates:
+                        updates[key] = "0"
                 update_settings_fn(updates)
                 html = settings_html_fn(settings_saved_message_fn(updates))
                 encoded = html.encode("utf-8")
