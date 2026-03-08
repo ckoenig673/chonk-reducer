@@ -891,6 +891,7 @@ def test_dashboard_library_cards_render_enabled_libraries_with_recent_run_data(t
     assert "Path:</strong> /movies" in body
     assert "Path:</strong> /tv_shows" in body
     assert "Recent Savings:</strong> 3.0 KB across 0 files" in body
+    assert "Status:</strong> Idle" in body
     assert "Files Optimized:</strong> 0" in body
     assert "Total Saved:</strong> 0 B" in body
 
@@ -971,6 +972,30 @@ def test_dashboard_library_card_shows_zero_lifetime_totals_when_no_successful_en
     assert status_code == 200
     assert body.count("Files Optimized:</strong> 0") == 2
     assert body.count("Total Saved:</strong> 0 B") == 2
+
+def test_dashboard_library_card_displays_runtime_statuses(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    _, idle_body, _ = _call_get(service, "/dashboard")
+    assert idle_body.count("Status:</strong> Idle") >= 2
+
+    with service._job_condition:
+        service._job_queue = service_module.deque(
+            [service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="schedule")]
+        )
+
+    _, queued_body, _ = _call_get(service, "/dashboard")
+    assert "Status:</strong> Queued" in queued_body
+
+    with service._job_condition:
+        service._current_job = service_module.RuntimeJob(library_id=2, library_name="TV", trigger="manual")
+        service._current_job_started_at = "2026-01-05T00:00:00"
+        service._job_queue = service_module.deque()
+
+    _, running_body, _ = _call_get(service, "/dashboard")
+    assert "Status:</strong> Running now (manual trigger)" in running_body
 
 def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     service = ChonkService(

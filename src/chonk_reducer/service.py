@@ -359,6 +359,7 @@ class ChonkService:
         library_sections = []
         for library in libraries:
             status = self._latest_run_status(library.name)
+            runtime_status = self._library_runtime_status(library)
             last_run_label = "Never"
             processed_label = "0"
             savings_label = "0 B"
@@ -372,6 +373,7 @@ class ChonkService:
   <section style="border: 1px solid #ddd; padding: 0.75rem; margin-bottom: 0.75rem; background: #fff;">
     <h2 style="margin-top: 0; margin-bottom: 0.5rem;">%s</h2>
     <div><strong>Path:</strong> %s</div>
+    <div><strong>Status:</strong> %s</div>
     <div><strong>Last Run:</strong> %s</div>
     <div><strong>Next Run:</strong> %s</div>
     <div><strong>Files Optimized:</strong> %s</div>
@@ -385,6 +387,7 @@ class ChonkService:
                 % (
                     _escape_html(library.name),
                     _escape_html(library.path),
+                    _escape_html(runtime_status),
                     _escape_html(last_run_label),
                     _escape_html(self._next_run_label(library, manual_label="Manual Only")),
                     _escape_html(str(totals["files_optimized"])),
@@ -415,6 +418,20 @@ class ChonkService:
             self._recent_runs_html(recent_runs),
         )
         return self._render_shell_html("Dashboard", content)
+
+    def _library_runtime_status(self, library: RuntimeLibrary) -> str:
+        with self._job_condition:
+            current_job = self._current_job
+            queued_ids = {job.library_id for job in self._job_queue}
+
+        if current_job is not None and current_job.library_id == library.id:
+            trigger = str(current_job.trigger or "").strip().lower()
+            if trigger:
+                return "Running now (%s trigger)" % trigger
+            return "Running now"
+        if library.id in queued_ids:
+            return "Queued"
+        return "Idle"
 
     def settings_page_html(self, message: str = "") -> str:
         libraries = self.list_libraries()
