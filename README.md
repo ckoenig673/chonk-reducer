@@ -346,6 +346,7 @@ The dashboard preserves existing operator controls and visibility:
 - Lifetime savings summary
 - Current runtime status block (idle/queued/running, current library, trigger, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
 - Active runs now render a lightweight progress panel with an HTML progress bar (`files_processed / candidates_found` when available), plus Current Library, Current File, Files Evaluated, Files Processed, Files Skipped, Files Failed, and Total Saved
+- Dashboard runtime status now auto-refreshes every 3 seconds using `GET /api/status` so Current Job Status + Run Progress update live without full page refresh
 - Library cards show inline running progress (`Progress: processed / candidates files`) for the currently active library
 - Runtime progress snapshot clears after run completion so idle dashboards return to baseline
 

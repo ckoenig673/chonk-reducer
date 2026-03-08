@@ -809,6 +809,7 @@ def test_simple_http_server_handles_another_request_while_dashboard_request_is_b
             lambda message="": "<html>settings</html>",
             lambda: "<html>activity</html>",
             lambda: "<html>system</html>",
+            lambda: {"status": "Idle"},
             lambda updates: None,
             lambda updates: "saved",
             lambda payload: {"status": "ok", "message": "sent"},
@@ -876,6 +877,7 @@ def test_simple_http_server_uses_threading_http_server(monkeypatch):
         lambda message="": "<html>settings</html>",
         lambda: "<html>activity</html>",
         lambda: "<html>system</html>",
+        lambda: {"status": "Idle"},
         lambda updates: None,
         lambda updates: "saved",
         lambda payload: {"status": "ok", "message": "sent"},
@@ -1026,6 +1028,115 @@ def test_runtime_status_reflects_running_and_idle(monkeypatch):
     assert idle["status"] == "Idle"
 
 
+def test_api_status_returns_valid_json_payload():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, payload = _call_get(service, "/api/status")
+    effective = payload
+    if effective is None and body is not None:
+        try:
+            effective = json.loads(body)
+        except Exception:
+            effective = body
+
+    assert status_code == 200
+    assert isinstance(effective, dict)
+    expected = {
+        "status",
+        "current_library",
+        "trigger",
+        "queue_depth",
+        "run_id",
+        "started_at",
+        "current_file",
+        "candidates_found",
+        "files_evaluated",
+        "files_processed",
+        "files_skipped",
+        "files_failed",
+        "bytes_saved",
+    }
+    assert expected.issubset(set(effective.keys()))
+
+
+def test_api_status_returns_current_runtime_snapshot_data():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    with service._job_condition:
+        service._current_job = service_module.RuntimeJob(library_id=1, library_name="TV", trigger="manual", priority=100)
+        service._current_job_started_at = "2026-01-05T00:00:00Z"
+        service._current_job_run_id = "run-abc"
+        service._current_run_snapshot = {
+            "current_file": "episode.mkv",
+            "candidates_found": "1",
+            "files_evaluated": "1",
+            "files_processed": "0",
+            "files_skipped": "0",
+            "files_failed": "0",
+            "bytes_saved": "0",
+        }
+
+    status_code, body, payload = _call_get(service, "/api/status")
+    effective = payload if isinstance(payload, dict) else (body if isinstance(body, dict) else json.loads(body))
+
+    assert status_code == 200
+    assert effective["status"] == "Running"
+    assert effective["current_library"] == "TV"
+    assert effective["trigger"] == "manual"
+    assert effective["current_file"] == "episode.mkv"
+    assert effective["files_evaluated"] == "1"
+    assert effective["candidates_found"] == "1"
+
+
+def test_api_status_endpoint_remains_responsive_while_run_active(monkeypatch):
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    started = threading.Event()
+    progress_reached = threading.Event()
+    release = threading.Event()
+
+    def fake_run_once(library, trigger):
+        assert library == "movies"
+        assert trigger == "manual"
+        started.set()
+        service._update_runtime_progress({"current_file": "movie.mkv", "files_processed": 1, "candidates_found": 3})
+        progress_reached.set()
+        release.wait(timeout=2)
+
+    monkeypatch.setattr(service, "_run_library_once", fake_run_once)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert started.wait(timeout=1)
+    assert progress_reached.wait(timeout=1)
+
+    result = {}
+
+    def call_status():
+        result["status_code"], result["body"], result["payload"] = _call_get(service, "/api/status")
+
+    request_thread = threading.Thread(target=call_status)
+    request_thread.start()
+    request_thread.join(timeout=0.75)
+
+    release.set()
+    for _ in range(20):
+        if service.current_job_status()["status"] == "Idle":
+            break
+        threading.Event().wait(0.01)
+
+    assert not request_thread.is_alive()
+    assert result["status_code"] == 200
+    effective = result["payload"] if isinstance(result["payload"], dict) else (result["body"] if isinstance(result["body"], dict) else json.loads(result["body"]))
+    assert effective["status"] == "Running"
+    assert effective["current_file"] == "movie.mkv"
+    assert effective["files_processed"] == "1"
+
+
 def test_dashboard_and_system_show_runtime_status():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
@@ -1040,12 +1151,24 @@ def test_dashboard_and_system_show_runtime_status():
     assert "Queue Depth" in dashboard_body
     assert "Current File" in dashboard_body
     assert "Candidates Found" in dashboard_body
-    assert "Run Progress" not in dashboard_body
+    assert "id=\"runtime-progress-section\"></div>" in dashboard_body
 
     assert system_code == 200
     assert "Current Job Status" in system_body
     assert "Status</th><td" in system_body
     assert "Queue Depth" in system_body
+
+
+def test_dashboard_includes_live_status_polling_script():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert 'fetch("/api/status"' in body
+    assert "window.setInterval(fetchStatus, 3000);" in body
 
 
 def test_library_environment_sets_expected_values(monkeypatch):
