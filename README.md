@@ -335,7 +335,7 @@ The dashboard preserves existing operator controls and visibility:
 
 - Library status cards stacked by enabled library
 - Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (scheduled timestamp when available, `Manual Only` when no schedule, or `Unknown` when unavailable), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
-- One **Run Now** control per enabled library (`POST /libraries/{library_id}/run`)
+- One **Run Now** control per enabled library (dashboard form posts to `POST /dashboard/libraries/{library_id}/run`, which enqueues and immediately redirects to `/dashboard`; JSON API remains available at `POST /libraries/{library_id}/run`)
 - Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
 - Single-worker in-memory queue prefers higher-priority libraries first when multiple jobs are queued (higher integer wins), while preserving FIFO behavior for equal priorities
 - Legacy compatibility run routes remain available for default Movies/TV libraries
