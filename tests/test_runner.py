@@ -40,7 +40,7 @@ def _base_cfg(tmp_path: Path, **overrides):
         log_skips=False,
         top_candidates=0,
         retry_count=0,
-        retry_backoff_secs=0,
+        retry_backoff_seconds=0,
         skip_codecs=(),
         skip_min_height=0,
         skip_resolution_tags=(),
@@ -394,3 +394,85 @@ def test_run_stops_processing_after_cancel_requested(tmp_path, monkeypatch):
     assert rc == 0
     assert state["calls"] == 1
 
+
+
+def test_run_retries_failed_encode_until_success(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=1, retry_count=2, retry_backoff_seconds=3)
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+
+    sleep_calls = []
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    attempts = {"count": 0, "success": 0, "failure": 0}
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: attempts.__setitem__("success", attempts["success"] + 1))
+    monkeypatch.setattr(runner, "record_failure", lambda *a, **k: attempts.__setitem__("failure", attempts["failure"] + 1))
+
+    def fake_encode(src, encoded, cfg, logger, **kwargs):
+        del src, cfg, logger, kwargs
+        attempts["count"] += 1
+        if attempts["count"] < 2:
+            raise RuntimeError("transient ffmpeg failure")
+        encoded.write_bytes(b"x" * 1000)
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    snapshots = []
+    rc = runner.run(progress_callback=lambda values: snapshots.append(dict(values)))
+
+    assert rc == 0
+    assert attempts["count"] == 2
+    assert attempts["success"] == 1
+    assert attempts["failure"] == 0
+    assert sleep_calls == [3]
+    assert any(s.get("retry_attempt") == 1 and s.get("retry_max") == 2 for s in snapshots)
+
+
+def test_run_marks_file_failed_after_retry_exhaustion(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=1, retry_count=2, retry_backoff_seconds=0)
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
+
+    failure_calls = {"count": 0}
+    monkeypatch.setattr(runner, "record_failure", lambda *a, **k: failure_calls.__setitem__("count", failure_calls["count"] + 1))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    attempts = {"count": 0}
+
+    def always_fail(*args, **kwargs):
+        attempts["count"] += 1
+        raise RuntimeError("hard failure")
+
+    monkeypatch.setattr(runner, "encode_qsv", always_fail)
+
+    rc = runner.run()
+
+    assert rc == 2
+    assert attempts["count"] == 3
+    assert failure_calls["count"] == 1
+    assert src.with_suffix(src.suffix + ".failed").exists()

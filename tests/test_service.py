@@ -12,7 +12,7 @@ import pytest
 
 from chonk_reducer import cli
 from chonk_reducer import service as service_module
-from chonk_reducer.service import ChonkService, ServiceSettings, library_environment
+from chonk_reducer.service import ChonkService, RuntimeJob, ServiceSettings, library_environment
 
 
 @pytest.fixture(autouse=True)
@@ -2928,7 +2928,7 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MIN_SAVINGS_PERCENT", "18")
     monkeypatch.setenv("MAX_SAVINGS_PERCENT", "45")
     monkeypatch.setenv("RETRY_COUNT", "4")
-    monkeypatch.setenv("RETRY_BACKOFF_SECS", "8")
+    monkeypatch.setenv("RETRY_BACKOFF_SECONDS", "8")
     monkeypatch.setenv("SKIP_CODECS", "mpeg2")
     monkeypatch.setenv("SKIP_RESOLUTION_TAGS", "2160p")
     monkeypatch.setenv("SKIP_MIN_HEIGHT", "720")
@@ -2948,7 +2948,7 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
         "min_savings_percent",
         "max_savings_percent",
         "retry_count",
-        "retry_backoff_secs",
+        "retry_backoff_seconds",
         "skip_codecs",
         "skip_resolution_tags",
         "skip_min_height",
@@ -2965,7 +2965,7 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     assert values["min_savings_percent"] == "18"
     assert values["max_savings_percent"] == "45"
     assert values["retry_count"] == "4"
-    assert values["retry_backoff_secs"] == "8"
+    assert values["retry_backoff_seconds"] == "8"
     assert values["skip_codecs"] == "mpeg2"
     assert values["skip_resolution_tags"] == "2160p"
     assert values["skip_min_height"] == "720"
@@ -2990,7 +2990,7 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
             "min_savings_percent": "25",
             "max_savings_percent": "35",
             "retry_count": "3",
-            "retry_backoff_secs": "11",
+            "retry_backoff_seconds": "11",
             "skip_codecs": "h264,mpeg2",
             "skip_resolution_tags": "2160p,4k",
             "skip_min_height": "1080",
@@ -3015,7 +3015,7 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
     assert values["min_savings_percent"] == "25"
     assert values["max_savings_percent"] == "35"
     assert values["retry_count"] == "3"
-    assert values["retry_backoff_secs"] == "11"
+    assert values["retry_backoff_seconds"] == "11"
     assert values["skip_codecs"] == "h264,mpeg2"
     assert values["skip_resolution_tags"] == "2160p,4k"
     assert values["skip_min_height"] == "1080"
@@ -3388,3 +3388,35 @@ def test_dashboard_includes_stop_run_button():
     assert status_code == 200
     assert "runtime-stop-button" in body
     assert "Stop Run" in body
+
+
+def test_settings_bootstrap_uses_legacy_retry_backoff_env_if_new_absent(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.delenv("RETRY_BACKOFF_SECONDS", raising=False)
+    monkeypatch.setenv("RETRY_BACKOFF_SECS", "13")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    assert service._editable_settings["retry_backoff_seconds"] == "13"
+
+
+def test_runtime_snapshot_and_dashboard_show_retry_attempt_only_while_retrying(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    service._current_job = RuntimeJob(library_id=1, library_name="Movies", trigger="manual", priority=100)
+    service._current_run_snapshot = {"retry_attempt": "1", "retry_max": "3", "files_processed": "0", "candidates_found": "1"}
+
+    snapshot = service._runtime_status_snapshot()
+    assert snapshot["retry_attempt"] == "1"
+    assert snapshot["retry_max"] == "3"
+
+    html = service._runtime_progress_overview_html(snapshot)
+    assert "Retry Attempt:</strong> 1 / 3" in html
+
+    service._current_run_snapshot = {"retry_attempt": "", "retry_max": "", "files_processed": "0", "candidates_found": "1"}
+    snapshot = service._runtime_status_snapshot()
+    html = service._runtime_progress_overview_html(snapshot)
+    assert "Retry Attempt:" not in html

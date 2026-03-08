@@ -60,8 +60,8 @@ def _validate_config(cfg, logger: Logger) -> bool:
         add("TOP_CANDIDATES must be >= 0")
     if cfg.retry_count < 0:
         add("RETRY_COUNT must be >= 0")
-    if cfg.retry_backoff_secs < 0:
-        add("RETRY_BACKOFF_SECS must be >= 0")
+    if cfg.retry_backoff_seconds < 0:
+        add("RETRY_BACKOFF_SECONDS must be >= 0")
 
     if errors:
         logger.log("===== CONFIG VALIDATION FAILED =====")
@@ -128,7 +128,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
     logger.log(f"DRY_RUN={cfg.dry_run}")
     logger.log(f"LOG_SKIPS={cfg.log_skips}")
     logger.log(f"TOP_CANDIDATES={cfg.top_candidates}")
-    logger.log(f"RETRY_COUNT={cfg.retry_count} RETRY_BACKOFF_SECS={cfg.retry_backoff_secs}")
+    logger.log(f"RETRY_COUNT={cfg.retry_count} RETRY_BACKOFF_SECONDS={cfg.retry_backoff_seconds}")
     logger.log(f"PREVIEW={cfg.preview}")
     logger.log(f"SKIP_CODECS={','.join(getattr(cfg,'skip_codecs',()))}")
     logger.log(f"SKIP_MIN_HEIGHT={getattr(cfg,'skip_min_height',0)}")
@@ -376,12 +376,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
 
             attempt_errors: list[str] = []
             for attempt in range(cfg.retry_count + 1):
+                _progress(retry_attempt=attempt, retry_max=cfg.retry_count)
                 if _cancel_check("encoding"):
                     break
                 if attempt > 0:
                     logger.log(f"RETRY {attempt}/{cfg.retry_count}: {src}")
-                    if cfg.retry_backoff_secs:
-                        time.sleep(cfg.retry_backoff_secs * attempt)
+                    if cfg.retry_backoff_seconds:
+                        time.sleep(cfg.retry_backoff_seconds)
 
                 t0 = time.monotonic()
                 try:
@@ -573,7 +574,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     succeeded += 1
                     processed += 1
                     _progress(files_processed=processed, current_file=str(src))
-                    _progress(success_count=succeeded, bytes_saved=saved_bytes_run, current_file=str(src))
+                    _progress(success_count=succeeded, bytes_saved=saved_bytes_run, current_file=str(src), retry_attempt="", retry_max="")
                     done += 1
                     break
 
@@ -606,7 +607,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     )
                     # Final failure: mark file as failed/quarantined
                     failed += 1
-                    _progress(files_failed=failed, current_file=str(src))
+                    _progress(files_failed=failed, current_file=str(src), retry_attempt="", retry_max="")
                     fail_marker = src.with_suffix(src.suffix + ".failed")
                     try:
                         msg = "\n".join(attempt_errors[-5:])

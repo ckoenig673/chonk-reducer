@@ -385,7 +385,7 @@ Global Settings now manage app-wide operator defaults (DB-backed), including:
 - `min_savings_percent`
 - `max_savings_percent`
 - `retry_count`
-- `retry_backoff_secs`
+- `retry_backoff_seconds`
 - `skip_codecs`
 - `skip_resolution_tags`
 - `skip_min_height`
@@ -415,6 +415,10 @@ Bootstrap model for the new config foundation:
 1. Environment/compose values remain bootstrap defaults.
 2. Missing service settings keys are initialized from env/default values.
 3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`, `priority=100`) and schedule bootstrap from legacy global schedule keys when present.
+
+Retry behavior is automatic for failed encodes: Chonk retries the same source file up to `retry_count`, waits `retry_backoff_seconds` between attempts, cleans up incomplete temp output between attempts, and marks the file failed when retries are exhausted.
+
+For retries, environment/compose values are now bootstrap-only compatibility input (`RETRY_COUNT`, `RETRY_BACKOFF_SECONDS`, legacy `RETRY_BACKOFF_SECS`). After bootstrap, SQLite Global Settings are the source of truth for runtime behavior.
 
 Runtime note: service scheduling and manual execution are now driven by enabled library rows in SQLite (`libraries`), not a fixed Movies/TV runtime model. Enabled libraries with blank schedules remain manual-run only until a schedule is configured.
 
@@ -600,7 +604,8 @@ ENCODER | hevc_qsv | encoder profile |
 QSV_QUALITY | 21 | encoding quality |
 QSV_PRESET | 7 | speed preset |
 PROBE_TIMEOUT_SECS | 60 | ffprobe timeout |
-RETRY_COUNT | 1 | retry attempts |
+RETRY_COUNT | 1 | bootstrap default for DB-backed retry count |
+RETRY_BACKOFF_SECONDS | 5 | bootstrap default for DB-backed retry delay (seconds) |
 
 Additional settings control validation, logging, stats, and retention.
 
