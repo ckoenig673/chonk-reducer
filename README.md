@@ -314,15 +314,22 @@ The settings page is backed by SQLite (`STATS_PATH`) and now has two sections:
 - **Global Settings** (DB-backed key/value settings)
 - **Libraries** (DB-backed library rows)
 
-Global Settings currently manage a small editable subset:
+Global Settings now manage app-wide operator defaults (DB-backed), including:
 
-- `movie_schedule` *(restart required)*
-- `tv_schedule` *(restart required)*
 - `min_file_age_minutes`
 - `max_files`
 - `min_savings_percent`
+- `max_savings_percent`
+- `retry_count`
+- `retry_backoff_secs`
+- `skip_codecs`
+- `skip_resolution_tags`
+- `skip_min_height`
+- `validate_seconds`
+- `log_retention_days`
+- `bak_retention_days`
 
-Saving settings writes values to SQLite immediately. The page shows a save confirmation, and when restart-required settings are changed it indicates that some changes only take effect after a service restart.
+Saving settings writes values to SQLite immediately and applies them to service-driven runs.
 
 Libraries are now persisted in a `libraries` table and support simple operator CRUD:
 
@@ -335,9 +342,9 @@ Bootstrap model for the new config foundation:
 
 1. Environment/compose values remain bootstrap defaults.
 2. Missing global settings keys are initialized from env/default values.
-3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized from current env/library values.
+3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized from current env/library values (including schedule bootstrap from legacy global schedule keys when present).
 
-Runtime note: scheduler/manual execution remains the existing fixed Movies/TV model in this release. DB-backed libraries are foundation data for future dynamic multi-library scheduling.
+Runtime note: scheduler/manual execution remains the existing fixed Movies/TV model in this release. Library schedule values are now owned in the Libraries section; runtime is not fully dynamic across arbitrary DB libraries yet.
 
 Activity page:
 
@@ -379,22 +386,22 @@ It is intentionally minimal and is not a full diagnostics framework.
 Settings precedence / bootstrap model:
 
 1. Environment/compose values are bootstrap defaults.
-2. On first startup, missing settings rows are initialized from those environment values.
-3. After initialization, SQLite settings values are used by service-driven runs.
+2. On first startup, missing global settings rows are initialized from those environment values.
+3. On first startup, missing `libraries` rows are initialized from current fixed Movie/TV env/library defaults (and legacy global schedule keys when present).
+4. After initialization, SQLite values are used by service-driven runs.
 
 Scheduler notes:
 
-- `movie_schedule` and `tv_schedule` are read from SQLite-backed settings at service startup.
-- If schedules are changed in `/settings`, restart the service for new cron schedules to be applied.
+- Movie/TV schedules are owned by DB-backed library rows (`libraries.schedule`).
+- Global Settings no longer include schedule fields.
+- `MOVIE_SCHEDULE` / `TV_SCHEDULE` remain optional legacy/bootstrap env defaults, but are not required in `compose.yaml`.
+- If schedules are changed in Libraries, restart the service for new cron schedules to be applied.
 
 Service scheduler environment variables:
 
 - `SERVICE_MODE=true|false` (default: false)
 - `SERVICE_HOST` (default: `0.0.0.0`)
 - `SERVICE_PORT` (default: `8080`)
-- `MOVIE_SCHEDULE` (bootstrap default; blank disables movie schedule)
-- `TV_SCHEDULE` (bootstrap default; blank disables TV schedule)
-
 Library-specific service overrides (optional):
 
 - `MOVIE_MEDIA_ROOT`, `MOVIE_MIN_SIZE_GB`, `MOVIE_LOG_PREFIX`, `MOVIE_LIBRARY`
