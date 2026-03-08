@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.30.1
+**Current Version:** v1.30.2
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -84,6 +84,7 @@ Notes:
 - Notification delivery failures are non-fatal and only logged as warnings.
 - Notifications are sent once per run completion/failure event in service mode.
 - If `CHONK_SECRET_KEY` is changed or lost, existing encrypted webhook values may need to be re-entered.
+- Discord webhook URLs are accepted for both `discord.com` and legacy `discordapp.com` hosts; legacy URLs are normalized to `discord.com` at send time.
 
 ---
 

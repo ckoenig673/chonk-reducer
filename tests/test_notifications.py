@@ -169,6 +169,51 @@ def test_send_test_notification_returns_success_when_configured(tmp_path, monkey
     assert len(calls) == 2
 
 
+def test_discord_webhook_detection_accepts_discord_com_and_discordapp_com():
+    assert notifications.is_discord_webhook_url("https://discord.com/api/webhooks/123/abc") is True
+    assert notifications.is_discord_webhook_url("https://discordapp.com/api/webhooks/123/abc") is True
+    assert notifications.is_discord_webhook_url("https://discord.com/not-a-webhook") is False
+    assert notifications.is_discord_webhook_url("https://example.com/api/webhooks/123/abc") is False
+
+
+def test_discordapp_webhook_urls_are_normalized_to_discord_com():
+    normalized = notifications.normalize_discord_webhook_url("https://discordapp.com/api/webhooks/123/abc")
+    assert normalized == "https://discord.com/api/webhooks/123/abc"
+
+    same_url = notifications.normalize_discord_webhook_url("https://discord.com/api/webhooks/123/abc")
+    assert same_url == "https://discord.com/api/webhooks/123/abc"
+
+
+def test_send_test_notification_normalizes_decrypted_discordapp_url(monkeypatch):
+    monkeypatch.setattr(
+        notifications,
+        "_load_settings",
+        lambda settings_db_path=None: {
+            "discord_webhook_url": "enc::discord-token",
+            "generic_webhook_url": "",
+        },
+    )
+
+    monkeypatch.setattr(
+        secrets,
+        "decrypt_secret",
+        lambda value: "https://discordapp.com/api/webhooks/123/abc" if value == "enc::discord-token" else value,
+    )
+
+    sent_urls = []
+
+    def fake_post(url, payload):
+        del payload
+        sent_urls.append(url)
+
+    monkeypatch.setattr(notifications, "_post_json", fake_post)
+
+    result = notifications.send_test_notification()
+
+    assert result["ok"] is True
+    assert sent_urls == ["https://discord.com/api/webhooks/123/abc"]
+
+
 def test_send_test_notification_failure_is_non_fatal(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
