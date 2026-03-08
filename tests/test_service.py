@@ -300,13 +300,15 @@ def test_service_settings_from_env(monkeypatch):
     assert settings.tv_schedule == "15 2 * * *"
 
 
-def test_scheduler_registers_jobs_from_env():
+def test_scheduler_registers_jobs_from_env(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
     settings = ServiceSettings(
         enabled=True,
         host="0.0.0.0",
         port=8080,
-        movie_schedule="0 1 * * *",
-        tv_schedule="15 2 * * *",
+        movie_schedule="",
+        tv_schedule="",
     )
     service = ChonkService(settings)
 
@@ -762,8 +764,11 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
     monkeypatch.setenv("TV_MEDIA_ROOT", "/data/tv")
     monkeypatch.setenv("TZ", "UTC")
 
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "0 4 * * *")
+
     service = ChonkService(
-        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="0 2 * * *", tv_schedule="0 4 * * *")
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
 
     class FakeJob:
@@ -1097,13 +1102,16 @@ def test_schedule_registration_records_activity_entries(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
 
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
+
     service = ChonkService(
         ServiceSettings(
             enabled=True,
             host="0.0.0.0",
             port=8080,
-            movie_schedule="0 1 * * *",
-            tv_schedule="15 2 * * *",
+            movie_schedule="",
+            tv_schedule="",
         )
     )
 
@@ -1259,13 +1267,15 @@ def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch)
 
     assert status_code == 200
     assert "<h1>Settings</h1>" in body
-    assert "name=\"movie_schedule\"" in body
-    assert "name=\"tv_schedule\"" in body
+    assert "name=\"movie_schedule\"" not in body
+    assert "name=\"tv_schedule\"" not in body
     assert "name=\"min_file_age_minutes\"" in body
     assert "name=\"max_files\"" in body
     assert "value=\"9\"" in body
     assert "Global Settings" in body
     assert "Libraries" in body
+    assert "<strong>Schedule</strong>" in body
+    assert "name=\"schedule\"" in body
 
 
 def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
@@ -1292,6 +1302,36 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert rows[1]["path"] == "/mnt/media/tv"
     assert int(rows[1]["enabled"]) == 1
     assert rows[1]["schedule"] == "0 4 * * *"
+
+
+def test_libraries_bootstrap_schedule_from_legacy_settings_table(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    conn.execute(
+        "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)",
+        ("movie_schedule", "5 1 * * *", "2026-01-01T00:00:00Z"),
+    )
+    conn.execute(
+        "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)",
+        ("tv_schedule", "10 2 * * *", "2026-01-01T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT name, schedule FROM libraries ORDER BY id ASC").fetchall()
+    conn.close()
+
+    assert rows[0]["name"] == "Movies"
+    assert rows[0]["schedule"] == "5 1 * * *"
+    assert rows[1]["name"] == "TV"
+    assert rows[1]["schedule"] == "10 2 * * *"
 
 
 def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
@@ -1414,6 +1454,15 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "22")
     monkeypatch.setenv("MAX_FILES", "3")
     monkeypatch.setenv("MIN_SAVINGS_PERCENT", "18")
+    monkeypatch.setenv("MAX_SAVINGS_PERCENT", "45")
+    monkeypatch.setenv("RETRY_COUNT", "4")
+    monkeypatch.setenv("RETRY_BACKOFF_SECS", "8")
+    monkeypatch.setenv("SKIP_CODECS", "mpeg2")
+    monkeypatch.setenv("SKIP_RESOLUTION_TAGS", "2160p")
+    monkeypatch.setenv("SKIP_MIN_HEIGHT", "720")
+    monkeypatch.setenv("VALIDATE_SECONDS", "12")
+    monkeypatch.setenv("LOG_RETENTION_DAYS", "40")
+    monkeypatch.setenv("BAK_RETENTION_DAYS", "70")
 
     ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
@@ -1423,18 +1472,32 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     conn.close()
 
     assert {row["key"] for row in rows} == {
-        "movie_schedule",
-        "tv_schedule",
         "min_file_age_minutes",
         "max_files",
         "min_savings_percent",
+        "max_savings_percent",
+        "retry_count",
+        "retry_backoff_secs",
+        "skip_codecs",
+        "skip_resolution_tags",
+        "skip_min_height",
+        "validate_seconds",
+        "log_retention_days",
+        "bak_retention_days",
     }
     values = {row["key"]: row["value"] for row in rows}
-    assert values["movie_schedule"] == "0 5 * * *"
-    assert values["tv_schedule"] == "30 6 * * *"
     assert values["min_file_age_minutes"] == "22"
     assert values["max_files"] == "3"
     assert values["min_savings_percent"] == "18"
+    assert values["max_savings_percent"] == "45"
+    assert values["retry_count"] == "4"
+    assert values["retry_backoff_secs"] == "8"
+    assert values["skip_codecs"] == "mpeg2"
+    assert values["skip_resolution_tags"] == "2160p"
+    assert values["skip_min_height"] == "720"
+    assert values["validate_seconds"] == "12"
+    assert values["log_retention_days"] == "40"
+    assert values["bak_retention_days"] == "70"
 
 
 def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
@@ -1449,11 +1512,18 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
         service,
         "/settings",
         data={
-            "movie_schedule": "15 1 * * *",
-            "tv_schedule": "45 2 * * *",
             "min_file_age_minutes": "40",
             "max_files": "6",
             "min_savings_percent": "25",
+            "max_savings_percent": "35",
+            "retry_count": "3",
+            "retry_backoff_secs": "11",
+            "skip_codecs": "h264,mpeg2",
+            "skip_resolution_tags": "2160p,4k",
+            "skip_min_height": "1080",
+            "validate_seconds": "14",
+            "log_retention_days": "15",
+            "bak_retention_days": "45",
         },
     )
 
@@ -1468,14 +1538,21 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
     }
     conn.close()
 
-    assert values["movie_schedule"] == "15 1 * * *"
-    assert values["tv_schedule"] == "45 2 * * *"
     assert values["min_file_age_minutes"] == "40"
     assert values["max_files"] == "6"
     assert values["min_savings_percent"] == "25"
+    assert values["max_savings_percent"] == "35"
+    assert values["retry_count"] == "3"
+    assert values["retry_backoff_secs"] == "11"
+    assert values["skip_codecs"] == "h264,mpeg2"
+    assert values["skip_resolution_tags"] == "2160p,4k"
+    assert values["skip_min_height"] == "1080"
+    assert values["validate_seconds"] == "14"
+    assert values["log_retention_days"] == "15"
+    assert values["bak_retention_days"] == "45"
 
 
-def test_post_settings_schedule_update_shows_restart_message(tmp_path, monkeypatch):
+def test_post_settings_update_shows_standard_saved_message(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
 
@@ -1487,8 +1564,6 @@ def test_post_settings_schedule_update_shows_restart_message(tmp_path, monkeypat
         service,
         "/settings",
         data={
-            "movie_schedule": "15 1 * * *",
-            "tv_schedule": "45 2 * * *",
             "min_file_age_minutes": "40",
             "max_files": "6",
             "min_savings_percent": "25",
@@ -1496,10 +1571,10 @@ def test_post_settings_schedule_update_shows_restart_message(tmp_path, monkeypat
     )
 
     assert status_code == 200
-    assert "Settings saved. Some changes require a service restart to take effect." in body
+    assert "Settings saved." in body
 
 
-def test_settings_page_shows_restart_labels_and_operator_note(tmp_path, monkeypatch):
+def test_settings_page_hides_schedule_fields_and_shows_operator_note(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
 
@@ -1510,8 +1585,8 @@ def test_settings_page_shows_restart_labels_and_operator_note(tmp_path, monkeypa
     status_code, body, _ = _call_get(service, "/settings")
 
     assert status_code == 200
-    assert "Movie Schedule</strong> <span style=\"color: #8a4f00; font-size: 0.9rem;\">(restart required)</span>" in body
-    assert "Tv Schedule</strong> <span style=\"color: #8a4f00; font-size: 0.9rem;\">(restart required)</span>" in body
+    assert "Movie Schedule</strong>" not in body
+    assert "Tv Schedule</strong>" not in body
     assert "Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only." in body
 
 
@@ -1523,13 +1598,14 @@ def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
-    service.update_editable_settings({"max_files": "11", "min_file_age_minutes": "7"})
+    service.update_editable_settings({"max_files": "11", "min_file_age_minutes": "7", "retry_count": "9"})
 
     captured = {}
 
     def fake_run_once():
         captured["max_files"] = os.getenv("MAX_FILES")
         captured["min_file_age_minutes"] = os.getenv("MIN_FILE_AGE_MINUTES")
+        captured["retry_count"] = os.getenv("RETRY_COUNT")
         return 0
 
     monkeypatch.setattr(service_module, "run", fake_run_once)
@@ -1538,3 +1614,4 @@ def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
 
     assert captured["max_files"] == "11"
     assert captured["min_file_age_minutes"] == "7"
+    assert captured["retry_count"] == "9"

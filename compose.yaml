@@ -16,7 +16,7 @@ x-common-env: &common-env
 
   # ---- Stats / Reporting ----
   STATS_ENABLED: "true"                    # write SQLite rows to STATS_PATH for success/skip/fail events
-  APP_VERSION: "v1.21.0"                    # version stamp written into stats + startup banner
+  APP_VERSION: "v1.22.1"                    # version stamp written into stats + startup banner
   REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
   WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
   WEEKLY_STATS_PATHS: "/config/chonk.db"  # comma list of SQLite DB inputs
@@ -164,9 +164,6 @@ services:
       SERVICE_MODE: "true"
       SERVICE_HOST: "0.0.0.0"
       SERVICE_PORT: "8080"
-      MOVIE_SCHEDULE: "0 2 * * *"
-      TV_SCHEDULE: "0 4 * * *"
-
       MOVIE_MEDIA_ROOT: /movies
       MOVIE_MIN_SIZE_GB: "17"
       TV_MEDIA_ROOT: /tv_shows

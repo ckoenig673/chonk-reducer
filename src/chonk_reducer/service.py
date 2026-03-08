@@ -52,14 +52,21 @@ LOGGER = logging.getLogger("chonk_reducer.service")
 
 
 EDITABLE_SETTINGS = {
-    "movie_schedule": {"env": "MOVIE_SCHEDULE", "default": ""},
-    "tv_schedule": {"env": "TV_SCHEDULE", "default": ""},
     "min_file_age_minutes": {"env": "MIN_FILE_AGE_MINUTES", "default": "10"},
     "max_files": {"env": "MAX_FILES", "default": "1"},
     "min_savings_percent": {"env": "MIN_SAVINGS_PERCENT", "default": "15"},
+    "max_savings_percent": {"env": "MAX_SAVINGS_PERCENT", "default": "0"},
+    "retry_count": {"env": "RETRY_COUNT", "default": "1"},
+    "retry_backoff_secs": {"env": "RETRY_BACKOFF_SECS", "default": "5"},
+    "skip_codecs": {"env": "SKIP_CODECS", "default": ""},
+    "skip_resolution_tags": {"env": "SKIP_RESOLUTION_TAGS", "default": ""},
+    "skip_min_height": {"env": "SKIP_MIN_HEIGHT", "default": "0"},
+    "validate_seconds": {"env": "VALIDATE_SECONDS", "default": "10"},
+    "log_retention_days": {"env": "LOG_RETENTION_DAYS", "default": "30"},
+    "bak_retention_days": {"env": "BAK_RETENTION_DAYS", "default": "60"},
 }
 
-RESTART_REQUIRED_SETTINGS = {"movie_schedule", "tv_schedule"}
+RESTART_REQUIRED_SETTINGS = set()
 
 
 @dataclass(frozen=True)
@@ -163,8 +170,8 @@ class ChonkService:
             enabled=settings.enabled,
             host=settings.host,
             port=settings.port,
-            movie_schedule=settings.movie_schedule or self._editable_settings.get("movie_schedule", ""),
-            tv_schedule=settings.tv_schedule or self._editable_settings.get("tv_schedule", ""),
+            movie_schedule=settings.movie_schedule,
+            tv_schedule=settings.tv_schedule,
             settings_db_path=settings_db_path,
         )
         self.scheduler = self._build_scheduler()
@@ -380,8 +387,8 @@ class ChonkService:
         service_mode = "Enabled" if self.settings.enabled else "Disabled"
         scheduler_running = self._scheduler_running_label()
 
-        movie_schedule = self.settings.movie_schedule.strip() or "Not set"
-        tv_schedule = self.settings.tv_schedule.strip() or "Not set"
+        movie_schedule = self._library_schedule_for_runtime("Movies", self.settings.movie_schedule).strip() or "Not set"
+        tv_schedule = self._library_schedule_for_runtime("TV", self.settings.tv_schedule).strip() or "Not set"
         movie_next_run = self._next_run_label("movies")
         tv_next_run = self._next_run_label("tv")
 
@@ -461,9 +468,9 @@ class ChonkService:
 
     def _next_run_label(self, library: str) -> str:
         if library == "movies":
-            schedule = (self.settings.movie_schedule or "").strip()
+            schedule = self._library_schedule_for_runtime("Movies", self.settings.movie_schedule).strip()
         else:
-            schedule = (self.settings.tv_schedule or "").strip()
+            schedule = self._library_schedule_for_runtime("TV", self.settings.tv_schedule).strip()
         if not schedule:
             return "Not scheduled"
 
@@ -586,21 +593,24 @@ class ChonkService:
             should_bootstrap = int(row["c"] if row is not None else 0) <= 0
 
             if not should_bootstrap:
+                conn.close()
                 return
 
             now = _utc_timestamp()
+            movies_schedule = self._legacy_schedule_value(conn, "movie_schedule", "MOVIE_SCHEDULE")
+            tv_schedule = self._legacy_schedule_value(conn, "tv_schedule", "TV_SCHEDULE")
             defaults = [
                 (
                     "Movies",
                     _env("MOVIE_MEDIA_ROOT", _library_values("movies").get("MEDIA_ROOT", "/movies")),
                     1,
-                    self._editable_settings.get("movie_schedule", ""),
+                    movies_schedule,
                 ),
                 (
                     "TV",
                     _env("TV_MEDIA_ROOT", _library_values("tv").get("MEDIA_ROOT", "/tv_shows")),
                     1,
-                    self._editable_settings.get("tv_schedule", ""),
+                    tv_schedule,
                 ),
             ]
             for name, path, enabled, schedule in defaults:
@@ -612,6 +622,12 @@ class ChonkService:
                     (name, path, enabled, schedule, now, now),
                 )
         conn.close()
+
+    def _legacy_schedule_value(self, conn: sqlite3.Connection, key: str, env_name: str) -> str:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is not None:
+            return str(row["value"] or "").strip()
+        return _env(env_name, "")
 
     def list_libraries(self) -> List[LibraryRecord]:
         conn = _connect_settings_db(self._settings_db_path)
@@ -841,8 +857,16 @@ class ChonkService:
 """
 
     def register_jobs(self) -> None:
-        self._register_library_job("movies", self.settings.movie_schedule)
-        self._register_library_job("tv", self.settings.tv_schedule)
+        self._register_library_job("movies", self._library_schedule_for_runtime("Movies", self.settings.movie_schedule))
+        self._register_library_job("tv", self._library_schedule_for_runtime("TV", self.settings.tv_schedule))
+
+    def _library_schedule_for_runtime(self, name: str, fallback: str) -> str:
+        conn = _connect_settings_db(self._settings_db_path)
+        row = conn.execute("SELECT schedule FROM libraries WHERE lower(name) = lower(?)", (name,)).fetchone()
+        conn.close()
+        if row is not None:
+            return str(row["schedule"] or "")
+        return str(fallback or "")
 
     def _register_library_job(self, library: str, schedule: str) -> None:
         schedule = (schedule or "").strip()
@@ -1558,11 +1582,18 @@ def library_environment(library: str) -> Iterator[None]:
 @contextmanager
 def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
     env_map = {
-        "movie_schedule": "MOVIE_SCHEDULE",
-        "tv_schedule": "TV_SCHEDULE",
         "min_file_age_minutes": "MIN_FILE_AGE_MINUTES",
         "max_files": "MAX_FILES",
         "min_savings_percent": "MIN_SAVINGS_PERCENT",
+        "max_savings_percent": "MAX_SAVINGS_PERCENT",
+        "retry_count": "RETRY_COUNT",
+        "retry_backoff_secs": "RETRY_BACKOFF_SECS",
+        "skip_codecs": "SKIP_CODECS",
+        "skip_resolution_tags": "SKIP_RESOLUTION_TAGS",
+        "skip_min_height": "SKIP_MIN_HEIGHT",
+        "validate_seconds": "VALIDATE_SECONDS",
+        "log_retention_days": "LOG_RETENTION_DAYS",
+        "bak_retention_days": "BAK_RETENTION_DAYS",
     }
     original: Dict[str, Optional[str]] = {name: os.environ.get(name) for name in env_map.values()}
 
