@@ -311,11 +311,13 @@ open http://localhost:8080/settings
 
 The settings page is backed by SQLite (`STATS_PATH`) and currently manages a small editable subset:
 
-- `movie_schedule`
-- `tv_schedule`
+- `movie_schedule` *(restart required)*
+- `tv_schedule` *(restart required)*
 - `min_file_age_minutes`
 - `max_files`
 - `min_savings_percent`
+
+Saving settings writes values to SQLite immediately. The page shows a save confirmation, and when restart-required settings are changed it indicates that some changes only take effect after a service restart.
 
 Activity page:
 

@@ -88,7 +88,7 @@ def _call_post(service, path, data=None):
         except Exception:
             if path == "/settings" and data is not None:
                 service.update_editable_settings(data)
-                return 200, service.settings_page_html("Settings saved.")
+                return 200, service.settings_page_html(service.settings_saved_message(data))
             for route in service.app.routes:
                 methods = getattr(route, "methods", set())
                 if getattr(route, "path", None) == path and "POST" in methods:
@@ -104,7 +104,7 @@ def _call_post(service, path, data=None):
 
     if hasattr(handler, "__call__") and getattr(handler, "__name__", "") == "save_settings":
         service.update_editable_settings(data)
-        return 200, service.settings_page_html("Settings saved.")
+        return 200, service.settings_page_html(service.settings_saved_message(data))
 
     result = handler()
     return (202 if result["status"] == "started" else 409), result
@@ -1316,6 +1316,46 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
     assert values["min_file_age_minutes"] == "40"
     assert values["max_files"] == "6"
     assert values["min_savings_percent"] == "25"
+
+
+def test_post_settings_schedule_update_shows_restart_message(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body = _call_post(
+        service,
+        "/settings",
+        data={
+            "movie_schedule": "15 1 * * *",
+            "tv_schedule": "45 2 * * *",
+            "min_file_age_minutes": "40",
+            "max_files": "6",
+            "min_savings_percent": "25",
+        },
+    )
+
+    assert status_code == 200
+    assert "Settings saved. Some changes require a service restart to take effect." in body
+
+
+def test_settings_page_shows_restart_labels_and_operator_note(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/settings")
+
+    assert status_code == 200
+    assert "Movie Schedule</strong> <span style=\"color: #8a4f00; font-size: 0.9rem;\">(restart required)</span>" in body
+    assert "Tv Schedule</strong> <span style=\"color: #8a4f00; font-size: 0.9rem;\">(restart required)</span>" in body
+    assert "Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only." in body
 
 
 def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
