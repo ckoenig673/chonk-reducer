@@ -985,14 +985,14 @@ def test_dashboard_library_card_displays_runtime_statuses(monkeypatch):
 
     with service._job_condition:
         service._job_queue = service_module.deque(
-            [service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="schedule")]
+            [service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="schedule", priority=100)]
         )
 
     _, queued_body, _ = _call_get(service, "/dashboard")
     assert "Status:</strong> Queued" in queued_body
 
     with service._job_condition:
-        service._current_job = service_module.RuntimeJob(library_id=2, library_name="TV", trigger="manual")
+        service._current_job = service_module.RuntimeJob(library_id=2, library_name="TV", trigger="manual", priority=100)
         service._current_job_started_at = "2026-01-05T00:00:00"
         service._job_queue = service_module.deque()
 
@@ -1054,7 +1054,7 @@ def test_dashboard_runtime_status_shows_current_file_and_live_snapshot():
     )
 
     with service._job_condition:
-        service._current_job = service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="manual")
+        service._current_job = service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="manual", priority=100)
         service._current_job_started_at = "2026-01-05T00:00:00Z"
         service._current_job_run_id = "run-123"
         service._current_run_snapshot = {
@@ -1887,14 +1887,24 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     create_status, create_body = _call_post(
         service,
         "/settings/libraries/create",
-        data={"name": "Anime", "path": "/data/anime", "enabled": "1", "schedule": "10 1 * * *", "min_size_gb": "0.5", "max_files": "3"},
+        data={
+            "name": "Anime",
+            "path": "/data/anime",
+            "enabled": "1",
+            "schedule": "10 1 * * *",
+            "min_size_gb": "0.5",
+            "max_files": "3",
+            "priority": "250",
+        },
     )
     assert create_status == 200
     assert "Library created." in create_body
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    anime = conn.execute("SELECT id, name, path, enabled, schedule, min_size_gb, max_files FROM libraries WHERE name = 'Anime'").fetchone()
+    anime = conn.execute(
+        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority FROM libraries WHERE name = 'Anime'"
+    ).fetchone()
     assert anime is not None
     library_id = int(anime["id"])
     assert anime["path"] == "/data/anime"
@@ -1902,6 +1912,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert anime["schedule"] == "10 1 * * *"
     assert float(anime["min_size_gb"]) == 0.5
     assert int(anime["max_files"]) == 3
+    assert int(anime["priority"]) == 250
     conn.close()
 
     update_status, update_body = _call_post(
@@ -1915,6 +1926,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "schedule": "20 2 * * *",
             "min_size_gb": "1.25",
             "max_files": "2",
+            "priority": "5",
         },
     )
     assert update_status == 200
@@ -1922,7 +1934,10 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    updated = conn.execute("SELECT name, path, enabled, schedule, min_size_gb, max_files FROM libraries WHERE id = ?", (library_id,)).fetchone()
+    updated = conn.execute(
+        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority FROM libraries WHERE id = ?",
+        (library_id,),
+    ).fetchone()
     assert updated is not None
     assert updated["name"] == "Anime Updated"
     assert updated["path"] == "/data/anime-updated"
@@ -1930,6 +1945,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert updated["schedule"] == "20 2 * * *"
     assert float(updated["min_size_gb"]) == 1.25
     assert int(updated["max_files"]) == 2
+    assert int(updated["priority"]) == 5
     conn.close()
 
     toggle_status, toggle_body = _call_post(
@@ -2179,11 +2195,12 @@ def test_library_columns_migrated_with_defaults(tmp_path, monkeypatch):
     ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
     conn = sqlite3.connect(str(db_path))
-    row = conn.execute("SELECT min_size_gb, max_files FROM libraries WHERE name = ?", ("Legacy",)).fetchone()
+    row = conn.execute("SELECT min_size_gb, max_files, priority FROM libraries WHERE name = ?", ("Legacy",)).fetchone()
     conn.close()
 
     assert float(row[0]) == 0.0
     assert int(row[1]) == 1
+    assert int(row[2]) == 100
 
 
 def test_library_validation_rejects_invalid_processing_inputs(tmp_path, monkeypatch):
@@ -2200,6 +2217,110 @@ def test_library_validation_rejects_invalid_processing_inputs(tmp_path, monkeypa
         {"name": "Bad2", "path": "/data/bad2", "enabled": "1", "schedule": "", "min_size_gb": "0", "max_files": "0"}
     )
     assert "max files per run must be >= 1" in message
+
+    message = service.create_library(
+        {
+            "name": "Bad3",
+            "path": "/data/bad3",
+            "enabled": "1",
+            "schedule": "",
+            "min_size_gb": "0",
+            "max_files": "1",
+            "priority": "urgent",
+        }
+    )
+    assert "priority must be an integer" in message
+
+
+def test_queue_prefers_higher_priority_and_keeps_fifo_for_ties(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    _call_post(
+        service,
+        "/settings/libraries/create",
+        data={
+            "name": "Anime",
+            "path": "/data/anime",
+            "enabled": "1",
+            "schedule": "",
+            "min_size_gb": "0",
+            "max_files": "1",
+            "priority": "25",
+        },
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET priority = ? WHERE name = ?", (100, "Movies"))
+    conn.execute("UPDATE libraries SET priority = ? WHERE name = ?", (50, "TV"))
+    conn.commit()
+    conn.close()
+
+    calls = []
+    start_gate = threading.Event()
+    release_gate = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        calls.append((library, trigger))
+        start_gate.set()
+        release_gate.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+
+    assert service.trigger_library("tv") is True
+    assert start_gate.wait(timeout=1)
+    assert service.trigger_library("anime") is True
+    assert service.trigger_library("movies") is True
+    release_gate.set()
+
+    for _ in range(100):
+        if len(calls) >= 3:
+            break
+        time.sleep(0.01)
+
+    assert [item[0] for item in calls] == ["tv", "movies", "anime"]
+
+    calls[:] = []
+    start_gate.clear()
+    release_gate.clear()
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET priority = ? WHERE name IN (?, ?)", (80, "Movies", "TV"))
+    conn.commit()
+    conn.close()
+
+    assert service.trigger_library("movies") is True
+    assert start_gate.wait(timeout=1)
+    assert service.trigger_library("tv") is True
+    release_gate.set()
+
+    for _ in range(100):
+        if len(calls) >= 2:
+            break
+        time.sleep(0.01)
+
+    assert [item[0] for item in calls] == ["movies", "tv"]
+
+
+def test_duplicate_library_protection_unchanged_with_priority(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    gate = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        gate.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+
+    first_started = service.trigger_library("movies")
+    second_started = service.trigger_library("movies")
+    gate.set()
+
+    assert first_started is True
+    assert second_started is False
 
 def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"

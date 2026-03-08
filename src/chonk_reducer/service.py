@@ -99,6 +99,7 @@ class LibraryRecord:
     schedule: str
     min_size_gb: float
     max_files: int
+    priority: int
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class RuntimeLibrary:
     schedule: str
     min_size_gb: float
     max_files: int
+    priority: int
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,7 @@ class RuntimeJob:
     library_id: int
     library_name: str
     trigger: str
+    priority: int
 
 
 @dataclass(frozen=True)
@@ -379,6 +382,7 @@ class ChonkService:
     <h2 style="margin-top: 0; margin-bottom: 0.5rem;">%s</h2>
     <div><strong>Path:</strong> %s</div>
     <div><strong>Status:</strong> %s</div>
+    <div><strong>Priority:</strong> %s</div>
     <div><strong>Last Run:</strong> %s</div>
     <div><strong>Next Run:</strong> %s</div>
     <div><strong>Files Optimized:</strong> %s</div>
@@ -394,6 +398,7 @@ class ChonkService:
                     _escape_html(library.name),
                     _escape_html(library.path),
                     _escape_html(runtime_status),
+                    _escape_html(str(library.priority)),
                     _escape_html(last_run_label),
                     _escape_html(self._next_run_label(library, manual_label="Manual Only")),
                     _escape_html(str(totals["files_optimized"])),
@@ -871,6 +876,7 @@ class ChonkService:
                     movies_schedule,
                     0.0,
                     1,
+                    100,
                 ),
                 (
                     "TV",
@@ -879,15 +885,16 @@ class ChonkService:
                     tv_schedule,
                     0.0,
                     1,
+                    100,
                 ),
             ]
-            for name, path, enabled, schedule, min_size_gb, max_files in defaults:
+            for name, path, enabled, schedule, min_size_gb, max_files, priority in defaults:
                 conn.execute(
                     """
-                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, priority, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, path, enabled, schedule, min_size_gb, max_files, now, now),
+                    (name, path, enabled, schedule, min_size_gb, max_files, priority, now, now),
                 )
         conn.close()
 
@@ -900,7 +907,7 @@ class ChonkService:
     def list_libraries(self) -> List[LibraryRecord]:
         conn = _connect_settings_db(self._settings_db_path)
         rows = conn.execute(
-            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files FROM libraries ORDER BY id ASC"
+            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority FROM libraries ORDER BY id ASC"
         ).fetchall()
         conn.close()
         return [
@@ -912,6 +919,7 @@ class ChonkService:
                 schedule=str(row["schedule"] or ""),
                 min_size_gb=float(row["min_size_gb"]),
                 max_files=int(row["max_files"]),
+                priority=int(row["priority"]),
             )
             for row in rows
         ]
@@ -925,8 +933,8 @@ class ChonkService:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, priority, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         normalized["name"],
@@ -935,6 +943,7 @@ class ChonkService:
                         normalized["schedule"],
                         float(normalized["min_size_gb"]),
                         int(normalized["max_files"]),
+                        int(normalized["priority"]),
                         _utc_timestamp(),
                         _utc_timestamp(),
                     ),
@@ -958,7 +967,7 @@ class ChonkService:
                 cursor = conn.execute(
                     """
                     UPDATE libraries
-                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, updated_at = ?
+                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, priority = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -968,6 +977,7 @@ class ChonkService:
                         normalized["schedule"],
                         float(normalized["min_size_gb"]),
                         int(normalized["max_files"]),
+                        int(normalized["priority"]),
                         _utc_timestamp(),
                         int(library_id),
                     ),
@@ -1054,6 +1064,12 @@ class ChonkService:
         if max_files < 1:
             return {}, "Library validation failed: max files per run must be >= 1."
 
+        priority_raw = str(values.get("priority", "100")).strip() or "100"
+        try:
+            priority = int(priority_raw)
+        except ValueError:
+            return {}, "Library validation failed: priority must be an integer."
+
         if schedule_mode == "legacy":
             schedule = str(values.get("schedule", "")).strip()
         elif schedule_mode == "advanced":
@@ -1077,6 +1093,7 @@ class ChonkService:
             "enabled": enabled,
             "min_size_gb": min_size_gb,
             "max_files": max_files,
+            "priority": priority,
         }, ""
 
     def _library_integrity_error_message(self, exc: sqlite3.IntegrityError) -> str:
@@ -1102,11 +1119,12 @@ class ChonkService:
   <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{name}</td>
   <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\"><code>{path}</code></td>
   <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{enabled}</td>
+  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{priority}</td>
   <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\"><code>{schedule}</code></td>
   <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{actions}</td>
 </tr>
 <tr>
-  <td colspan=\"5\" style=\"padding: 0.35rem 0.35rem 0.75rem 0.35rem; border-bottom: 1px solid #ddd; background: #fafcff;\">
+  <td colspan=\"6\" style=\"padding: 0.35rem 0.35rem 0.75rem 0.35rem; border-bottom: 1px solid #ddd; background: #fafcff;\">
     <details>
       <summary>Edit {name}</summary>
       <form method=\"post\" action=\"/settings/libraries/update\" style=\"margin-top: 0.5rem;\">
@@ -1121,6 +1139,9 @@ class ChonkService:
           <input name="min_size_gb" type="number" step="0.1" min="0" value="{min_size_gb}" style="width: 100%;" /><br />
           <label><strong>Max Files Per Run</strong></label><br />
           <input name="max_files" type="number" step="1" min="1" value="{max_files}" style="width: 100%;" /><br />
+          <label><strong>Priority</strong></label><br />
+          <input name="priority" type="number" step="1" value="{priority}" style="width: 100%;" /><br />
+          <small>Higher numbers run first when multiple libraries are queued.</small><br />
         </fieldset>
         {schedule_fields}
         <label><strong>Enabled</strong></label>
@@ -1136,6 +1157,7 @@ class ChonkService:
                     schedule=_escape_html(library.schedule),
                     min_size_gb=_escape_html("%s" % library.min_size_gb),
                     max_files=_escape_html(str(library.max_files)),
+                    priority=_escape_html(str(library.priority)),
                     schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
                     library_id=library.id,
                     enabled_yes="selected" if library.enabled else "",
@@ -1162,6 +1184,7 @@ class ChonkService:
       <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Name</th>
       <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Path</th>
       <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Enabled</th>
+      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Priority</th>
       <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Schedule</th>
       <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Actions</th>
     </tr>
@@ -1184,6 +1207,9 @@ class ChonkService:
     <input name="min_size_gb" type="number" step="0.1" min="0" value="0.0" style="width: 100%;" /><br />
     <label><strong>Max Files Per Run</strong></label><br />
     <input name="max_files" type="number" step="1" min="1" value="1" style="width: 100%;" /><br />
+    <label><strong>Priority</strong></label><br />
+    <input name="priority" type="number" step="1" value="100" style="width: 100%;" /><br />
+    <small>Higher numbers run first when multiple libraries are queued.</small><br />
   </fieldset>
   {schedule_fields}
   <label><strong>Enabled</strong></label>
@@ -1328,6 +1354,7 @@ class ChonkService:
                 schedule=library.schedule,
                 min_size_gb=library.min_size_gb,
                 max_files=library.max_files,
+                priority=library.priority,
             )
             for library in self.list_libraries()
             if library.enabled
@@ -1423,7 +1450,7 @@ class ChonkService:
         return payload, 409
 
     def _enqueue_library_job(self, library: RuntimeLibrary, trigger: str) -> bool:
-        job = RuntimeJob(library_id=library.id, library_name=library.name, trigger=trigger)
+        job = RuntimeJob(library_id=library.id, library_name=library.name, trigger=trigger, priority=library.priority)
         with self._job_condition:
             if job.library_id in self._queued_or_running_library_ids:
                 return False
@@ -1446,7 +1473,7 @@ class ChonkService:
                     self._job_condition.wait(timeout=0.5)
                 if self._worker_shutdown:
                     return
-                job = self._job_queue.popleft()
+                job = self._pop_next_job_locked()
                 self._current_job = job
                 self._current_job_started_at = _utc_timestamp()
                 self._current_job_run_id = ""
@@ -1485,6 +1512,21 @@ class ChonkService:
                     message="%s queued job completed" % job.library_name,
                     library=job.library_name,
                 )
+
+    def _pop_next_job_locked(self) -> RuntimeJob:
+        selected_index = 0
+        selected_priority = self._job_queue[0].priority
+        for index, job in enumerate(self._job_queue):
+            if job.priority > selected_priority:
+                selected_index = index
+                selected_priority = job.priority
+
+        if selected_index == 0:
+            return self._job_queue.popleft()
+
+        selected_job = self._job_queue[selected_index]
+        del self._job_queue[selected_index]
+        return selected_job
 
     def _runtime_status_snapshot(self) -> Dict[str, str]:
         with self._job_condition:
@@ -2548,6 +2590,7 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
             schedule TEXT NOT NULL DEFAULT '',
             min_size_gb REAL NOT NULL DEFAULT 0.0,
             max_files INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 100,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -2558,8 +2601,11 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE libraries ADD COLUMN min_size_gb REAL NOT NULL DEFAULT 0.0")
     if "max_files" not in library_columns:
         conn.execute("ALTER TABLE libraries ADD COLUMN max_files INTEGER NOT NULL DEFAULT 1")
+    if "priority" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN priority INTEGER NOT NULL DEFAULT 100")
     conn.execute("UPDATE libraries SET min_size_gb = COALESCE(min_size_gb, 0.0)")
     conn.execute("UPDATE libraries SET max_files = CASE WHEN max_files IS NULL OR max_files < 1 THEN 1 ELSE max_files END")
+    conn.execute("UPDATE libraries SET priority = COALESCE(priority, 100)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS activity_events (
