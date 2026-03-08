@@ -232,6 +232,10 @@ class ChonkService:
         def activity_page():
             return self._html_response(self.activity_page_html())
 
+        @self.app.get("/history")
+        def history_page():
+            return self._html_response(self.history_page_html())
+
         @self.app.get("/system")
         def system_page():
             return self._html_response(self.system_page_html())
@@ -405,6 +409,12 @@ class ChonkService:
         content += self._runs_history_html(rows)
         return self._render_shell_html("Runs", content)
 
+    def history_page_html(self) -> str:
+        rows = self._recent_encode_history(limit=200)
+        content = "<h1>History</h1><p>Recent completed encode entries from SQLite.</p>"
+        content += self._history_table_html(rows)
+        return self._render_shell_html("History", content)
+
     def run_detail_page_html(self, run_id: str) -> tuple:
         run = self._run_detail(run_id)
         if run is None:
@@ -547,6 +557,7 @@ class ChonkService:
         nav_items = [
             ("Dashboard", "/dashboard"),
             ("Runs", "/runs"),
+            ("History", "/history"),
             ("Activity", "/activity"),
             ("Settings", "/settings"),
             ("System", "/system"),
@@ -1563,6 +1574,129 @@ class ChonkService:
   </tbody>
 </table>""" % "".join(body_rows)
 
+    def _recent_encode_history(self, limit: int = 200) -> List[Dict[str, str]]:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            encode_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(encodes)").fetchall()}
+            if not encode_columns:
+                conn.close()
+                return []
+
+            library_expr = "NULL"
+            if "library" in encode_columns:
+                library_expr = "e.library"
+
+            filename_expr = "NULL"
+            if "filename" in encode_columns:
+                filename_expr = "e.filename"
+
+            path_expr = "NULL"
+            if "path" in encode_columns:
+                path_expr = "e.path"
+
+            size_before_expr = "NULL"
+            if "size_before_bytes" in encode_columns:
+                size_before_expr = "e.size_before_bytes"
+
+            size_after_expr = "NULL"
+            if "size_after_bytes" in encode_columns:
+                size_after_expr = "e.size_after_bytes"
+
+            saved_expr = "NULL"
+            if "saved_bytes" in encode_columns:
+                saved_expr = "e.saved_bytes"
+
+            row_id_expr = "0"
+            if "id" in encode_columns:
+                row_id_expr = "e.id"
+
+            rows = conn.execute(
+                """
+                SELECT
+                    e.ts,
+                    COALESCE(NULLIF(%s, ''), NULLIF(r.library, ''), '-') AS library,
+                    COALESCE(NULLIF(%s, ''), NULLIF(%s, ''), '-') AS file_name,
+                    %s AS size_before_bytes,
+                    %s AS size_after_bytes,
+                    %s AS saved_bytes,
+                    %s AS row_id
+                FROM encodes e
+                LEFT JOIN runs r ON r.run_id = e.run_id
+                WHERE e.status = 'success'
+                ORDER BY e.ts DESC, row_id DESC
+                LIMIT ?
+                """
+                % (
+                    library_expr,
+                    filename_expr,
+                    path_expr,
+                    size_before_expr,
+                    size_after_expr,
+                    saved_expr,
+                    row_id_expr,
+                ),
+                (int(limit),),
+            ).fetchall()
+            conn.close()
+        except Exception:
+            return []
+
+        result: List[Dict[str, str]] = []
+        for row in rows:
+            result.append(
+                {
+                    "ts": str(row["ts"] or ""),
+                    "library": str(row["library"] or "-"),
+                    "file_name": str(row["file_name"] or "-"),
+                    "original_size": _format_saved_bytes(row["size_before_bytes"]),
+                    "new_size": _format_saved_bytes(row["size_after_bytes"]),
+                    "savings_pct": _format_savings_pct(row["size_before_bytes"], row["size_after_bytes"]),
+                    "savings_amount": _format_saved_bytes(row["saved_bytes"]),
+                }
+            )
+        return result
+
+    def _history_table_html(self, rows: List[Dict[str, str]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No completed encode history recorded yet.</div>'
+
+        row_html = []
+        for row in rows:
+            row_html.append(
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                % (
+                    _escape_html(row["library"]),
+                    _escape_html(row["file_name"]),
+                    _escape_html(row["original_size"]),
+                    _escape_html(row["new_size"]),
+                    _escape_html(row["savings_pct"]),
+                    _escape_html(row["savings_amount"]),
+                    _escape_html(row["ts"]),
+                )
+            )
+
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <thead>
+    <tr>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">File Name</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Original Size</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">New Size</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Savings %%</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Savings Amount</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Date / Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    %s
+  </tbody>
+</table>""" % "".join(row_html)
+
     def _lifetime_savings(self) -> Optional[Dict[str, int]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
         if not db_path.exists():
@@ -1740,6 +1874,7 @@ class ChonkService:
                     self.health_payload,
                     self.home_page_html,
                     self.runs_page_html,
+                    self.history_page_html,
                     self.run_detail_page_html,
                     self.settings_page_html,
                     self.activity_page_html,
@@ -2040,6 +2175,22 @@ def _format_saved_bytes(value) -> str:
     return "%d B" % saved_bytes
 
 
+
+
+def _format_savings_pct(size_before, size_after) -> str:
+    try:
+        before = float(size_before)
+        after = float(size_after)
+    except Exception:
+        return "Unknown"
+
+    if before <= 0:
+        return "Unknown"
+
+    pct = ((before - after) / before) * 100.0
+    return "%.1f%%" % pct
+
+
 def _escape_html(value: str) -> str:
     escaped = str(value)
     escaped = escaped.replace("&", "&amp;")
@@ -2059,6 +2210,7 @@ def _run_simple_http_server(
     health_fn: Callable[[], dict],
     home_html_fn: Callable[[], str],
     runs_html_fn: Callable[[], str],
+    history_html_fn: Callable[[], str],
     run_detail_html_fn: Callable[[str], tuple],
     settings_html_fn: Callable[[str], str],
     activity_html_fn: Callable[[], str],
@@ -2093,6 +2245,15 @@ def _run_simple_http_server(
 
             if self.path == "/runs":
                 payload = runs_html_fn().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if self.path == "/history":
+                payload = history_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))

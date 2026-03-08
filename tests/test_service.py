@@ -793,6 +793,7 @@ def test_dashboard_route_renders_in_shell():
     assert status_code == 200
     assert "Dashboard" in body
     assert "href=\"/settings\"" in body
+    assert "href=\"/history\"" in body
 
 
 def test_shell_routes_render_expected_pages():
@@ -807,6 +808,86 @@ def test_shell_routes_render_expected_pages():
         assert "<h1>%s</h1>" % heading in body
 
 
+
+
+
+
+def test_history_route_renders_in_shell(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/history")
+
+    assert status_code == 200
+    assert "<h1>History</h1>" in body
+    assert "Recent completed encode entries from SQLite" in body
+    assert 'href="/history"' in body
+
+
+def test_history_page_returns_rows_when_encode_stats_exist(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    run_id = "movies-2026-01-02T08:00:00"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00", success_count=1)
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T08:00:00",
+        status="success",
+        path="/movies/A.mkv",
+        size_before_bytes=1024 * 1024 * 1024,
+        size_after_bytes=512 * 1024 * 1024,
+        saved_bytes=512 * 1024 * 1024,
+    )
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T09:00:00",
+        status="success",
+        path="/movies/B.mkv",
+        size_before_bytes=2 * 1024 * 1024 * 1024,
+        size_after_bytes=1024 * 1024 * 1024,
+        saved_bytes=1024 * 1024 * 1024,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/history")
+
+    assert status_code == 200
+    for heading in (
+        "Library",
+        "File Name",
+        "Original Size",
+        "New Size",
+        "Savings %",
+        "Savings Amount",
+        "Date / Time",
+    ):
+        assert ">%s<" % heading in body
+    assert "movies" in body
+    assert "/movies/B.mkv" in body
+    assert "2.0 GB" in body
+    assert "1.0 GB" in body
+    assert "50.0%" in body
+    assert body.index("2026-01-02T09:00:00") < body.index("2026-01-02T08:00:00")
+
+
+def test_history_page_handles_empty_stats_gracefully(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/history")
+
+    assert status_code == 200
+    assert "No completed encode history recorded yet" in body
 
 
 def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path):
