@@ -333,6 +333,10 @@ class ChonkService:
         def health() -> dict:
             return self.health_payload()
 
+        @self.app.get("/api/status")
+        def api_status() -> dict:
+            return self.current_job_status()
+
         @self.app.post("/libraries/{library_id}/run")
         def run_library(library_id: int):
             payload, status_code = self.manual_run_payload_for_id(int(library_id))
@@ -449,6 +453,133 @@ class ChonkService:
   %s
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Recent Runs</h2>
   %s
+  <script>
+    (function () {
+      function textValue(value, placeholder) {
+        if (value === null || value === undefined || String(value).trim() === "") {
+          return placeholder;
+        }
+        return String(value);
+      }
+
+      function setText(id, value, placeholder) {
+        var node = document.getElementById(id);
+        if (!node) {
+          return;
+        }
+        node.textContent = textValue(value, placeholder);
+      }
+
+      function savedBytesLabel(rawValue) {
+        var parsed = parseInt(rawValue, 10);
+        if (isNaN(parsed) || parsed <= 0) {
+          return "-";
+        }
+        var units = ["B", "KB", "MB", "GB", "TB"];
+        var scaled = parsed;
+        var index = 0;
+        while (scaled >= 1024 && index < units.length - 1) {
+          scaled = scaled / 1024;
+          index += 1;
+        }
+        if (index === 0) {
+          return String(parsed) + " B";
+        }
+        return scaled.toFixed(1) + " " + units[index];
+      }
+
+      function triggerLabel(trigger) {
+        var value = String(trigger || "").trim().toLowerCase();
+        if (value === "manual") {
+          return "Manual";
+        }
+        if (value === "schedule" || value === "scheduled") {
+          return "Scheduled";
+        }
+        return textValue(trigger, "-");
+      }
+
+      function parseCount(value) {
+        var parsed = parseInt(value, 10);
+        if (isNaN(parsed) || parsed < 0) {
+          return 0;
+        }
+        return parsed;
+      }
+
+      function progressMarkup(snapshot) {
+        if (String(snapshot.status || "") !== "Running") {
+          return "";
+        }
+        var processed = parseCount(snapshot.files_processed);
+        var candidates = parseCount(snapshot.candidates_found);
+        var ratio = 0;
+        var progressLabel = "";
+        if (candidates > 0) {
+          ratio = Math.min(1, processed / candidates);
+          progressLabel = String(processed) + " / " + String(candidates) + " files processed";
+        } else {
+          ratio = processed > 0 ? 1 : 0;
+          progressLabel = String(processed) + " files processed";
+        }
+        var pctLabel = String(Math.round(ratio * 100)) + "%%";
+        var currentFile = textValue(snapshot.current_file, "Waiting for first file");
+        return '' +
+          '<div style="margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;">' +
+          '<div style="font-weight:600; margin-bottom:0.35rem;">Run Progress</div>' +
+          '<div style="border:1px solid #c8d8f0; background:#eef4ff; width:100%%; height:18px;">' +
+          '<div style="background:#2a6fd6; width:' + pctLabel + '; height:100%%;"></div>' +
+          '</div>' +
+          '<div style="margin-top:0.35rem;">' + progressLabel + ' (' + pctLabel + ')</div>' +
+          '<div style="margin-top:0.55rem;"><strong>Current Library:</strong> ' + textValue(snapshot.current_library, "-") + '</div>' +
+          '<div><strong>Current File:</strong> ' + currentFile + '</div>' +
+          '<div style="margin-top:0.4rem;"><strong>Files Evaluated:</strong> ' + String(parseCount(snapshot.files_evaluated)) + '</div>' +
+          '<div><strong>Files Processed:</strong> ' + String(processed) + '</div>' +
+          '<div><strong>Files Skipped:</strong> ' + String(parseCount(snapshot.files_skipped)) + '</div>' +
+          '<div><strong>Files Failed:</strong> ' + String(parseCount(snapshot.files_failed)) + '</div>' +
+          '<div><strong>Total Saved:</strong> ' + textValue(savedBytesLabel(snapshot.bytes_saved), "0 B") + '</div>' +
+          '</div>';
+      }
+
+      function updateFromSnapshot(snapshot) {
+        setText("runtime-status", snapshot.status, "Idle");
+        setText("runtime-library", snapshot.current_library, "-");
+        setText("runtime-trigger", triggerLabel(snapshot.trigger), "-");
+        setText("runtime-queue-depth", snapshot.queue_depth, "0");
+        setText("runtime-run-id", snapshot.run_id, "-");
+        setText("runtime-started-at", snapshot.started_at, "-");
+        var currentFilePlaceholder = String(snapshot.status || "") === "Running" ? "Waiting for first file" : "-";
+        setText("runtime-current-file", snapshot.current_file, currentFilePlaceholder);
+        setText("runtime-candidates-found", snapshot.candidates_found, "-");
+        setText("runtime-files-evaluated", snapshot.files_evaluated, "-");
+        setText("runtime-files-processed", snapshot.files_processed, "-");
+        setText("runtime-files-skipped", snapshot.files_skipped, "-");
+        setText("runtime-files-failed", snapshot.files_failed, "-");
+        setText("runtime-bytes-saved", savedBytesLabel(snapshot.bytes_saved), "-");
+        var progress = document.getElementById("runtime-progress-section");
+        if (progress) {
+          progress.innerHTML = progressMarkup(snapshot);
+        }
+      }
+
+      function fetchStatus() {
+        fetch("/api/status", { cache: "no-store" })
+          .then(function (response) {
+            if (!response.ok) {
+              throw new Error("status request failed");
+            }
+            return response.json();
+          })
+          .then(updateFromSnapshot)
+          .catch(function () {
+            return null;
+          });
+      }
+
+      fetchStatus();
+      window.setInterval(fetchStatus, 3000);
+    })();
+  </script>
 """ % (
             self._runtime_status_html(),
             "".join(library_sections),
@@ -1598,21 +1729,21 @@ class ChonkService:
         current_file = snapshot["current_file"] or ("Waiting for first file" if snapshot["status"] == "Running" else idle_placeholder)
         return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\">
   <tbody>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Started At</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current File</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Candidates Found</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Evaluated</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Processed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Skipped</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Failed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td id=\"runtime-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td id=\"runtime-library\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td id=\"runtime-trigger\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td id=\"runtime-queue-depth\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td id=\"runtime-run-id\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Started At</th><td id=\"runtime-started-at\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current File</th><td id=\"runtime-current-file\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Candidates Found</th><td id=\"runtime-candidates-found\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Evaluated</th><td id=\"runtime-files-evaluated\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Processed</th><td id=\"runtime-files-processed\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Skipped</th><td id=\"runtime-files-skipped\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Failed</th><td id=\"runtime-files-failed\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td id=\"runtime-bytes-saved\" style=\"padding: 0.35rem;\">%s</td></tr>
   </tbody>
-</table>%s""" % (
+</table><div id=\"runtime-progress-section\">%s</div>""" % (
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
@@ -2545,6 +2676,7 @@ class ChonkService:
                     self.settings_page_html,
                     self.activity_page_html,
                     self.system_page_html,
+                    self.current_job_status,
                     self.update_editable_settings,
                     self.settings_saved_message,
                     notifications.send_test_notification,
@@ -2932,6 +3064,7 @@ def _run_simple_http_server(
     settings_html_fn: Callable[[str], str],
     activity_html_fn: Callable[[], str],
     system_html_fn: Callable[[], str],
+    status_snapshot_fn: Callable[[], Dict[str, str]],
     update_settings_fn: Callable[[Dict[str, str]], None],
     settings_saved_message_fn: Callable[[Dict[str, str]], str],
     test_notification_fn: Callable[[Optional[str]], Dict[str, object]],
@@ -3011,6 +3144,15 @@ def _run_simple_http_server(
                 payload = system_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if request_path == "/api/status":
+                payload = json.dumps(status_snapshot_fn()).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
