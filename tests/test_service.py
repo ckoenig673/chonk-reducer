@@ -99,13 +99,32 @@ def _call_post(service, path, data=None):
                 return 200, service.settings_page_html(service.toggle_library(data))
             for route in service.app.routes:
                 methods = getattr(route, "methods", set())
-                if getattr(route, "path", None) == path and "POST" in methods:
+                route_path = getattr(route, "path", None)
+                if route_path == path and "POST" in methods:
                     result = route.endpoint()
                     if hasattr(result, "status_code") and hasattr(result, "body"):
                         return int(result.status_code), json.loads(result.body.decode("utf-8"))
                     return (202 if result["status"] == "started" else 409), result
+                if route_path == "/libraries/{library_id}/run" and path.startswith("/libraries/") and path.endswith("/run") and "POST" in methods:
+                    library_id = int(path.split("/")[2])
+                    result = route.endpoint(library_id)
+                    if hasattr(result, "status_code") and hasattr(result, "body"):
+                        return int(result.status_code), json.loads(result.body.decode("utf-8"))
+                    return (202 if result["status"] == "started" else 409), result
 
-    handler = service.app.routes["POST %s" % path]
+    if not isinstance(service.app.routes, dict):
+        raise TypeError("POST helper fallback expects dict routes")
+    handler = service.app.routes.get("POST %s" % path)
+    if handler is None and path.startswith("/libraries/") and path.endswith("/run"):
+        handler = service.app.routes.get("POST /libraries/{library_id}/run")
+        if handler is not None:
+            library_id = int(path.split("/")[2])
+            result = handler(library_id)
+            if hasattr(result, "status_code") and hasattr(result, "body"):
+                return int(result.status_code), json.loads(result.body.decode("utf-8"))
+            return (202 if result["status"] == "started" else 409), result
+    if handler is None:
+        raise KeyError("No POST route for %s" % path)
     if data is None:
         result = handler()
         return (202 if result["status"] == "started" else 409), result
@@ -315,8 +334,8 @@ def test_scheduler_registers_jobs_from_env(monkeypatch):
     service.register_jobs()
 
     jobs = {job.id for job in service.scheduler.get_jobs()}
-    assert "movies-schedule" in jobs
-    assert "tv-schedule" in jobs
+    assert "library-1-schedule" in jobs
+    assert "library-2-schedule" in jobs
 
 
 def test_blank_schedule_disables_job_registration():
@@ -615,7 +634,7 @@ def test_post_run_movies_starts_manual_run(monkeypatch):
     status_code, payload = _call_post(service, "/run/movies")
 
     assert status_code == 202
-    assert payload == {"status": "started", "library": "movies"}
+    assert payload == {"status": "started", "library": "movies", "library_id": 1}
     assert done.wait(timeout=1)
 
 
@@ -634,8 +653,42 @@ def test_post_run_tv_starts_manual_run(monkeypatch):
     status_code, payload = _call_post(service, "/run/tv")
 
     assert status_code == 202
-    assert payload == {"status": "started", "library": "tv"}
+    assert payload == {"status": "started", "library": "tv", "library_id": 2}
     assert done.wait(timeout=1)
+
+
+def test_post_run_library_id_starts_manual_run(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    done = threading.Event()
+
+    def fake_run_once(library, trigger):
+        assert library == "movies"
+        assert trigger == "manual"
+        done.set()
+
+    monkeypatch.setattr(service, "_run_library_once", fake_run_once)
+    status_code, payload = _call_post(service, "/libraries/1/run")
+
+    assert status_code == 202
+    assert payload == {"status": "started", "library": "Movies", "library_id": 1}
+    assert done.wait(timeout=1)
+
+
+def test_disabled_library_not_scheduled_or_manually_runnable(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.toggle_library({"library_id": "2", "enabled": "0"})
+
+    service.register_jobs()
+
+    jobs = {job.id for job in service.scheduler.get_jobs()}
+    assert "library-2-schedule" not in jobs
+    payload, status_code = service.manual_run_payload_for_id(2)
+    assert status_code == 404
+    assert payload["status"] == "not_found"
 
 
 def test_post_run_movies_rejects_overlap(monkeypatch):
@@ -655,9 +708,9 @@ def test_post_run_movies_rejects_overlap(monkeypatch):
     gate.set()
 
     assert first_status == 202
-    assert first_payload == {"status": "started", "library": "movies"}
+    assert first_payload == {"status": "started", "library": "movies", "library_id": 1}
     assert second_status == 409
-    assert second_payload == {"status": "busy", "library": "movies"}
+    assert second_payload == {"status": "busy", "library": "movies", "library_id": 1}
 
 
 def test_prevents_overlapping_runs(monkeypatch):
@@ -781,8 +834,8 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
 
         def __init__(self):
             self._jobs = {
-                "movies-schedule": FakeJob("movies-schedule", "2026-01-08 02:00:00+00:00"),
-                "tv-schedule": FakeJob("tv-schedule", "2026-01-08 04:00:00+00:00"),
+                "library-1-schedule": FakeJob("library-1-schedule", "2026-01-08 02:00:00+00:00"),
+                "library-2-schedule": FakeJob("library-2-schedule", "2026-01-08 04:00:00+00:00"),
             }
 
         def get_job(self, job_id):
@@ -802,14 +855,14 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
     assert "Version</th>" in body
     assert "Service Mode</th><td" in body and "Enabled" in body
     assert "Scheduler Status</th><td" in body and "Running" in body
-    assert "<code>0 2 * * *</code>" in body
-    assert "<code>0 4 * * *</code>" in body
+    assert "Movies Schedule" in body and "<code>0 2 * * *</code>" in body
+    assert "TV Schedule" in body and "<code>0 4 * * *</code>" in body
     assert "2026-01-08 02:00:00+00:00" in body
     assert "2026-01-08 04:00:00+00:00" in body
     assert str(db_path) in body
     assert "/work" in body
-    assert "/data/movies" in body
-    assert "/data/tv" in body
+    assert "Movies: /data/movies" in body
+    assert "TV: /data/tv" in body
     assert "Settings Source Information" in body
     assert "environment/compose values" in body
 
@@ -842,8 +895,9 @@ def test_system_page_shows_placeholders_for_missing_schedule_data(monkeypatch, t
     assert "Service Port</th><td" in body and "9090" in body
     assert "Scheduler Status</th><td" in body and "Stopped" in body
     assert "<code>Not set</code>" in body
-    assert "Next Movie Run</th><td" in body and "Not scheduled" in body
-    assert "Next TV Run</th><td" in body and "Not scheduled" in body
+    assert "Movies Schedule" in body
+    assert "TV Schedule" in body
+    assert "Not scheduled" in body
     assert "Work / Log Path</th><td" in body and "Not set" in body
 
 
@@ -1119,8 +1173,8 @@ def test_schedule_registration_records_activity_entries(tmp_path, monkeypatch):
 
     rows = _read_activity_rows(db_path)
     assert [row["event_type"] for row in rows].count("schedule_registered") == 2
-    assert any(row["library"] == "movies" for row in rows)
-    assert any(row["library"] == "tv" for row in rows)
+    assert any(row["library"] == "Movies" for row in rows)
+    assert any(row["library"] == "TV" for row in rows)
 
 
 def test_manual_run_records_requested_and_busy_activity(tmp_path, monkeypatch):
@@ -1136,7 +1190,7 @@ def test_manual_run_records_requested_and_busy_activity(tmp_path, monkeypatch):
         lock.release()
 
     assert status_code == 409
-    assert payload == {"status": "busy", "library": "movies"}
+    assert payload == {"status": "busy", "library": "movies", "library_id": 1}
     event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
     assert "manual_run_requested" in event_types
     assert "run_rejected_busy" in event_types
