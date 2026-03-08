@@ -7,6 +7,7 @@ import socket
 import sqlite3
 from pathlib import Path
 from typing import Dict, Optional
+import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
@@ -15,6 +16,9 @@ from . import secrets
 LOGGER = logging.getLogger("chonk_reducer.notifications")
 
 _DISCORD_WEBHOOK_HOSTS = {"discord.com", "discordapp.com"}
+_NOTIFICATION_TIMEOUT_SECONDS = 10
+_NOTIFICATIONS_USER_AGENT = "ChonkReducer/1.x (+https://github.com/chonk-reducer/chonk-reducer)"
+_WEBHOOK_PROXY_ENV_VAR = "CHONK_WEBHOOK_USE_PROXY"
 
 
 def _settings_db_path(explicit_path: Optional[str] = None) -> Path:
@@ -97,15 +101,63 @@ def _is_enabled(value: str) -> bool:
 
 
 def _post_json(url: str, payload: Dict[str, object]) -> None:
+    raw_url = str(url).strip()
+    parsed = urlsplit(raw_url)
+    host = str(parsed.hostname or "")
+    use_proxy = _is_enabled(os.getenv(_WEBHOOK_PROXY_ENV_VAR, "0"))
+
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        url=str(url).strip(),
+        url=raw_url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": _NOTIFICATIONS_USER_AGENT},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10):
-        return None
+
+    opener = (
+        urllib.request.build_opener()
+        if use_proxy
+        else urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    )
+    try:
+        with opener.open(req, timeout=_NOTIFICATION_TIMEOUT_SECONDS):
+            return None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            LOGGER.warning(
+                "Webhook POST rejected with HTTP 403 (host=%s, proxy=%s): %s",
+                host,
+                "enabled" if use_proxy else "disabled",
+                exc,
+            )
+        else:
+            LOGGER.warning(
+                "Webhook POST failed with HTTP %s (host=%s, proxy=%s): %s",
+                exc.code,
+                host,
+                "enabled" if use_proxy else "disabled",
+                exc,
+            )
+        raise
+    except urllib.error.URLError as exc:
+        reason_text = str(exc.reason)
+        lower_reason = reason_text.lower()
+        is_proxy_error = "proxy" in lower_reason or "tunnel connection failed" in lower_reason
+        if is_proxy_error:
+            LOGGER.warning(
+                "Webhook POST failed due to proxy/environment issue (host=%s, proxy=%s): %s",
+                host,
+                "enabled" if use_proxy else "disabled",
+                reason_text,
+            )
+        else:
+            LOGGER.warning(
+                "Webhook POST failed due to network failure (host=%s, proxy=%s): %s",
+                host,
+                "enabled" if use_proxy else "disabled",
+                reason_text,
+            )
+        raise
 
 
 def _format_space_saved(saved_bytes: int) -> str:
