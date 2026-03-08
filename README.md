@@ -301,9 +301,10 @@ open http://localhost:8080/dashboard
 
 The dashboard preserves existing operator controls and visibility:
 
-- One manual run control per enabled library (`POST /libraries/{library_id}/run`)
+- Library status cards stacked by enabled library
+- Each card shows library name, path, last run, next run (or `Manual Only` when no schedule), and recent savings from the latest SQLite `runs` entry
+- One **Run Now** control per enabled library (`POST /libraries/{library_id}/run`)
 - Legacy compatibility run routes remain available for default Movies/TV libraries
-- Last run status is shown per enabled library
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
 
