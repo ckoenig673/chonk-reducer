@@ -334,14 +334,14 @@ open http://localhost:8080/dashboard
 The dashboard preserves existing operator controls and visibility:
 
 - Library status cards stacked by enabled library
-- Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running now` with trigger), last run, next run (or `Manual Only` when no schedule), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
+- Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (scheduled timestamp when available, `Manual Only` when no schedule, or `Unknown` when unavailable), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
 - One **Run Now** control per enabled library (`POST /libraries/{library_id}/run`)
 - Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
 - Single-worker in-memory queue processes library jobs in FIFO order
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
-- Current runtime status block (idle/queued/running, current library/trigger, queue depth, run id, started timestamp)
+- Current runtime status block (idle/queued/running, current library, trigger, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters: candidates/evaluated/processed/success/skipped/failed/bytes saved so far)
 
 Runs page:
 

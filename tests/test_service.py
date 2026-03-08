@@ -829,6 +829,8 @@ def test_dashboard_and_system_show_runtime_status():
     assert "Status</th><td" in dashboard_body
     assert "Idle" in dashboard_body
     assert "Queue Depth" in dashboard_body
+    assert "Current File" in dashboard_body
+    assert "Candidates Found" in dashboard_body
 
     assert system_code == 200
     assert "Current Job Status" in system_body
@@ -995,7 +997,7 @@ def test_dashboard_library_card_displays_runtime_statuses(monkeypatch):
         service._job_queue = service_module.deque()
 
     _, running_body, _ = _call_get(service, "/dashboard")
-    assert "Status:</strong> Running now (manual trigger)" in running_body
+    assert "Status:</strong> Running" in running_body
 
 def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     service = ChonkService(
@@ -1008,6 +1010,76 @@ def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     assert body.count("Next Run:</strong> Manual Only") == 2
     assert "Current Job Status" in body
     assert "Status</th><td" in body and "Idle" in body
+
+
+def test_dashboard_library_card_shows_unknown_when_next_run_missing(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    class _NoRunJob:
+        id = "library-1-schedule"
+        next_run_time = None
+
+    monkeypatch.setattr(service.scheduler, "get_job", lambda _job_id: _NoRunJob())
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Next Run:</strong> Unknown" in body
+
+
+def test_dashboard_library_card_shows_scheduler_next_run_time(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    class _NextRunJob:
+        id = "library-1-schedule"
+        next_run_time = "2026-01-08 01:00:00 UTC"
+
+    monkeypatch.setattr(service.scheduler, "get_job", lambda _job_id: _NextRunJob())
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Next Run:</strong> 2026-01-08 01:00:00 UTC" in body
+
+
+def test_dashboard_runtime_status_shows_current_file_and_live_snapshot():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    with service._job_condition:
+        service._current_job = service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="manual")
+        service._current_job_started_at = "2026-01-05T00:00:00Z"
+        service._current_job_run_id = "run-123"
+        service._current_run_snapshot = {
+            "current_file": "/movies/Example.mkv",
+            "candidates_found": "10",
+            "evaluated_count": "6",
+            "processed_count": "4",
+            "success_count": "3",
+            "skipped_count": "1",
+            "failed_count": "0",
+            "bytes_saved": str(5 * 1024 * 1024),
+        }
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Current Library</th><td" in body and "Movies" in body
+    assert "Current File</th><td" in body and "/movies/Example.mkv" in body
+    assert "Candidates Found</th><td" in body and ">10<" in body
+    assert "Evaluated</th><td" in body and ">6<" in body
+    assert "Processed</th><td" in body and ">4<" in body
+    assert "Success</th><td" in body and ">3<" in body
+    assert "Skipped</th><td" in body and ">1<" in body
+    assert "Failed</th><td" in body and ">0<" in body
+    assert "Bytes Saved So Far</th><td" in body and "5.0 MB" in body
 
 
 def test_dashboard_route_renders_in_shell():
