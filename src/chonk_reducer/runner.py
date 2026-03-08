@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
 import time
 import uuid
@@ -70,6 +71,28 @@ def _validate_config(cfg, logger: Logger) -> bool:
         logger.log("===================================")
         return False
     return True
+
+
+def _estimate_size_bytes(before_bytes: int, cfg, probe: dict | None) -> int:
+    """Estimate encoded size using existing encode settings (heuristic)."""
+    if before_bytes <= 0:
+        return 0
+
+    # Lower quality values typically preserve more detail (larger output).
+    quality = int(getattr(cfg, "qsv_quality", 21) or 21)
+    preset = int(getattr(cfg, "qsv_preset", 7) or 7)
+    ratio = 0.62 + ((21 - quality) * 0.01) + ((preset - 7) * 0.015)
+
+    bit_rate = (probe or {}).get("bit_rate")
+    try:
+        bit_rate_i = int(bit_rate) if bit_rate is not None else 0
+    except Exception:
+        bit_rate_i = 0
+    if bit_rate_i >= 8_000_000:
+        ratio -= 0.05
+
+    ratio = max(0.25, min(0.95, ratio))
+    return max(1, int(before_bytes * ratio))
 
 
 
@@ -251,6 +274,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         skipped_recent = len(recent_skipped)
         logger.log(f"Found {len(cands)} candidates")
         _progress(candidates_found=len(cands), current_file="", files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=0, files_failed=failed, bytes_saved=saved_bytes_run)
+        _progress(mode="Preview" if cfg.preview else "Live")
 
         # Log top candidates by size (quick sanity)
         if cfg.top_candidates and cands:
@@ -372,6 +396,56 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     codec_from=(before_probe.get('codec') if before_probe else None),
                     detail=str(reason),
                 )
+                if cfg.preview:
+                    decision = "Skip (unsupported codec)" if cat == "codec" else "Skip (resolution rules)"
+                    preview_result = {
+                        "file": str(src),
+                        "original_size": int(before_bytes or 0),
+                        "estimated_size": int(before_bytes or 0),
+                        "estimated_savings_pct": 0.0,
+                        "decision": decision,
+                    }
+                    _progress(preview_result=preview_result, preview_result_json=json.dumps(preview_result), files_evaluated=evaluated)
+                    done += 1
+                continue
+
+            if cfg.preview:
+                estimated_bytes = _estimate_size_bytes(int(before_bytes or 0), cfg, before_probe)
+                estimated_savings_pct = 0.0
+                if before_bytes > 0 and estimated_bytes > 0:
+                    estimated_savings_pct = ((before_bytes - estimated_bytes) / float(before_bytes)) * 100.0
+                if cfg.min_savings_percent and estimated_savings_pct < float(cfg.min_savings_percent):
+                    skipped_min_savings += 1
+                    decision = "Skip (below savings threshold)"
+                elif getattr(cfg, "max_savings_percent", 0) and estimated_savings_pct > float(cfg.max_savings_percent):
+                    skipped_max_savings += 1
+                    decision = "Skip (above max savings threshold)"
+                else:
+                    decision = "Encode"
+
+                preview_result = {
+                    "file": str(src),
+                    "original_size": int(before_bytes or 0),
+                    "estimated_size": int(estimated_bytes or 0),
+                    "estimated_savings_pct": round(float(estimated_savings_pct), 1),
+                    "decision": decision,
+                }
+                _progress(
+                    preview_result=preview_result,
+                    preview_result_json=json.dumps(preview_result),
+                    files_evaluated=evaluated,
+                )
+                logger.log(
+                    "PREVIEW: %s before=%.2fGB estimated=%.2fGB savings=%.1f%% decision=%s"
+                    % (
+                        src,
+                        (before_bytes / 1024 ** 3) if before_bytes else 0.0,
+                        (estimated_bytes / 1024 ** 3) if estimated_bytes else 0.0,
+                        estimated_savings_pct,
+                        decision,
+                    )
+                )
+                done += 1
                 continue
 
             attempt_errors: list[str] = []

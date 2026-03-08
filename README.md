@@ -338,18 +338,22 @@ The dashboard preserves existing operator controls and visibility:
 
 - Library status cards stacked by enabled library
 - Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (scheduled timestamp when available, `Manual Only` when no schedule, or `Unknown` when unavailable), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
-- One **Run Now** control per enabled library (dashboard form posts to `POST /dashboard/libraries/{library_id}/run`, which enqueues and immediately redirects to `/dashboard`; JSON API remains available at `POST /libraries/{library_id}/run`)
+- **Run Now** and **Preview Run** controls per enabled library (dashboard forms post to `POST /dashboard/libraries/{library_id}/run` and `POST /dashboard/libraries/{library_id}/preview`, queue work, then redirect to `/dashboard`; JSON API remains available at `POST /libraries/{library_id}/run`)
 - Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
 - Single-worker in-memory queue prefers higher-priority libraries first when multiple jobs are queued (higher integer wins), while preserving FIFO behavior for equal priorities
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
-- Current runtime status block (idle/queued/running, current library, trigger, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
+- Current runtime status block (idle/queued/running, current library, trigger, mode, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
 - Active runs now render a lightweight progress panel with an HTML progress bar. During active ffmpeg encode the panel now also shows encoding percent complete (`out_time_ms / duration_ms`), live speed (`speed`), and ETA, while still showing file counters and current file/library context
 - Dashboard runtime status now auto-refreshes every 3 seconds using `GET /api/status` so Current Job Status + Run Progress update live without full page refresh
 - Active runs show a **Stop Run** button that calls `POST /api/run/cancel`; runtime status transitions through `Cancelling` and then `Cancelled` once the worker stops
 - Library cards show inline running progress (`Progress: processed / candidates files`) for the currently active library
 - Runtime progress snapshot clears after run completion so idle dashboards return to baseline
+
+- Preview runs (Dry Run mode): scan and candidate selection are unchanged; ffprobe still runs; estimated output size and estimated savings are calculated from current QSV quality/preset settings; decisions are reported as `Encode`, `Skip (below savings threshold)`, `Skip (unsupported codec)`, or `Skip (resolution rules)`
+- Preview mode never writes output files, never renames media, and never deletes files
+- Dashboard shows a **Preview Results** table (first 25 files) with file path, original size, estimated size, estimated savings %, and decision
 
 Runs page:
 
@@ -615,6 +619,7 @@ QSV_PRESET | 7 | speed preset |
 PROBE_TIMEOUT_SECS | 60 | ffprobe timeout |
 RETRY_COUNT | 1 | bootstrap default for DB-backed retry count |
 RETRY_BACKOFF_SECONDS | 5 | bootstrap default for DB-backed retry delay (seconds) |
+PREVIEW | false | dry run preview mode: analyze/probe/estimate only, never transcode |
 
 Additional settings control validation, logging, stats, and retention.
 
