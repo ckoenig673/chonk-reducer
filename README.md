@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.30.3
+**Current Version:** v1.30.5
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -334,7 +334,7 @@ open http://localhost:8080/dashboard
 The dashboard preserves existing operator controls and visibility:
 
 - Library status cards stacked by enabled library
-- Each card shows library name, path, last run, next run (or `Manual Only` when no schedule), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
+- Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running now` with trigger), last run, next run (or `Manual Only` when no schedule), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
 - One **Run Now** control per enabled library (`POST /libraries/{library_id}/run`)
 - Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
 - Single-worker in-memory queue processes library jobs in FIFO order
