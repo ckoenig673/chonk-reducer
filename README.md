@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.30.5
+**Current Version:** v1.32.0
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -337,7 +337,7 @@ The dashboard preserves existing operator controls and visibility:
 - Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (scheduled timestamp when available, `Manual Only` when no schedule, or `Unknown` when unavailable), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
 - One **Run Now** control per enabled library (`POST /libraries/{library_id}/run`)
 - Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
-- Single-worker in-memory queue processes library jobs in FIFO order
+- Single-worker in-memory queue prefers higher-priority libraries first when multiple jobs are queued (higher integer wins), while preserving FIFO behavior for equal priorities
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
@@ -393,6 +393,7 @@ Libraries are now persisted in a `libraries` table and support simple operator C
 - edit library
 - delete library
 - enable/disable library
+- per-library `priority` integer (higher runs first when multiple libraries are queued)
 
 Library schedule editing supports two operator modes:
 
@@ -405,7 +406,7 @@ Bootstrap model for the new config foundation:
 
 1. Environment/compose values remain bootstrap defaults.
 2. Missing service settings keys are initialized from env/default values.
-3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`) and schedule bootstrap from legacy global schedule keys when present.
+3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`, `priority=100`) and schedule bootstrap from legacy global schedule keys when present.
 
 Runtime note: service scheduling and manual execution are now driven by enabled library rows in SQLite (`libraries`), not a fixed Movies/TV runtime model. Enabled libraries with blank schedules remain manual-run only until a schedule is configured.
 
