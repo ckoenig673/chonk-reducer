@@ -314,19 +314,34 @@ class ChonkService:
         library_sections = []
         for library in libraries:
             status = self._latest_run_status(library.name)
+            last_run_label = "Never"
+            processed_label = "0"
+            savings_label = "0 B"
+            if status is not None:
+                last_run_label = status.get("ts_end") or status.get("ts_start") or "Unknown"
+                processed_label = str(status.get("processed_count") or 0)
+                savings_label = _format_saved_bytes(status.get("saved_bytes"))
             library_sections.append(
                 """
-  <h2 style="margin-bottom: 0.5rem;">%s</h2>
-  <form method="post" action="/libraries/%d/run" style="margin-bottom: 0.5rem;">
-    <button type="submit">Run %s</button>
-  </form>
-  %s
+  <section style="border: 1px solid #ddd; padding: 0.75rem; margin-bottom: 0.75rem; background: #fff;">
+    <h2 style="margin-top: 0; margin-bottom: 0.5rem;">%s</h2>
+    <div><strong>Path:</strong> %s</div>
+    <div><strong>Last Run:</strong> %s</div>
+    <div><strong>Next Run:</strong> %s</div>
+    <div><strong>Recent Savings:</strong> %s across %s files</div>
+    <form method="post" action="/libraries/%d/run" style="margin-top: 0.75rem;">
+      <button type="submit">Run Now</button>
+    </form>
+  </section>
 """
                 % (
                     _escape_html(library.name),
+                    _escape_html(library.path),
+                    _escape_html(last_run_label),
+                    _escape_html(self._next_run_label(library, manual_label="Manual Only")),
+                    _escape_html(savings_label),
+                    _escape_html(processed_label),
                     library.id,
-                    _escape_html(library.name),
-                    self._status_block_html(status),
                 )
             )
 
@@ -508,10 +523,10 @@ class ChonkService:
             return "Stopped"
         return "Unknown"
 
-    def _next_run_label(self, library: RuntimeLibrary) -> str:
+    def _next_run_label(self, library: RuntimeLibrary, manual_label: str = "Not scheduled") -> str:
         schedule = library.schedule.strip()
         if not schedule:
-            return "Not scheduled"
+            return manual_label
 
         job = None
         get_job = getattr(self.scheduler, "get_job", None)
@@ -1180,6 +1195,7 @@ class ChonkService:
             row = conn.execute(
                 """
                 SELECT library, ts_end, ts_start, success_count, failed_count, skipped_count, duration_seconds
+                       , processed_count, saved_bytes
                 FROM runs
                 WHERE lower(COALESCE(library, '')) = lower(?)
                 ORDER BY ts_end DESC
@@ -1205,6 +1221,8 @@ class ChonkService:
             "ts_start": str(row["ts_start"] or ""),
             "status": status,
             "duration_seconds": _format_duration_seconds(row["duration_seconds"]),
+            "processed_count": int(row["processed_count"] or 0),
+            "saved_bytes": int(row["saved_bytes"] or 0),
         }
 
     def _status_block_html(self, status: Optional[Dict[str, str]]) -> str:

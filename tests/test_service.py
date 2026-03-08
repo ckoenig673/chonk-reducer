@@ -361,8 +361,8 @@ def test_home_page_route_returns_minimal_operator_page():
 
     assert status_code == 200
     assert "Chonk Reducer" in body
-    assert "Run Movies" in body
-    assert "Run TV" in body
+    assert "Run Now" in body
+    assert "Path:" in body
     assert "Lifetime Savings" in body
     assert "Recent Runs" in body
 
@@ -377,7 +377,7 @@ def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch
     status_code, body, _ = _call_get(service, "/")
 
     assert status_code == 200
-    assert body.count("No runs recorded yet") == 2
+    assert "Last Run:</strong> Never" in body
     assert "No reclaimed storage recorded yet" in body
     assert "No recent runs recorded yet" in body
 
@@ -488,8 +488,7 @@ def test_home_page_shows_latest_movies_run_information(tmp_path, monkeypatch):
     assert status_code == 200
     assert "Movies" in body
     assert "2026-01-01T10:00:00" in body
-    assert "Status:</strong> success" in body
-    assert "Duration:</strong> 12.4s" in body
+    assert "Recent Savings:</strong> 0 B across 0 files" in body
 
 
 def test_home_page_shows_latest_tv_run_information(tmp_path, monkeypatch):
@@ -513,8 +512,7 @@ def test_home_page_shows_latest_tv_run_information(tmp_path, monkeypatch):
     assert status_code == 200
     assert "TV" in body
     assert "2026-01-02T11:00:00" in body
-    assert "Status:</strong> failed" in body
-    assert "Duration:</strong> 2.0s" in body
+    assert "Recent Savings:</strong> 0 B across 0 files" in body
 
 
 def test_home_page_shows_recent_runs_table_with_latest_rows(tmp_path, monkeypatch):
@@ -783,6 +781,43 @@ def test_cli_no_service_mode_defaults_to_one_shot(monkeypatch):
     rc = cli.main([])
 
     assert rc == 7
+
+def test_dashboard_library_cards_render_enabled_libraries_with_recent_run_data(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-04T08:00:00",
+        success_count=3,
+        failed_count=1,
+        skipped_count=2,
+        saved_bytes=3 * 1024,
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Movies" in body
+    assert "TV" in body
+    assert "Path:</strong> /movies" in body
+    assert "Path:</strong> /tv_shows" in body
+    assert "Recent Savings:</strong> 3.0 KB across 0 files" in body
+
+
+def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert body.count("Next Run:</strong> Manual Only") == 2
+
 
 def test_dashboard_route_renders_in_shell():
     service = ChonkService(
