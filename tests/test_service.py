@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
 import threading
 import time
+import urllib.request
 
 import pytest
 
@@ -777,6 +779,115 @@ def test_favicon_route_returns_no_content_promptly():
     assert payload is None
     assert elapsed < 1.0
 
+
+
+
+def test_simple_http_server_handles_another_request_while_dashboard_request_is_blocked(monkeypatch):
+    host = "127.0.0.1"
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, 0))
+        port = int(probe.getsockname()[1])
+
+    dashboard_entered = threading.Event()
+    release_dashboard = threading.Event()
+
+    def blocking_home_html():
+        dashboard_entered.set()
+        release_dashboard.wait(timeout=2)
+        return "<html>dashboard</html>"
+
+    server_thread = threading.Thread(
+        target=service_module._run_simple_http_server,
+        args=(
+            host,
+            port,
+            lambda: {"status": "ok"},
+            blocking_home_html,
+            lambda: "<html>runs</html>",
+            lambda: "<html>history</html>",
+            lambda run_id: ("<html>%s</html>" % run_id, 200),
+            lambda message="": "<html>settings</html>",
+            lambda: "<html>activity</html>",
+            lambda: "<html>system</html>",
+            lambda updates: None,
+            lambda updates: "saved",
+            lambda payload: {"status": "ok", "message": "sent"},
+            lambda values: "created",
+            lambda values: "updated",
+            lambda values: "deleted",
+            lambda values: "toggled",
+            lambda library: ({"status": "queued", "library": library, "library_id": 1}, 202),
+        ),
+        daemon=True,
+    )
+    server_thread.start()
+
+    # Wait for the server socket to accept connections.
+    for _ in range(50):
+        try:
+            urllib.request.urlopen("http://%s:%d/health" % (host, port), timeout=0.1)
+            break
+        except Exception:
+            time.sleep(0.02)
+
+    def request_dashboard():
+        urllib.request.urlopen("http://%s:%d/dashboard" % (host, port), timeout=2).read()
+
+    dashboard_thread = threading.Thread(target=request_dashboard, daemon=True)
+    dashboard_thread.start()
+
+    assert dashboard_entered.wait(timeout=1)
+
+    started = time.monotonic()
+    with urllib.request.urlopen("http://%s:%d/favicon.ico" % (host, port), timeout=1) as response:
+        body = response.read()
+        status_code = response.getcode()
+    elapsed = time.monotonic() - started
+
+    release_dashboard.set()
+    dashboard_thread.join(timeout=1)
+
+    assert status_code == 204
+    assert body == b""
+    assert elapsed < 0.5
+
+
+def test_simple_http_server_uses_threading_http_server(monkeypatch):
+    captured = {}
+
+    class FakeThreadingHTTPServer:
+        def __init__(self, server_address, handler):
+            captured["server_address"] = server_address
+            captured["handler"] = handler
+
+        def serve_forever(self):
+            captured["served"] = True
+
+    monkeypatch.setattr(service_module, "ThreadingHTTPServer", FakeThreadingHTTPServer)
+
+    service_module._run_simple_http_server(
+        "127.0.0.1",
+        18080,
+        lambda: {"status": "ok"},
+        lambda: "<html>home</html>",
+        lambda: "<html>runs</html>",
+        lambda: "<html>history</html>",
+        lambda run_id: ("<html>%s</html>" % run_id, 200),
+        lambda message="": "<html>settings</html>",
+        lambda: "<html>activity</html>",
+        lambda: "<html>system</html>",
+        lambda updates: None,
+        lambda updates: "saved",
+        lambda payload: {"status": "ok", "message": "sent"},
+        lambda values: "created",
+        lambda values: "updated",
+        lambda values: "deleted",
+        lambda values: "toggled",
+        lambda library: ({"status": "queued", "library": library, "library_id": 1}, 202),
+    )
+
+    assert captured["server_address"] == ("127.0.0.1", 18080)
+    assert captured.get("served") is True
 
 def test_post_run_library_id_starts_manual_run(monkeypatch):
     service = ChonkService(
