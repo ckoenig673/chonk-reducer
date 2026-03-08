@@ -86,6 +86,7 @@ EDITABLE_SETTINGS = {
 
 CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications"}
 SECRET_SETTINGS = {"discord_webhook_url", "generic_webhook_url"}
+SECRET_PLACEHOLDER_VALUES = {"set (hidden)", "configured (hidden)", "********", "******"}
 
 RESTART_REQUIRED_SETTINGS = set()
 
@@ -503,8 +504,13 @@ class ChonkService:
             if str(normalized.get(clear_key, "")).strip() == "1":
                 normalized[key] = ""
                 continue
-            if key in normalized and not str(normalized.get(key, "")).strip():
+            if key not in normalized:
+                continue
+            raw_value = _clean_secret_input(normalized.get(key, ""))
+            if not raw_value or raw_value.lower() in SECRET_PLACEHOLDER_VALUES:
                 normalized.pop(key, None)
+                continue
+            normalized[key] = raw_value
         return normalized
 
     def activity_page_html(self) -> str:
@@ -780,7 +786,7 @@ class ChonkService:
                     continue
                 value = str(updates[key]).strip()
                 if key in SECRET_SETTINGS and value:
-                    value = secrets.encrypt_secret(value)
+                    value = secrets.encrypt_secret(_clean_secret_input(value))
                 conn.execute(
                     """
                     INSERT INTO settings(key, value, updated_at)
@@ -2574,6 +2580,11 @@ def _escape_html(value: str) -> str:
     escaped = escaped.replace(">", "&gt;")
     escaped = escaped.replace('"', "&quot;")
     return escaped
+
+
+def _clean_secret_input(value: object) -> str:
+    cleaned = str(value or "").replace("\r", "").replace("\n", "")
+    return cleaned.strip()
 
 
 def _utc_timestamp() -> str:
