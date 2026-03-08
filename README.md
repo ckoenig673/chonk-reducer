@@ -338,6 +338,13 @@ Libraries are now persisted in a `libraries` table and support simple operator C
 - delete library
 - enable/disable library
 
+Library schedule editing supports two operator modes:
+
+- **Simple schedule builder**: pick weekdays (`Su`, `M`, `T`, `W`, `Th`, `F`, `Sa`) and a time dropdown (15-minute increments), then Chonk generates the cron string for storage.
+- **Advanced raw cron**: edit the raw cron expression directly for complex or custom schedules.
+
+Cron remains the internal scheduler storage format. If a saved cron expression matches the simple weekly pattern (single time + weekday list), the UI opens in simple mode and pre-populates day/time controls. Unsupported or complex cron expressions automatically fall back to advanced mode and keep the raw cron value editable without rewriting.
+
 Bootstrap model for the new config foundation:
 
 1. Environment/compose values remain bootstrap defaults.
