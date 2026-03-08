@@ -11,7 +11,7 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from time import strftime
 from typing import Callable, Deque, Dict, Iterator, List, Optional, Set
@@ -2446,7 +2446,8 @@ class ChonkService:
         with editable_settings_environment(self._editable_settings):
             with library_runtime_environment(library_record):
                 original_stats_path = os.environ.get("STATS_PATH")
-                os.environ["STATS_PATH"] = str(self._settings_db_path)
+                run_stats_path = str(self._settings_db_path)
+                os.environ["STATS_PATH"] = run_stats_path
                 LOGGER.info("Starting %s %s run", trigger, library_record.name)
                 try:
                     try:
@@ -2459,10 +2460,11 @@ class ChonkService:
                     self._notify_run_failure(library_record.name, run_id, str(exc))
                     raise
                 finally:
-                    if original_stats_path is None:
-                        os.environ.pop("STATS_PATH", None)
-                    else:
-                        os.environ["STATS_PATH"] = original_stats_path
+                    if os.environ.get("STATS_PATH") == run_stats_path:
+                        if original_stats_path is None:
+                            os.environ.pop("STATS_PATH", None)
+                        else:
+                            os.environ["STATS_PATH"] = original_stats_path
                 LOGGER.info("Finished %s %s run with exit code %s", trigger, library_record.name, rc)
 
         if rc == 0:
@@ -3131,7 +3133,7 @@ def _run_simple_http_server(
             del format, args
             return
 
-    server = HTTPServer((host, port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
 
 
