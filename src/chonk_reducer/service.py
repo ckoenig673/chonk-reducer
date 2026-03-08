@@ -916,12 +916,13 @@ class ChonkService:
 """.format(schedule_fields=schedule_fields)
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
+        form_token = "".join(ch if ch.isalnum() else "_" for ch in str(form_id))
         mode = str(schedule_state.get("mode", "simple"))
         raw_value = _escape_html(str(schedule_state.get("raw", "")))
         simple_time = _escape_html(str(schedule_state.get("time", "00:00")))
         selected_days = set(schedule_state.get("days", []))
-        simple_radio_id = "schedule-mode-simple-%s" % form_id
-        advanced_radio_id = "schedule-mode-advanced-%s" % form_id
+        simple_radio_id = "schedule-mode-simple-%s" % form_token
+        advanced_radio_id = "schedule-mode-advanced-%s" % form_token
         simple_checked = "checked" if mode == "simple" else ""
         advanced_checked = "checked" if mode == "advanced" else ""
 
@@ -981,23 +982,23 @@ class ChonkService:
 """ % (
             simple_radio_id,
             simple_checked,
-            form_id,
+            form_token,
             advanced_radio_id,
             advanced_checked,
-            form_id,
-            form_id,
+            form_token,
+            form_token,
             simple_display,
             "".join(weekday_options),
             "".join(time_options),
             preview,
-            form_id,
+            form_token,
             advanced_display,
             raw_value,
-            form_id,
+            form_token,
             simple_radio_id,
-            form_id,
-            form_id,
-            form_id,
+            form_token,
+            form_token,
+            form_token,
         )
 
     def register_jobs(self) -> None:
