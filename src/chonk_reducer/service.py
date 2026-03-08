@@ -385,6 +385,13 @@ class ChonkService:
                 return JSONResponse(content=payload, status_code=status_code)
             return payload
 
+        @self.app.post("/libraries/{library_id}/preview")
+        def preview_library(library_id: int):
+            payload, status_code = self.manual_preview_payload_for_id(int(library_id))
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=status_code)
+            return payload
+
         @self.app.post("/dashboard/libraries/{library_id}/run")
         def run_library_from_dashboard(library_id: int):
             payload, _ = self.manual_run_payload_for_id(int(library_id))
@@ -475,7 +482,7 @@ class ChonkService:
     %s
     <form method="post" action="/dashboard/libraries/%d/run" style="margin-top: 0.75rem;">
       <button type="submit">Run Now</button>
-      <button type="submit" formaction="/dashboard/libraries/%d/preview" style="margin-left: 0.45rem;">Preview Run</button>
+      <button type="submit" formaction="/libraries/%d/preview" style="margin-left: 0.45rem;">Preview Run</button>
     </form>
   </section>
 """

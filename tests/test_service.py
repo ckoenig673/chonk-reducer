@@ -134,6 +134,12 @@ def _call_post(service, path, data=None, follow_redirects=True):
                     if hasattr(result, "status_code") and hasattr(result, "body"):
                         return int(result.status_code), json.loads(result.body.decode("utf-8"))
                     return (202 if result.get("status") in ("started", "queued") else 409), result
+                if route_path == "/libraries/{library_id}/preview" and path.startswith("/libraries/") and path.endswith("/preview") and "POST" in methods:
+                    library_id = int(path.split("/")[2])
+                    result = route.endpoint(library_id)
+                    if hasattr(result, "status_code") and hasattr(result, "body"):
+                        return int(result.status_code), json.loads(result.body.decode("utf-8"))
+                    return (202 if result.get("status") in ("started", "queued") else 409), result
                 if route_path == "/dashboard/libraries/{library_id}/run" and path.startswith("/dashboard/libraries/") and path.endswith("/run") and "POST" in methods:
                     library_id = int(path.split("/")[3])
                     result = route.endpoint(library_id)
@@ -152,6 +158,14 @@ def _call_post(service, path, data=None, follow_redirects=True):
     handler = service.app.routes.get("POST %s" % path)
     if handler is None and path.startswith("/libraries/") and path.endswith("/run"):
         handler = service.app.routes.get("POST /libraries/{library_id}/run")
+        if handler is not None:
+            library_id = int(path.split("/")[2])
+            result = handler(library_id)
+            if hasattr(result, "status_code") and hasattr(result, "body"):
+                return int(result.status_code), json.loads(result.body.decode("utf-8"))
+            return (202 if result.get("status") in ("started", "queued") else 409), result
+    if handler is None and path.startswith("/libraries/") and path.endswith("/preview"):
+        handler = service.app.routes.get("POST /libraries/{library_id}/preview")
         if handler is not None:
             library_id = int(path.split("/")[2])
             result = handler(library_id)
@@ -3549,7 +3563,21 @@ def test_dashboard_shows_preview_run_button():
 
     assert status_code == 200
     assert "Preview Run" in body
-    assert "/dashboard/libraries/1/preview" in body
+    assert "formaction=\"/libraries/1/preview\"" in body
+
+
+def test_preview_endpoint_exists_and_returns_json_payload():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    try:
+        status_code, payload = _call_post(service, "/libraries/1/preview")
+    finally:
+        service.stop_background_worker()
+
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert payload["library_id"] == 1
 
 
 def test_manual_preview_payload_queues_preview_trigger(monkeypatch):
@@ -3571,6 +3599,29 @@ def test_manual_preview_payload_queues_preview_trigger(monkeypatch):
     assert status_code == 202
     assert payload["status"] == "queued"
     assert captured["trigger"] == "preview"
+
+
+def test_preview_endpoint_triggers_preview_job(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    captured = {"trigger": "", "library_name": ""}
+
+    def _enqueue(library, trigger):
+        captured["trigger"] = trigger
+        captured["library_name"] = library.name
+        return True
+
+    monkeypatch.setattr(service, "_enqueue_library_job", _enqueue)
+    try:
+        status_code, payload = _call_post(service, "/libraries/1/preview")
+    finally:
+        service.stop_background_worker()
+
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert captured["trigger"] == "preview"
+    assert captured["library_name"].lower() == "movies"
 
 
 def test_runtime_snapshot_includes_preview_mode_and_results():
