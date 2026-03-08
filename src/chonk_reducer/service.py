@@ -330,12 +330,14 @@ class ChonkService:
         libraries = self.enabled_runtime_libraries()
         recent_runs = self._recent_runs(limit=10)
         lifetime_savings = self._lifetime_savings()
+        library_totals = self._library_lifetime_totals()
         library_sections = []
         for library in libraries:
             status = self._latest_run_status(library.name)
             last_run_label = "Never"
             processed_label = "0"
             savings_label = "0 B"
+            totals = library_totals.get(library.name.strip().lower(), {"files_optimized": 0, "total_saved": 0})
             if status is not None:
                 last_run_label = status.get("ts_end") or status.get("ts_start") or "Unknown"
                 processed_label = str(status.get("processed_count") or 0)
@@ -347,6 +349,8 @@ class ChonkService:
     <div><strong>Path:</strong> %s</div>
     <div><strong>Last Run:</strong> %s</div>
     <div><strong>Next Run:</strong> %s</div>
+    <div><strong>Files Optimized:</strong> %s</div>
+    <div><strong>Total Saved:</strong> %s</div>
     <div><strong>Recent Savings:</strong> %s across %s files</div>
     <form method="post" action="/libraries/%d/run" style="margin-top: 0.75rem;">
       <button type="submit">Run Now</button>
@@ -358,6 +362,8 @@ class ChonkService:
                     _escape_html(library.path),
                     _escape_html(last_run_label),
                     _escape_html(self._next_run_label(library, manual_label="Manual Only")),
+                    _escape_html(str(totals["files_optimized"])),
+                    _escape_html(_format_saved_bytes(totals["total_saved"])),
                     _escape_html(savings_label),
                     _escape_html(processed_label),
                     library.id,
@@ -1895,6 +1901,36 @@ class ChonkService:
             "total_saved": int(row["total_saved"] or 0),
             "files_optimized": int(row["files_optimized"] or 0),
         }
+
+    def _library_lifetime_totals(self) -> Dict[str, Dict[str, int]]:
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    lower(trim(COALESCE(library, ''))) AS library_key,
+                    COUNT(*) AS files_optimized,
+                    COALESCE(SUM(COALESCE(saved_bytes, 0)), 0) AS total_saved
+                FROM encodes
+                WHERE lower(COALESCE(status, '')) = 'success'
+                GROUP BY lower(trim(COALESCE(library, '')))
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            conn.close()
+            return {}
+        conn.close()
+
+        totals: Dict[str, Dict[str, int]] = {}
+        for row in rows:
+            key = str(row["library_key"] or "").strip().lower()
+            if not key:
+                continue
+            totals[key] = {
+                "files_optimized": int(row["files_optimized"] or 0),
+                "total_saved": int(row["total_saved"] or 0),
+            }
+        return totals
 
     def _lifetime_savings_html(self, savings: Optional[Dict[str, int]]) -> str:
         if savings is None or savings["files_optimized"] <= 0:

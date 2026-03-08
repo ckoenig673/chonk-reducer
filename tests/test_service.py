@@ -257,6 +257,7 @@ def _seed_encode(
     size_before_bytes=0,
     size_after_bytes=0,
     saved_bytes=0,
+    library="",
     skip_reason=None,
     skip_detail=None,
     fail_stage=None,
@@ -270,6 +271,7 @@ def _seed_encode(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
             run_id TEXT NOT NULL,
+            library TEXT,
             status TEXT NOT NULL,
             path TEXT,
             filename TEXT,
@@ -289,14 +291,15 @@ def _seed_encode(
     conn.execute(
         """
         INSERT INTO encodes(
-            ts, run_id, status, path, codec_from, codec_to,
+            ts, run_id, library, status, path, codec_from, codec_to,
             size_before_bytes, size_after_bytes, saved_bytes,
             skip_reason, skip_detail, fail_stage, error_type, error_msg
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ts,
             run_id,
+            library,
             status,
             path,
             codec_from,
@@ -877,7 +880,86 @@ def test_dashboard_library_cards_render_enabled_libraries_with_recent_run_data(t
     assert "Path:</strong> /movies" in body
     assert "Path:</strong> /tv_shows" in body
     assert "Recent Savings:</strong> 3.0 KB across 0 files" in body
+    assert "Files Optimized:</strong> 0" in body
+    assert "Total Saved:</strong> 0 B" in body
 
+
+
+
+def test_dashboard_library_card_shows_lifetime_totals_from_successful_encodes(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_encode(
+        db_path,
+        run_id="r1",
+        ts="2026-01-04T08:10:00",
+        status="success",
+        path="/movies/a.mkv",
+        saved_bytes=500 * 1024 * 1024,
+        library="movies",
+    )
+    _seed_encode(
+        db_path,
+        run_id="r2",
+        ts="2026-01-04T08:12:00",
+        status="success",
+        path="/movies/b.mkv",
+        saved_bytes=2 * 1024 * 1024 * 1024,
+        library="movies",
+    )
+    _seed_encode(
+        db_path,
+        run_id="r3",
+        ts="2026-01-04T08:13:00",
+        status="failed",
+        path="/movies/c.mkv",
+        saved_bytes=9 * 1024 * 1024 * 1024,
+        library="movies",
+    )
+    _seed_encode(
+        db_path,
+        run_id="r4",
+        ts="2026-01-04T08:14:00",
+        status="success",
+        path="/tv_shows/a.mkv",
+        saved_bytes=4 * 1024 * 1024 * 1024,
+        library="tv",
+    )
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Files Optimized:</strong> 2" in body
+    assert "Total Saved:</strong> 2.5 GB" in body
+    assert "Files Optimized:</strong> 1" in body
+    assert "Total Saved:</strong> 4.0 GB" in body
+
+
+def test_dashboard_library_card_shows_zero_lifetime_totals_when_no_successful_encodes(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_encode(
+        db_path,
+        run_id="r5",
+        ts="2026-01-04T09:00:00",
+        status="failed",
+        path="/movies/d.mkv",
+        saved_bytes=1024,
+        library="movies",
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert body.count("Files Optimized:</strong> 0") == 2
+    assert body.count("Total Saved:</strong> 0 B") == 2
 
 def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     service = ChonkService(
