@@ -86,6 +86,8 @@ Notes:
 - Notifications are sent once per run completion/failure event in service mode.
 - If `CHONK_SECRET_KEY` is changed or lost, existing encrypted webhook values may need to be re-entered.
 - Discord webhook URLs are accepted for both `discord.com` and legacy `discordapp.com` hosts; legacy URLs are normalized to `discord.com` at send time.
+- Webhook requests send `Content-Type: application/json` and a fixed `User-Agent` (`ChonkReducer/1.x`) to keep transport behavior predictable.
+- Webhook delivery ignores ambient proxy environment variables by default; set `CHONK_WEBHOOK_USE_PROXY=1` to opt-in to urllib's proxy behavior.
 
 ---
 

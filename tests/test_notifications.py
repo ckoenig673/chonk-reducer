@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import urllib.error
 
 from chonk_reducer import notifications
 from chonk_reducer import secrets
@@ -330,3 +331,103 @@ def test_run_failure_uses_decrypted_generic_url(monkeypatch):
     notifications.send_run_failure({"library": "Movies", "run_id": "run-1", "error_message": "boom"})
 
     assert sent_urls == ["https://generic.example/decrypted"]
+
+
+def test_post_json_sets_explicit_headers_and_disables_proxies_by_default(monkeypatch):
+    captured = {}
+
+    class DummyResponse(object):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+    class DummyOpener(object):
+        def open(self, req, timeout=None):
+            captured["request"] = req
+            captured["timeout"] = timeout
+            return DummyResponse()
+
+    class ProxyHandlerStub(object):
+        def __init__(self, proxies):
+            captured["proxies"] = proxies
+
+    monkeypatch.delenv("CHONK_WEBHOOK_USE_PROXY", raising=False)
+    monkeypatch.setattr(notifications.urllib.request, "ProxyHandler", ProxyHandlerStub)
+    monkeypatch.setattr(notifications.urllib.request, "build_opener", lambda *handlers: DummyOpener())
+
+    notifications._post_json("https://discord.com/api/webhooks/123/abc", {"content": "ok"})
+
+    assert captured["proxies"] == {}
+    assert captured["timeout"] == notifications._NOTIFICATION_TIMEOUT_SECONDS
+    assert captured["request"].headers["Content-type"] == "application/json"
+    assert captured["request"].headers["User-agent"] == notifications._NOTIFICATIONS_USER_AGENT
+
+
+def test_post_json_enables_env_proxy_when_opted_in(monkeypatch):
+    captured = {"proxy_handler_calls": 0}
+
+    class DummyResponse(object):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+    class DummyOpener(object):
+        def open(self, req, timeout=None):
+            del req, timeout
+            return DummyResponse()
+
+    def fake_proxy_handler(proxies):
+        captured["proxy_handler_calls"] += 1
+        return proxies
+
+    monkeypatch.setenv("CHONK_WEBHOOK_USE_PROXY", "1")
+    monkeypatch.setattr(notifications.urllib.request, "ProxyHandler", fake_proxy_handler)
+    monkeypatch.setattr(notifications.urllib.request, "build_opener", lambda *handlers: DummyOpener())
+
+    notifications._post_json("https://generic.example/hook", {"event": "ok"})
+
+    assert captured["proxy_handler_calls"] == 0
+
+
+def test_post_json_logs_proxy_environment_errors(monkeypatch, caplog):
+    class DummyOpener(object):
+        def open(self, req, timeout=None):
+            del req, timeout
+            raise urllib.error.URLError("proxy tunnel connection failed")
+
+    monkeypatch.setenv("CHONK_WEBHOOK_USE_PROXY", "1")
+    monkeypatch.setattr(notifications.urllib.request, "build_opener", lambda *handlers: DummyOpener())
+
+    with caplog.at_level("WARNING"):
+        try:
+            notifications._post_json("https://discord.com/api/webhooks/123/abc", {"content": "x"})
+            assert False
+        except urllib.error.URLError:
+            pass
+
+    assert "proxy/environment issue" in caplog.text
+
+
+def test_post_json_logs_discord_403(monkeypatch, caplog):
+    class DummyOpener(object):
+        def open(self, req, timeout=None):
+            del timeout
+            raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", hdrs=None, fp=None)
+
+    monkeypatch.delenv("CHONK_WEBHOOK_USE_PROXY", raising=False)
+    monkeypatch.setattr(notifications.urllib.request, "build_opener", lambda *handlers: DummyOpener())
+
+    with caplog.at_level("WARNING"):
+        try:
+            notifications._post_json("https://discord.com/api/webhooks/123/abc", {"content": "x"})
+            assert False
+        except urllib.error.HTTPError:
+            pass
+
+    assert "HTTP 403" in caplog.text
