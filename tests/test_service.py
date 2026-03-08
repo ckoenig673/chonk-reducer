@@ -104,13 +104,13 @@ def _call_post(service, path, data=None):
                     result = route.endpoint()
                     if hasattr(result, "status_code") and hasattr(result, "body"):
                         return int(result.status_code), json.loads(result.body.decode("utf-8"))
-                    return (202 if result["status"] == "started" else 409), result
+                    return (202 if result.get("status") in ("started", "queued") else 409), result
                 if route_path == "/libraries/{library_id}/run" and path.startswith("/libraries/") and path.endswith("/run") and "POST" in methods:
                     library_id = int(path.split("/")[2])
                     result = route.endpoint(library_id)
                     if hasattr(result, "status_code") and hasattr(result, "body"):
                         return int(result.status_code), json.loads(result.body.decode("utf-8"))
-                    return (202 if result["status"] == "started" else 409), result
+                    return (202 if result.get("status") in ("started", "queued") else 409), result
 
     if not isinstance(service.app.routes, dict):
         raise TypeError("POST helper fallback expects dict routes")
@@ -122,12 +122,12 @@ def _call_post(service, path, data=None):
             result = handler(library_id)
             if hasattr(result, "status_code") and hasattr(result, "body"):
                 return int(result.status_code), json.loads(result.body.decode("utf-8"))
-            return (202 if result["status"] == "started" else 409), result
+            return (202 if result.get("status") in ("started", "queued") else 409), result
     if handler is None:
         raise KeyError("No POST route for %s" % path)
     if data is None:
         result = handler()
-        return (202 if result["status"] == "started" else 409), result
+        return (202 if result.get("status") in ("started", "queued") else 409), result
 
     if hasattr(handler, "__call__") and getattr(handler, "__name__", "") == "save_settings":
         service.update_editable_settings(data)
@@ -143,7 +143,7 @@ def _call_post(service, path, data=None):
         return 200, service.settings_page_html(service.toggle_library(data))
 
     result = handler()
-    return (202 if result["status"] == "started" else 409), result
+    return (202 if result.get("status") in ("started", "queued") else 409), result
 
 
 def _seed_run(
@@ -632,7 +632,7 @@ def test_post_run_movies_starts_manual_run(monkeypatch):
     status_code, payload = _call_post(service, "/run/movies")
 
     assert status_code == 202
-    assert payload == {"status": "started", "library": "movies", "library_id": 1}
+    assert payload == {"status": "queued", "library": "movies", "library_id": 1}
     assert done.wait(timeout=1)
 
 
@@ -651,7 +651,7 @@ def test_post_run_tv_starts_manual_run(monkeypatch):
     status_code, payload = _call_post(service, "/run/tv")
 
     assert status_code == 202
-    assert payload == {"status": "started", "library": "tv", "library_id": 2}
+    assert payload == {"status": "queued", "library": "tv", "library_id": 2}
     assert done.wait(timeout=1)
 
 
@@ -670,7 +670,7 @@ def test_post_run_library_id_starts_manual_run(monkeypatch):
     status_code, payload = _call_post(service, "/libraries/1/run")
 
     assert status_code == 202
-    assert payload == {"status": "started", "library": "Movies", "library_id": 1}
+    assert payload == {"status": "queued", "library": "Movies", "library_id": 1}
     assert done.wait(timeout=1)
 
 
@@ -706,7 +706,7 @@ def test_post_run_movies_rejects_overlap(monkeypatch):
     gate.set()
 
     assert first_status == 202
-    assert first_payload == {"status": "started", "library": "movies", "library_id": 1}
+    assert first_payload == {"status": "queued", "library": "movies", "library_id": 1}
     assert second_status == 409
     assert second_payload == {"status": "busy", "library": "movies", "library_id": 1}
 
@@ -717,21 +717,25 @@ def test_prevents_overlapping_runs(monkeypatch):
     )
 
     calls = []
+    gate = threading.Event()
 
     def fake_run_once(library, trigger):
         calls.append((library, trigger))
+        gate.wait(timeout=1)
 
     monkeypatch.setattr(service, "_run_library_once", fake_run_once)
 
-    lock = service._library_locks["movies"]
-    lock.acquire()
-    try:
-        started = service.trigger_library("movies")
-    finally:
-        lock.release()
+    started = service.trigger_library("movies")
+    rejected = service.trigger_library("movies")
+    for _ in range(50):
+        if calls:
+            break
+        threading.Event().wait(0.01)
+    gate.set()
 
-    assert started is False
-    assert calls == []
+    assert started is True
+    assert rejected is False
+    assert calls == [("movies", "schedule")]
 
 
 def test_trigger_library_starts_scheduled_run(monkeypatch):
@@ -739,16 +743,72 @@ def test_trigger_library_starts_scheduled_run(monkeypatch):
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
     calls = []
+    done = threading.Event()
 
     def fake_run_once(library, trigger):
         calls.append((library, trigger))
+        done.set()
 
     monkeypatch.setattr(service, "_run_library_once", fake_run_once)
 
     started = service.trigger_library("movies")
 
     assert started is True
+    assert done.wait(timeout=1)
     assert calls == [("movies", "schedule")]
+
+
+def test_runtime_status_reflects_running_and_idle(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_run_once(library, trigger):
+        assert library == "movies"
+        assert trigger == "manual"
+        entered.set()
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", fake_run_once)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert entered.wait(timeout=1)
+
+    running = service._runtime_status_snapshot()
+    assert running["status"] == "Running"
+    assert running["current_library"] == "Movies"
+    assert running["current_trigger"] == "manual"
+
+    release.set()
+    for _ in range(20):
+        idle = service._runtime_status_snapshot()
+        if idle["status"] == "Idle":
+            break
+        threading.Event().wait(0.01)
+    assert idle["status"] == "Idle"
+
+
+def test_dashboard_and_system_show_runtime_status():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    dashboard_code, dashboard_body, _ = _call_get(service, "/dashboard")
+    system_code, system_body, _ = _call_get(service, "/system")
+
+    assert dashboard_code == 200
+    assert "Status</th><td" in dashboard_body
+    assert "Idle" in dashboard_body
+    assert "Queue Depth" in dashboard_body
+
+    assert system_code == 200
+    assert "Current Job Status" in system_body
+    assert "Status</th><td" in system_body
+    assert "Queue Depth" in system_body
 
 
 def test_library_environment_sets_expected_values(monkeypatch):
@@ -1298,12 +1358,17 @@ def test_manual_run_records_requested_and_busy_activity(tmp_path, monkeypatch):
     monkeypatch.setenv("STATS_PATH", str(db_path))
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
-    lock = service._library_locks["movies"]
-    lock.acquire()
-    try:
-        payload, status_code = service.manual_run_payload("movies")
-    finally:
-        lock.release()
+    hold = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        assert library == "movies"
+        assert trigger == "manual"
+        hold.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+    service.manual_run_payload("movies")
+    payload, status_code = service.manual_run_payload("movies")
+    hold.set()
 
     assert status_code == 409
     assert payload == {"status": "busy", "library": "movies", "library_id": 1}
@@ -1317,17 +1382,51 @@ def test_scheduled_busy_rejection_records_activity(tmp_path, monkeypatch):
     monkeypatch.setenv("STATS_PATH", str(db_path))
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
-    lock = service._library_locks["movies"]
-    lock.acquire()
-    try:
-        started = service.trigger_library("movies")
-    finally:
-        lock.release()
+    hold = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        assert library == "movies"
+        assert trigger == "schedule"
+        hold.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+    assert service.trigger_library("movies") is True
+    started = service.trigger_library("movies")
+    hold.set()
 
     assert started is False
     event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
     assert "scheduled_run_requested" in event_types
     assert "run_rejected_busy" in event_types
+
+
+def test_manual_run_records_queue_activity(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service, "_run_library_once", lambda library, trigger: None)
+
+    payload, status_code = service.manual_run_payload("movies")
+
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "manual_run_requested" in event_types
+    assert "job_queued" in event_types
+
+
+def test_trigger_library_records_queue_activity(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service, "_run_library_once", lambda library, trigger: None)
+
+    started = service.trigger_library("movies")
+
+    assert started is True
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "scheduled_run_requested" in event_types
+    assert "job_queued" in event_types
 
 
 def test_run_start_and_completion_recorded(tmp_path, monkeypatch):
