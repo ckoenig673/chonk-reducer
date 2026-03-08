@@ -8,10 +8,13 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, Optional
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 
 from . import secrets
 
 LOGGER = logging.getLogger("chonk_reducer.notifications")
+
+_DISCORD_WEBHOOK_HOSTS = {"discord.com", "discordapp.com"}
 
 
 def _settings_db_path(explicit_path: Optional[str] = None) -> Path:
@@ -58,10 +61,35 @@ def _resolve_secret_url(value: str, setting_key: str) -> str:
     if not raw_value:
         return ""
     try:
-        return str(secrets.decrypt_secret(raw_value)).strip()
+        resolved = str(secrets.decrypt_secret(raw_value)).strip()
     except secrets.SecretConfigError as exc:
         LOGGER.warning("Unable to decrypt %s at runtime: %s", setting_key, exc)
         return ""
+    if setting_key == "discord_webhook_url":
+        return normalize_discord_webhook_url(resolved)
+    return resolved
+
+
+def is_discord_webhook_url(value: str) -> bool:
+    parsed = urlsplit(str(value or "").strip())
+    host = str(parsed.hostname or "").lower()
+    path = str(parsed.path or "")
+    return parsed.scheme in ("http", "https") and host in _DISCORD_WEBHOOK_HOSTS and path.startswith("/api/webhooks/")
+
+
+def normalize_discord_webhook_url(value: str) -> str:
+    raw_value = str(value or "").strip()
+    if not is_discord_webhook_url(raw_value):
+        return raw_value
+
+    parsed = urlsplit(raw_value)
+    host = str(parsed.hostname or "").lower()
+    if host != "discordapp.com":
+        return raw_value
+
+    netloc = str(parsed.netloc or "")
+    replaced_netloc = "discord.com" + netloc[len("discordapp.com") :]
+    return urlunsplit((parsed.scheme, replaced_netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def _is_enabled(value: str) -> bool:
