@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from chonk_reducer import notifications
+from chonk_reducer import secrets
 
 
 def _seed_settings(db_path, values):
@@ -18,12 +19,13 @@ def _seed_settings(db_path, values):
 
 
 def test_send_run_complete_builds_discord_and_generic_payloads(tmp_path, monkeypatch):
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
     db_path = tmp_path / "chonk.db"
     _seed_settings(
         db_path,
         {
-            "discord_webhook_url": "https://discord.example/hook",
-            "generic_webhook_url": "https://generic.example/hook",
+            "discord_webhook_url": secrets.encrypt_secret("https://discord.example/hook"),
+            "generic_webhook_url": secrets.encrypt_secret("https://generic.example/hook"),
             "enable_run_complete_notifications": "1",
         },
     )
@@ -60,12 +62,13 @@ def test_send_run_complete_builds_discord_and_generic_payloads(tmp_path, monkeyp
 
 
 def test_notifications_are_skipped_when_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
     db_path = tmp_path / "chonk.db"
     _seed_settings(
         db_path,
         {
-            "discord_webhook_url": "https://discord.example/hook",
-            "generic_webhook_url": "https://generic.example/hook",
+            "discord_webhook_url": secrets.encrypt_secret("https://discord.example/hook"),
+            "generic_webhook_url": secrets.encrypt_secret("https://generic.example/hook"),
             "enable_run_complete_notifications": "0",
             "enable_run_failure_notifications": "0",
         },
@@ -88,11 +91,12 @@ def test_notifications_are_skipped_when_disabled(tmp_path, monkeypatch):
 
 
 def test_send_run_failure_swallows_webhook_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
     db_path = tmp_path / "chonk.db"
     _seed_settings(
         db_path,
         {
-            "discord_webhook_url": "https://discord.example/hook",
+            "discord_webhook_url": secrets.encrypt_secret("https://discord.example/hook"),
             "enable_run_failure_notifications": "1",
         },
     )
@@ -128,3 +132,59 @@ def test_build_run_complete_summary_uses_run_row_values():
     assert summary["files_optimized"] == 7
     assert summary["total_space_saved"] == "5.0 MB"
     assert summary["duration"] == "12.4s"
+
+
+def test_load_settings_handles_missing_secret_key_for_encrypted_values(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+    encrypted = secrets.encrypt_secret("https://discord.example/hook")
+    monkeypatch.delenv(secrets.SECRET_ENV_VAR, raising=False)
+    _seed_settings(db_path, {"discord_webhook_url": encrypted})
+
+    settings = notifications._load_settings(str(db_path))
+
+    assert settings["discord_webhook_url"] == ""
+
+
+def test_send_test_notification_returns_success_when_configured(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+    _seed_settings(
+        db_path,
+        {
+            "discord_webhook_url": secrets.encrypt_secret("https://discord.example/hook"),
+            "generic_webhook_url": secrets.encrypt_secret("https://generic.example/hook"),
+        },
+    )
+    calls = []
+
+    def fake_post(url, payload):
+        calls.append((url, payload))
+
+    monkeypatch.setattr(notifications, "_post_json", fake_post)
+
+    result = notifications.send_test_notification(settings_db_path=str(db_path))
+
+    assert result["ok"] is True
+    assert len(calls) == 2
+
+
+def test_send_test_notification_failure_is_non_fatal(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+    _seed_settings(
+        db_path,
+        {
+            "discord_webhook_url": secrets.encrypt_secret("https://discord.example/hook"),
+        },
+    )
+
+    def fake_post(url, payload):
+        raise RuntimeError("webhook down")
+
+    monkeypatch.setattr(notifications, "_post_json", fake_post)
+
+    result = notifications.send_test_notification(settings_db_path=str(db_path))
+
+    assert result["ok"] is False
+    assert "failed" in result["message"].lower()

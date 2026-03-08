@@ -108,6 +108,9 @@ def _call_post(service, path, data=None):
                 return 200, service.settings_page_html(service.delete_library(data))
             if path == "/settings/libraries/toggle" and data is not None:
                 return 200, service.settings_page_html(service.toggle_library(data))
+            if path == "/settings/test-notification":
+                result = service_module.notifications.send_test_notification(settings_db_path=str(service._settings_db_path))
+                return 200, service.settings_page_html(str(result.get("message", "")))
             for route in service.app.routes:
                 methods = getattr(route, "methods", set())
                 route_path = getattr(route, "path", None)
@@ -138,11 +141,17 @@ def _call_post(service, path, data=None):
         raise KeyError("No POST route for %s" % path)
     if data is None:
         result = handler()
-        return (202 if result.get("status") in ("started", "queued") else 409), result
+        if isinstance(result, dict):
+            return (202 if result.get("status") in ("started", "queued") else 409), result
+        return 200, result
 
     if hasattr(handler, "__call__") and getattr(handler, "__name__", "") == "save_settings":
         service.update_editable_settings(data)
         return 200, service.settings_page_html(service.settings_saved_message(data))
+
+    if path == "/settings/test-notification":
+        result = service_module.notifications.send_test_notification(settings_db_path=str(service._settings_db_path))
+        return 200, service.settings_page_html(str(result.get("message", "")))
 
     if path == "/settings/libraries/create":
         return 200, service.settings_page_html(service.create_library(data))
@@ -154,7 +163,9 @@ def _call_post(service, path, data=None):
         return 200, service.settings_page_html(service.toggle_library(data))
 
     result = handler()
-    return (202 if result.get("status") in ("started", "queued") else 409), result
+    if isinstance(result, dict):
+        return (202 if result.get("status") in ("started", "queued") else 409), result
+    return 200, result
 
 
 def _seed_run(
@@ -2230,9 +2241,67 @@ def test_settings_route_renders_notification_fields(tmp_path, monkeypatch):
     assert "name=\"enable_run_failure_notifications\"" in body
 
 
-def test_post_settings_persists_notification_fields(tmp_path, monkeypatch):
+
+
+def test_settings_notification_secrets_are_masked_and_never_echoed(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.update_editable_settings({"discord_webhook_url": "https://discord.example/hook"})
+
+    status_code, body, _ = _call_get(service, "/settings")
+
+    assert status_code == 200
+    assert "https://discord.example/hook" not in body
+    assert "Configured (hidden)" in body
+    assert "placeholder=\"Set (hidden)\"" in body
+
+
+def test_blank_secret_submission_preserves_existing_notification_secret(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.update_editable_settings({"discord_webhook_url": "https://discord.example/hook"})
+
+    before = service._editable_settings["discord_webhook_url"]
+    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": "", "max_files": "12"})
+
+    assert status_code == 200
+    assert service._editable_settings["discord_webhook_url"] == before
+
+
+def test_replacing_secret_updates_encrypted_value(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.update_editable_settings({"discord_webhook_url": "https://discord.example/one"})
+    first = service._editable_settings["discord_webhook_url"]
+
+    service.update_editable_settings({"discord_webhook_url": "https://discord.example/two"})
+    second = service._editable_settings["discord_webhook_url"]
+
+    assert first != second
+    assert secrets.decrypt_secret(second) == "https://discord.example/two"
+
+
+def test_post_settings_persists_notification_fields_encrypted(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
 
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
@@ -2254,10 +2323,28 @@ def test_post_settings_persists_notification_fields(tmp_path, monkeypatch):
     values = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM settings").fetchall()}
     conn.close()
 
-    assert values["discord_webhook_url"] == "https://discord.example/hook"
-    assert values["generic_webhook_url"] == "https://generic.example/hook"
-    assert values["enable_run_complete_notifications"] == "1"
-    assert values["enable_run_failure_notifications"] == "1"
+    assert values["discord_webhook_url"].startswith(secrets.SECRET_PREFIX)
+    assert values["generic_webhook_url"].startswith(secrets.SECRET_PREFIX)
+    assert secrets.decrypt_secret(values["discord_webhook_url"]) == "https://discord.example/hook"
+    assert secrets.decrypt_secret(values["generic_webhook_url"]) == "https://generic.example/hook"
+
+
+def test_settings_test_notification_action_renders_result_message(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    monkeypatch.setattr(
+        service_module.notifications,
+        "send_test_notification",
+        lambda settings_db_path=None: {"ok": True, "message": "Test notification sent successfully."},
+    )
+
+    status_code, body = _call_post(service, "/settings/test-notification", data={})
+
+    assert status_code == 200
+    assert "Test notification sent successfully." in body
 
 
 def test_run_completion_triggers_notification(tmp_path, monkeypatch):
