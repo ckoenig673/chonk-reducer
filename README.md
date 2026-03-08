@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.16.0
+**Current Version:** v1.25.0
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -213,6 +213,25 @@ Prevents repeated failures.
 
 ---
 
+
+# Encode History Page
+
+The service UI includes a **History** page at `/history`.
+
+It shows completed encode jobs from SQLite, including:
+
+- Library
+- File name
+- Original size
+- New size
+- Savings percent
+- Savings amount
+- Date/time
+
+This gives operators quick visibility into what Chonk processed and how much storage was reclaimed.
+
+---
+
 # Docker Usage
 
 Health check:
@@ -250,6 +269,7 @@ Chonk Reducer supports an optional long-running service mode for internal schedu
   - `/dashboard`
   - `/runs`
   - `/runs/{run_id}`
+  - `/history`
   - `/activity`
   - `/settings`
   - `/system`
