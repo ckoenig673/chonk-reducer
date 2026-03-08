@@ -40,7 +40,7 @@ def _call_get(service, path):
                 if getattr(route, "path", None) == path and "GET" in methods:
                     result = route.endpoint()
                     if hasattr(result, "body"):
-                        return 200, result.body.decode("utf-8"), None
+                        return int(getattr(result, "status_code", 200)), result.body.decode("utf-8"), None
                     return 200, result, None
 
     if isinstance(service.app.routes, dict):
@@ -761,6 +761,21 @@ def test_dashboard_route_accepts_manual_run_status_query_params():
 
     assert status_code == 200
     assert "Run Now" in body
+
+
+def test_favicon_route_returns_no_content_promptly():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    started = time.monotonic()
+    status_code, body, payload = _call_get(service, "/favicon.ico")
+    elapsed = time.monotonic() - started
+
+    assert status_code == 204
+    assert body == ""
+    assert payload is None
+    assert elapsed < 1.0
 
 
 def test_post_run_library_id_starts_manual_run(monkeypatch):

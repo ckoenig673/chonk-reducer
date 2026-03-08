@@ -305,6 +305,7 @@ Chonk Reducer supports an optional long-running service mode for internal schedu
   - `/activity`
   - `/settings`
   - `/system`
+  - `/favicon.ico` (returns `204 No Content` to prevent browser tab spinner hangs)
 - `/` renders the dashboard in the new shell.
 
 Enable service mode:
