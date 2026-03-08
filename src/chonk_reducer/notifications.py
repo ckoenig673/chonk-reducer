@@ -53,6 +53,17 @@ def _load_settings(settings_db_path: Optional[str] = None) -> Dict[str, str]:
     return values
 
 
+def _resolve_secret_url(value: str, setting_key: str) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        return str(secrets.decrypt_secret(raw_value)).strip()
+    except secrets.SecretConfigError as exc:
+        LOGGER.warning("Unable to decrypt %s at runtime: %s", setting_key, exc)
+        return ""
+
+
 def _is_enabled(value: str) -> bool:
     return str(value or "").strip().lower() in ("1", "true", "yes", "y", "on")
 
@@ -122,8 +133,8 @@ def send_run_complete(run_summary: Dict[str, object], settings_db_path: Optional
     if not _is_enabled(settings.get("enable_run_complete_notifications", "0")):
         return
 
-    discord_url = str(settings.get("discord_webhook_url", "")).strip()
-    generic_url = str(settings.get("generic_webhook_url", "")).strip()
+    discord_url = _resolve_secret_url(settings.get("discord_webhook_url", ""), "discord_webhook_url")
+    generic_url = _resolve_secret_url(settings.get("generic_webhook_url", ""), "generic_webhook_url")
 
     if not discord_url and not generic_url:
         return
@@ -156,8 +167,8 @@ def send_run_failure(run_summary: Dict[str, object], settings_db_path: Optional[
     if not _is_enabled(settings.get("enable_run_failure_notifications", "0")):
         return
 
-    discord_url = str(settings.get("discord_webhook_url", "")).strip()
-    generic_url = str(settings.get("generic_webhook_url", "")).strip()
+    discord_url = _resolve_secret_url(settings.get("discord_webhook_url", ""), "discord_webhook_url")
+    generic_url = _resolve_secret_url(settings.get("generic_webhook_url", ""), "generic_webhook_url")
 
     if not discord_url and not generic_url:
         return
@@ -184,8 +195,8 @@ def send_run_failure(run_summary: Dict[str, object], settings_db_path: Optional[
 
 def send_test_notification(settings_db_path: Optional[str] = None) -> Dict[str, object]:
     settings = _load_settings(settings_db_path)
-    discord_url = str(settings.get("discord_webhook_url", "")).strip()
-    generic_url = str(settings.get("generic_webhook_url", "")).strip()
+    discord_url = _resolve_secret_url(settings.get("discord_webhook_url", ""), "discord_webhook_url")
+    generic_url = _resolve_secret_url(settings.get("generic_webhook_url", ""), "generic_webhook_url")
 
     if not discord_url and not generic_url:
         return {"ok": False, "message": "No webhook URL configured. Add one and try again."}
