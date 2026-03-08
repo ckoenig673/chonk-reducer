@@ -177,6 +177,75 @@ def test_run_stops_after_max_files(tmp_path, monkeypatch):
     assert calls["encode"] == 1
 
 
+def test_preview_run_does_not_launch_ffmpeg_and_reports_estimates(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, preview=True, max_files=1, min_savings_percent=10.0)
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 10_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 8_000_000})
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+
+    calls = {"encode": 0, "snapshots": []}
+
+    def _encode(*a, **k):
+        calls["encode"] += 1
+
+    monkeypatch.setattr(runner, "encode_qsv", _encode)
+
+    rc = runner.run(progress_callback=lambda values: calls["snapshots"].append(values))
+
+    assert rc == 0
+    assert calls["encode"] == 0
+    preview_rows = [item for item in calls["snapshots"] if "preview_result_json" in item]
+    assert len(preview_rows) == 1
+    parsed = json.loads(preview_rows[0]["preview_result_json"])
+    assert parsed["file"].endswith("movie.mkv")
+    assert parsed["estimated_size"] == 5699
+    assert parsed["estimated_savings_pct"] == 43.0
+    assert parsed["decision"] == "Encode"
+
+
+def test_preview_run_marks_skip_decisions_for_codec_and_resolution(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, preview=True, max_files=2)
+    src1 = cfg.media_root / "codec.mkv"
+    src2 = cfg.media_root / "resolution.mkv"
+    src1.write_bytes(b"x" * 5_000)
+    src2.write_bytes(b"x" * 5_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2], {}, []))
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1_000_000})
+
+    def _skip(src, *_args, **_kwargs):
+        if src == src1:
+            return ("codec", "codec=h264")
+        return ("resolution", "height=1080")
+
+    monkeypatch.setattr(runner, "evaluate_skip", _skip)
+
+    snapshots = []
+    rc = runner.run(progress_callback=lambda values: snapshots.append(values))
+
+    assert rc == 0
+    rows = [json.loads(item["preview_result_json"]) for item in snapshots if "preview_result_json" in item]
+    assert rows[0]["decision"] == "Skip (unsupported codec)"
+    assert rows[1]["decision"] == "Skip (resolution rules)"
+
+
 def test_run_exits_when_free_space_too_low(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, min_media_free_gb=10)
 

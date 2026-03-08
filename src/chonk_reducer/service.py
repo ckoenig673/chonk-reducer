@@ -398,6 +398,19 @@ class ChonkService:
                 return RedirectResponse(url=location, status_code=303)
             return self._html_response(self.home_page_html())
 
+        @self.app.post("/dashboard/libraries/{library_id}/preview")
+        def preview_library_from_dashboard(library_id: int):
+            payload, _ = self.manual_preview_payload_for_id(int(library_id))
+            location = "/dashboard"
+            if payload.get("status") in ("queued", "busy"):
+                location = "/dashboard?manual_run=%s&library_id=%s" % (
+                    quote(str(payload.get("status", ""))),
+                    quote(str(payload.get("library_id", ""))),
+                )
+            if RedirectResponse is not None:
+                return RedirectResponse(url=location, status_code=303)
+            return self._html_response(self.home_page_html())
+
         @self.app.post("/run/movies")
         def run_movies():
             payload, status_code = self.manual_run_payload("movies")
@@ -462,6 +475,7 @@ class ChonkService:
     %s
     <form method="post" action="/dashboard/libraries/%d/run" style="margin-top: 0.75rem;">
       <button type="submit">Run Now</button>
+      <button type="submit" formaction="/dashboard/libraries/%d/preview" style="margin-left: 0.45rem;">Preview Run</button>
     </form>
   </section>
 """
@@ -477,6 +491,7 @@ class ChonkService:
                     _escape_html(savings_label),
                     _escape_html(processed_label),
                     runtime_summary,
+                    library.id,
                     library.id,
                 )
             )
@@ -613,6 +628,7 @@ class ChonkService:
 
       function updateFromSnapshot(snapshot) {
         setText("runtime-status", snapshot.status, "Idle");
+        setText("runtime-mode", snapshot.mode, "-");
         setText("runtime-library", snapshot.current_library, "-");
         setText("runtime-trigger", triggerLabel(snapshot.trigger), "-");
         setText("runtime-queue-depth", snapshot.queue_depth, "0");
@@ -626,11 +642,35 @@ class ChonkService:
         setText("runtime-files-skipped", snapshot.files_skipped, "-");
         setText("runtime-files-failed", snapshot.files_failed, "-");
         setText("runtime-bytes-saved", savedBytesLabel(snapshot.bytes_saved), "-");
+        setPreviewResults(snapshot.preview_results || []);
         var progress = document.getElementById("runtime-progress-section");
         if (progress) {
           progress.innerHTML = progressMarkup(snapshot);
         }
         updateStopButton(snapshot);
+      }
+
+      function setPreviewResults(rows) {
+        var body = document.getElementById("runtime-preview-results-body");
+        if (!body) {
+          return;
+        }
+        if (!rows || !rows.length) {
+          body.innerHTML = '<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < rows.length; i += 1) {
+          var row = rows[i] || {};
+          html += '<tr>' +
+            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.file, '-') + '</td>' +
+            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.original_size) + '</td>' +
+            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.estimated_size) + '</td>' +
+            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.estimated_savings_pct, '-') + '%%</td>' +
+            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.decision, '-') + '</td>' +
+          '</tr>';
+        }
+        body.innerHTML = html;
       }
 
       function requestStopRun() {
@@ -938,6 +978,7 @@ class ChonkService:
         snapshot = self._runtime_status_snapshot()
         return {
             "status": snapshot["status"],
+            "mode": snapshot.get("mode", "Live"),
             "current_library": snapshot["current_library"],
             "trigger": snapshot["current_trigger"],
             "queue_depth": snapshot["queue_depth"],
@@ -954,6 +995,7 @@ class ChonkService:
             "encode_speed": snapshot["encode_speed"],
             "encode_eta": snapshot["encode_eta"],
             "encode_out_time": snapshot["encode_out_time"],
+            "preview_results": snapshot.get("preview_results", []),
             "evaluated_count": snapshot["files_evaluated"],
             "processed_count": snapshot["files_processed"],
             "skipped_count": snapshot["files_skipped"],
@@ -1758,28 +1800,35 @@ class ChonkService:
             return {"status": "not_found", "library_id": int(library_id)}, 404
         return self.manual_run_payload(library_record.name)
 
-    def manual_run_payload(self, library: str):
+    def manual_preview_payload_for_id(self, library_id: int):
+        library_record = self._library_by_id(library_id)
+        if library_record is None:
+            return {"status": "not_found", "library_id": int(library_id)}, 404
+        return self.manual_run_payload(library_record.name, preview=True)
+
+    def manual_run_payload(self, library: str, preview: bool = False):
         library_record = self._library_by_key(library)
         if library_record is None:
             return {"status": "not_found", "library": library}, 404
         library_name = library_record.name
-        LOGGER.info("Manual %s run request received", library_name)
+        run_kind = "preview" if preview else "run"
+        LOGGER.info("Manual %s %s request received", library_name, run_kind)
         self._record_activity(
-            event_type="manual_run_requested",
-            message="Manual run requested for %s" % library_name,
+            event_type="manual_preview_requested" if preview else "manual_run_requested",
+            message="Manual %s requested for %s" % (run_kind, library_name),
             library=library_name,
         )
-        queued = self._enqueue_library_job(library_record, trigger="manual")
+        queued = self._enqueue_library_job(library_record, trigger="preview" if preview else "manual")
         payload = {
             "status": "queued" if queued else "busy",
             "library": library,
             "library_id": library_record.id,
         }
         if queued:
-            LOGGER.info("Manual %s run accepted and queued", library_name)
+            LOGGER.info("Manual %s %s accepted and queued", library_name, run_kind)
             return payload, 202
 
-        LOGGER.info("Manual %s run rejected; run already queued or in progress", library_name)
+        LOGGER.info("Manual %s %s rejected; run already queued or in progress", library_name, run_kind)
         self._record_activity(
             event_type="run_rejected_busy",
             message="%s run skipped because library is already queued or running" % library_name,
@@ -1911,6 +1960,16 @@ class ChonkService:
             status = "Cancelled"
         else:
             status = "Idle"
+        preview_results = []
+        preview_results_json = str(run_snapshot.get("preview_results_json", "") or "").strip()
+        if preview_results_json:
+            try:
+                parsed = json.loads(preview_results_json)
+                if isinstance(parsed, list):
+                    preview_results = parsed
+            except Exception:
+                preview_results = []
+
         return {
             "status": status,
             "current_library": current_job.library_name if current_job is not None else "",
@@ -1931,6 +1990,8 @@ class ChonkService:
             "encode_out_time": str(run_snapshot.get("encode_out_time", "")),
             "retry_attempt": str(run_snapshot.get("retry_attempt", "")),
             "retry_max": str(run_snapshot.get("retry_max", "")),
+            "mode": str(run_snapshot.get("mode", "Live") or "Live"),
+            "preview_results": preview_results,
             "cancel_requested": "1" if cancel_requested else "0",
         }
 
@@ -1947,6 +2008,7 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td id=\"runtime-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td id=\"runtime-library\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td id=\"runtime-trigger\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Mode</th><td id=\"runtime-mode\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td id=\"runtime-queue-depth\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td id=\"runtime-run-id\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Started At</th><td id=\"runtime-started-at\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
@@ -1958,10 +2020,11 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Failed</th><td id=\"runtime-files-failed\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td id=\"runtime-bytes-saved\" style=\"padding: 0.35rem;\">%s</td></tr>
   </tbody>
-</table><div style=\"margin-top:0.6rem;\"><button id=\"runtime-stop-button\" type=\"button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>""" % (
+</table><div style=\"margin-top:0.6rem;\"><button id=\"runtime-stop-button\" type=\"button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>%s""" % (
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
+            _escape_html(snapshot.get("mode", "Live") or "Live"),
             _escape_html(snapshot["queue_depth"]),
             _escape_html(run_id),
             _escape_html(started_at),
@@ -1973,7 +2036,28 @@ class ChonkService:
             _escape_html(snapshot["files_failed"] or "-"),
             _escape_html(_format_saved_bytes(snapshot["bytes_saved"]) if snapshot["bytes_saved"] else "-"),
             self._runtime_progress_overview_html(snapshot),
+            self._preview_results_html(snapshot),
         )
+
+    def _preview_results_html(self, snapshot: Dict[str, str]) -> str:
+        rows = snapshot.get("preview_results") or []
+        body_rows = []
+        for row in rows[:25]:
+            savings_pct = row.get("estimated_savings_pct", "")
+            savings_label = "%s%%" % savings_pct if savings_pct != "" else "-"
+            body_rows.append(
+                "<tr><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td></tr>"
+                % (
+                    _escape_html(str(row.get("file", "-"))),
+                    _escape_html(_format_saved_bytes(row.get("original_size"))),
+                    _escape_html(_format_saved_bytes(row.get("estimated_size"))),
+                    _escape_html(str(savings_label)),
+                    _escape_html(str(row.get("decision", "-"))),
+                )
+            )
+        if not body_rows:
+            body_rows.append('<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>')
+        return """<div id=\"runtime-preview-results\" style=\"margin-top:0.8rem;\"><div style=\"font-weight:600; margin-bottom:0.35rem;\">Preview Results</div><table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\"><thead><tr><th style=\"text-align:left; padding:0.35rem;\">File</th><th style=\"text-align:left; padding:0.35rem;\">Original Size</th><th style=\"text-align:left; padding:0.35rem;\">Estimated Size</th><th style=\"text-align:left; padding:0.35rem;\">Savings %%</th><th style=\"text-align:left; padding:0.35rem;\">Decision</th></tr></thead><tbody id=\"runtime-preview-results-body\">%s</tbody></table></div>""" % ("".join(body_rows))
 
     def _runtime_progress_overview_html(self, snapshot: Dict[str, str]) -> str:
         if snapshot.get("status") != "Running":
@@ -2056,8 +2140,25 @@ class ChonkService:
             "failed_count": "files_failed",
         }
         with self._job_condition:
+            if values.get("preview_result_json"):
+                results_raw = str(self._current_run_snapshot.get("preview_results_json", "") or "").strip()
+                try:
+                    results = json.loads(results_raw) if results_raw else []
+                except Exception:
+                    results = []
+                if not isinstance(results, list):
+                    results = []
+                try:
+                    parsed = json.loads(str(values.get("preview_result_json")))
+                    if isinstance(parsed, dict):
+                        results.append(parsed)
+                except Exception:
+                    pass
+                self._current_run_snapshot["preview_results_json"] = json.dumps(results[:25])
             for key, value in values.items():
                 if value is None:
+                    continue
+                if str(key) in ("preview_result", "preview_result_json"):
                     continue
                 key_text = str(key)
                 value_text = str(value)
@@ -2825,6 +2926,9 @@ class ChonkService:
 
         with editable_settings_environment(self._editable_settings):
             with library_runtime_environment(library_record):
+                original_preview = os.environ.get("PREVIEW")
+                is_preview = str(trigger).strip().lower() == "preview"
+                os.environ["PREVIEW"] = "true" if is_preview else "false"
                 original_stats_path = os.environ.get("STATS_PATH")
                 run_stats_path = str(self._settings_db_path)
                 os.environ["STATS_PATH"] = run_stats_path
@@ -2848,6 +2952,10 @@ class ChonkService:
                     self._notify_run_failure(library_record.name, run_id, str(exc))
                     raise
                 finally:
+                    if original_preview is None:
+                        os.environ.pop("PREVIEW", None)
+                    else:
+                        os.environ["PREVIEW"] = original_preview
                     if os.environ.get("STATS_PATH") == run_stats_path:
                         if original_stats_path is None:
                             os.environ.pop("STATS_PATH", None)

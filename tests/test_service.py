@@ -140,6 +140,12 @@ def _call_post(service, path, data=None, follow_redirects=True):
                     if hasattr(result, "status_code") and hasattr(result, "headers"):
                         return int(result.status_code), result
                     return 200, result
+                if route_path == "/dashboard/libraries/{library_id}/preview" and path.startswith("/dashboard/libraries/") and path.endswith("/preview") and "POST" in methods:
+                    library_id = int(path.split("/")[3])
+                    result = route.endpoint(library_id)
+                    if hasattr(result, "status_code") and hasattr(result, "headers"):
+                        return int(result.status_code), result
+                    return 200, result
 
     if not isinstance(service.app.routes, dict):
         raise TypeError("POST helper fallback expects dict routes")
@@ -154,6 +160,14 @@ def _call_post(service, path, data=None, follow_redirects=True):
             return (202 if result.get("status") in ("started", "queued") else 409), result
     if handler is None and path.startswith("/dashboard/libraries/") and path.endswith("/run"):
         handler = service.app.routes.get("POST /dashboard/libraries/{library_id}/run")
+        if handler is not None:
+            library_id = int(path.split("/")[3])
+            result = handler(library_id)
+            if hasattr(result, "status_code") and hasattr(result, "headers"):
+                return int(result.status_code), result
+            return 200, result
+    if handler is None and path.startswith("/dashboard/libraries/") and path.endswith("/preview"):
+        handler = service.app.routes.get("POST /dashboard/libraries/{library_id}/preview")
         if handler is not None:
             library_id = int(path.split("/")[3])
             result = handler(library_id)
@@ -3522,3 +3536,82 @@ def test_runtime_snapshot_and_dashboard_show_retry_attempt_only_while_retrying(t
     snapshot = service._runtime_status_snapshot()
     html = service._runtime_progress_overview_html(snapshot)
     assert "Retry Attempt:" not in html
+
+
+def test_dashboard_shows_preview_run_button():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    try:
+        status_code, body, _ = _call_get(service, "/dashboard")
+    finally:
+        service.stop_background_worker()
+
+    assert status_code == 200
+    assert "Preview Run" in body
+    assert "/dashboard/libraries/1/preview" in body
+
+
+def test_manual_preview_payload_queues_preview_trigger(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    captured = {"trigger": ""}
+
+    def _enqueue(_library, trigger):
+        captured["trigger"] = trigger
+        return True
+
+    monkeypatch.setattr(service, "_enqueue_library_job", _enqueue)
+    try:
+        payload, status_code = service.manual_preview_payload_for_id(1)
+    finally:
+        service.stop_background_worker()
+
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert captured["trigger"] == "preview"
+
+
+def test_runtime_snapshot_includes_preview_mode_and_results():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    try:
+        with service._job_condition:
+            service._current_job = RuntimeJob(library_id=1, library_name="movies", trigger="preview", priority=1)
+            service._current_run_snapshot = {
+                "mode": "Preview",
+                "preview_results_json": json.dumps(
+                    [
+                        {
+                            "file": "/movies/a.mkv",
+                            "original_size": 1000,
+                            "estimated_size": 600,
+                            "estimated_savings_pct": 40.0,
+                            "decision": "Encode",
+                        }
+                    ]
+                ),
+                "files_processed": "",
+                "bytes_saved": "",
+            }
+
+        snapshot = service.current_job_status()
+        status_code, body, payload = _call_get(service, "/api/status")
+    finally:
+        service.stop_background_worker()
+
+    if payload is None:
+        if isinstance(body, dict):
+            payload = body
+        else:
+            payload = json.loads(body or "{}")
+
+    assert snapshot["mode"] == "Preview"
+    assert snapshot["files_processed"] == ""
+    assert snapshot["bytes_saved"] == ""
+    assert snapshot["preview_results"][0]["decision"] == "Encode"
+    assert status_code == 200
+    assert payload["mode"] == "Preview"
+    assert payload["preview_results"][0]["decision"] == "Encode"
