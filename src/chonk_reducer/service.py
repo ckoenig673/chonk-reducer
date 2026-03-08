@@ -50,6 +50,16 @@ from . import __version__
 
 LOGGER = logging.getLogger("chonk_reducer.service")
 
+WEEKDAY_CHOICES = [
+    ("Su", "0"),
+    ("M", "1"),
+    ("T", "2"),
+    ("W", "3"),
+    ("Th", "4"),
+    ("F", "5"),
+    ("Sa", "6"),
+]
+
 
 EDITABLE_SETTINGS = {
     "min_file_age_minutes": {"env": "MIN_FILE_AGE_MINUTES", "default": "10"},
@@ -770,12 +780,37 @@ class ChonkService:
     def _validate_library_values(self, values: Dict[str, str]) -> tuple:
         name = str(values.get("name", "")).strip()
         path = str(values.get("path", "")).strip()
-        schedule = str(values.get("schedule", "")).strip()
         enabled = 1 if str(values.get("enabled", "1")).strip() == "1" else 0
+        schedule_mode = str(values.get("schedule_mode", "simple")).strip().lower() or "simple"
+        has_simple_days = any(str(values.get("schedule_day_%s" % day_value, "")).strip() for _, day_value in WEEKDAY_CHOICES)
+        has_simple_time = bool(str(values.get("schedule_time", "")).strip())
+        has_explicit_mode = "schedule_mode" in values
+        if not has_explicit_mode and not has_simple_days and not has_simple_time:
+            schedule_mode = "legacy"
+        elif schedule_mode == "simple" and str(values.get("schedule", "")).strip() and not has_simple_days and not has_simple_time:
+            schedule_mode = "advanced"
+
         if not name:
             return {}, "Library validation failed: name is required."
         if not path:
             return {}, "Library validation failed: path is required."
+
+        if schedule_mode == "legacy":
+            schedule = str(values.get("schedule", "")).strip()
+        elif schedule_mode == "advanced":
+            schedule = str(values.get("schedule", "")).strip()
+            if not schedule:
+                return {}, "Library validation failed: cron schedule is required in advanced mode."
+        else:
+            selected_days = [day_value for _, day_value in WEEKDAY_CHOICES if str(values.get("schedule_day_%s" % day_value, "")).strip()]
+            if not selected_days:
+                return {}, "Library validation failed: select at least one weekday in simple mode."
+            schedule_time = str(values.get("schedule_time", "")).strip()
+            if not schedule_time:
+                return {}, "Library validation failed: time is required in simple mode."
+            schedule = _build_simple_cron(schedule_time, selected_days)
+            if not schedule:
+                return {}, "Library validation failed: invalid simple schedule time."
         return {
             "name": name,
             "path": path,
@@ -797,6 +832,7 @@ class ChonkService:
 
         row_html = []
         for library in libraries:
+            schedule_state = _schedule_form_state(library.schedule)
             enabled_label = "Enabled" if library.enabled else "Disabled"
             toggle_target = "0" if library.enabled else "1"
             toggle_label = "Disable" if library.enabled else "Enable"
@@ -818,8 +854,7 @@ class ChonkService:
         <input name=\"name\" value=\"{name}\" style=\"width: 100%; max-width: 420px;\" /><br />
         <label><strong>Path</strong></label><br />
         <input name=\"path\" value=\"{path}\" style=\"width: 100%; max-width: 420px;\" /><br />
-        <label><strong>Schedule</strong></label><br />
-        <input name=\"schedule\" value=\"{schedule}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        {schedule_fields}
         <label><strong>Enabled</strong></label>
         <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
         <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Save Library</button></div>
@@ -831,6 +866,7 @@ class ChonkService:
                     path=_escape_html(library.path),
                     enabled=enabled_label,
                     schedule=_escape_html(library.schedule),
+                    schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
                     library_id=library.id,
                     enabled_yes="selected" if library.enabled else "",
                     enabled_no="selected" if not library.enabled else "",
@@ -862,22 +898,102 @@ class ChonkService:
   </thead>
   <tbody>%s</tbody>
 </table>""" % "".join(row_html)
-
     def _library_create_form_html(self) -> str:
+        schedule_state = _schedule_form_state("")
+        schedule_fields = self._schedule_fields_html(schedule_state, "create")
         return """
-<h3 style=\"margin-top: 1rem;\">Create Library</h3>
-<form method=\"post\" action=\"/settings/libraries/create\">
+<h3 style="margin-top: 1rem;">Create Library</h3>
+<form method="post" action="/settings/libraries/create">
   <label><strong>Name</strong></label><br />
-  <input name=\"name\" style=\"width: 100%; max-width: 420px;\" /><br />
+  <input name="name" style="width: 100%; max-width: 420px;" /><br />
   <label><strong>Path</strong></label><br />
-  <input name=\"path\" style=\"width: 100%; max-width: 420px;\" /><br />
-  <label><strong>Schedule</strong></label><br />
-  <input name=\"schedule\" style=\"width: 100%; max-width: 420px;\" /><br />
+  <input name="path" style="width: 100%; max-width: 420px;" /><br />
+  {schedule_fields}
   <label><strong>Enabled</strong></label>
-  <select name=\"enabled\"><option value=\"1\" selected>Yes</option><option value=\"0\">No</option></select>
-  <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Create Library</button></div>
+  <select name="enabled"><option value="1" selected>Yes</option><option value="0">No</option></select>
+  <div style="margin-top: 0.5rem;"><button type="submit">Create Library</button></div>
 </form>
-"""
+""".format(schedule_fields=schedule_fields)
+
+    def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
+        mode = str(schedule_state.get("mode", "simple"))
+        raw_value = _escape_html(str(schedule_state.get("raw", "")))
+        simple_time = _escape_html(str(schedule_state.get("time", "00:00")))
+        selected_days = set(schedule_state.get("days", []))
+        simple_checked = "checked" if mode == "simple" else ""
+        advanced_checked = "checked" if mode == "advanced" else ""
+
+        weekday_options = []
+        for label, day_value in WEEKDAY_CHOICES:
+            checked = "checked" if day_value in selected_days else ""
+            weekday_options.append(
+                '<label style="margin-right: 0.5rem;"><input type="checkbox" name="schedule_day_%s" value="1" %s /> %s</label>'
+                % (day_value, checked, label)
+            )
+
+        time_options = []
+        for value in _simple_schedule_time_options():
+            selected = "selected" if value == simple_time else ""
+            time_options.append('<option value="%s" %s>%s</option>' % (_escape_html(value), selected, _escape_html(value)))
+
+        simple_display = "block" if mode == "simple" else "none"
+        advanced_display = "block" if mode == "advanced" else "none"
+        preview = _escape_html(str(schedule_state.get("preview", "")))
+
+        return """
+  <fieldset style=\"margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd;\">
+    <legend><strong>Schedule</strong></legend>
+    <label style=\"margin-right: 1rem;\"><input type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
+    <label><input type=\"radio\" name=\"schedule_mode\" value=\"advanced\" %s onchange=\"toggleScheduleMode_%s()\" /> Advanced cron</label>
+
+    <div id=\"simple-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
+      <label><strong>Days</strong></label><br />
+      %s
+      <br />
+      <label><strong>Time</strong></label><br />
+      <select name=\"schedule_time\" style=\"width: 100%%; max-width: 180px;\">%s</select>
+      <div style=\"margin-top: 0.35rem; color:#555;\">Generated cron: <code>%s</code></div>
+    </div>
+
+    <div id=\"advanced-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
+      <label><strong>Raw cron expression</strong></label><br />
+      <input name=\"schedule\" value=\"%s\" style=\"width: 100%%; max-width: 420px;\" />
+    </div>
+  </fieldset>
+  <script>
+    function toggleScheduleMode_%s() {
+      var simpleRadio = document.querySelector('input[name="schedule_mode"][value="simple"]');
+      var simple = document.getElementById('simple-schedule-%s');
+      var advanced = document.getElementById('advanced-schedule-%s');
+      if (!simpleRadio || !simple || !advanced) { return; }
+      if (simpleRadio.checked) {
+        simple.style.display = 'block';
+        advanced.style.display = 'none';
+      } else {
+        simple.style.display = 'none';
+        advanced.style.display = 'block';
+      }
+    }
+    toggleScheduleMode_%s();
+  </script>
+""" % (
+            simple_checked,
+            form_id,
+            advanced_checked,
+            form_id,
+            form_id,
+            simple_display,
+            "".join(weekday_options),
+            "".join(time_options),
+            preview,
+            form_id,
+            advanced_display,
+            raw_value,
+            form_id,
+            form_id,
+            form_id,
+            form_id,
+        )
 
     def register_jobs(self) -> None:
         for library in self.enabled_runtime_libraries():
@@ -1779,6 +1895,93 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
         """
     )
     return conn
+
+
+def _simple_schedule_time_options() -> List[str]:
+    options: List[str] = []
+    for hour in range(24):
+        for minute in (0, 15, 30, 45):
+            options.append("%02d:%02d" % (hour, minute))
+    return options
+
+
+def _build_simple_cron(time_value: str, day_values: List[str]) -> str:
+    parts = str(time_value or "").strip().split(":", 1)
+    if len(parts) != 2:
+        return ""
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        return ""
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return ""
+
+    allowed_days = {day for _, day in WEEKDAY_CHOICES}
+    normalized_days = [day for day in day_values if day in allowed_days]
+    if not normalized_days:
+        return ""
+    ordered_days = [day for _, day in WEEKDAY_CHOICES if day in normalized_days]
+    return "%d %d * * %s" % (minute, hour, ",".join(ordered_days))
+
+
+def _parse_simple_cron(schedule: str) -> Optional[Dict[str, object]]:
+    parts = str(schedule or "").strip().split()
+    if len(parts) != 5:
+        return None
+    minute_text, hour_text, dom, month, dow = parts
+    if dom != "*" or month != "*":
+        return None
+    if not minute_text.isdigit() or not hour_text.isdigit():
+        return None
+
+    minute = int(minute_text)
+    hour = int(hour_text)
+    if minute < 0 or minute > 59 or hour < 0 or hour > 23:
+        return None
+
+    raw_days = [item.strip() for item in dow.split(",") if item.strip()]
+    if not raw_days:
+        return None
+
+    normalized_days = []
+    for day in raw_days:
+        if day == "7":
+            day = "0"
+        if day not in {"0", "1", "2", "3", "4", "5", "6"}:
+            return None
+        if day not in normalized_days:
+            normalized_days.append(day)
+
+    ordered_days = [day for _, day in WEEKDAY_CHOICES if day in normalized_days]
+    if not ordered_days:
+        return None
+
+    return {
+        "days": ordered_days,
+        "time": "%02d:%02d" % (hour, minute),
+    }
+
+
+def _schedule_form_state(schedule: str) -> Dict[str, object]:
+    raw = str(schedule or "").strip()
+    parsed = _parse_simple_cron(raw)
+    if parsed is None:
+        return {
+            "mode": "advanced" if raw else "simple",
+            "days": [],
+            "time": "00:00",
+            "raw": raw,
+            "preview": raw,
+        }
+    preview = _build_simple_cron(str(parsed["time"]), list(parsed["days"]))
+    return {
+        "mode": "simple",
+        "days": list(parsed["days"]),
+        "time": str(parsed["time"]),
+        "raw": raw,
+        "preview": preview,
+    }
 
 
 def _is_valid_crontab(expr: str) -> bool:

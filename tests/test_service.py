@@ -1462,6 +1462,159 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert int(remaining) == 0
 
 
+
+
+def test_simple_schedule_helper_build_and_parse_round_trip():
+    cron = service_module._build_simple_cron("13:45", ["1", "4"])
+    assert cron == "45 13 * * 1,4"
+
+    parsed = service_module._parse_simple_cron("45 13 * * 1,4")
+    assert parsed is not None
+    assert parsed["time"] == "13:45"
+    assert parsed["days"] == ["1", "4"]
+
+
+def test_simple_schedule_ui_populates_for_supported_cron(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE name = ?", ("30 6 * * 1,3,5", "Movies"))
+    conn.commit()
+    conn.close()
+
+    status_code, body, _ = _call_get(service, "/settings")
+
+    assert status_code == 200
+    assert 'value="06:30" selected' in body
+    assert 'name="schedule_day_1" value="1" checked' in body
+    assert 'name="schedule_day_3" value="1" checked' in body
+    assert 'name="schedule_day_5" value="1" checked' in body
+
+
+def test_unsupported_cron_falls_back_to_advanced_mode(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE name = ?", ("*/5 * * * *", "Movies"))
+    conn.commit()
+    conn.close()
+
+    status_code, body, _ = _call_get(service, "/settings")
+
+    assert status_code == 200
+    assert 'value="advanced" checked' in body
+    assert 'name="schedule" value="*/5 * * * *"' in body
+
+
+def test_simple_mode_create_generates_expected_cron(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={
+            "name": "Kids",
+            "path": "/data/kids",
+            "enabled": "1",
+            "schedule_mode": "simple",
+            "schedule_time": "09:15",
+            "schedule_day_0": "1",
+            "schedule_day_6": "1",
+        },
+    )
+    assert status_code == 200
+    assert "Library created." in body
+
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute("SELECT schedule FROM libraries WHERE name = ?", ("Kids",)).fetchone()
+    conn.close()
+    assert row[0] == "15 9 * * 0,6"
+
+
+def test_schedule_validation_in_simple_and_advanced_modes(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={
+            "name": "One",
+            "path": "/data/one",
+            "enabled": "1",
+            "schedule_mode": "simple",
+            "schedule_time": "08:00",
+        },
+    )
+    assert status_code == 200
+    assert "select at least one weekday" in body
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={
+            "name": "Two",
+            "path": "/data/two",
+            "enabled": "1",
+            "schedule_mode": "simple",
+            "schedule_day_1": "1",
+        },
+    )
+    assert status_code == 200
+    assert "time is required in simple mode" in body
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={
+            "name": "Three",
+            "path": "/data/three",
+            "enabled": "1",
+            "schedule_mode": "advanced",
+            "schedule": "",
+        },
+    )
+    assert status_code == 200
+    assert "cron schedule is required in advanced mode" in body
+
+
+def test_advanced_mode_update_preserves_raw_cron(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute("SELECT id FROM libraries WHERE name = 'Movies'").fetchone()
+    conn.close()
+    library_id = int(row[0])
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/update",
+        data={
+            "library_id": str(library_id),
+            "name": "Movies",
+            "path": "/movies",
+            "enabled": "1",
+            "schedule_mode": "advanced",
+            "schedule": "5,35 2-4 * * 1-5",
+        },
+    )
+    assert status_code == 200
+    assert "Library updated." in body
+
+    conn = sqlite3.connect(str(db_path))
+    updated = conn.execute("SELECT schedule FROM libraries WHERE id = ?", (library_id,)).fetchone()
+    conn.close()
+    assert updated[0] == "5,35 2-4 * * 1-5"
+
 def test_library_validation_rejects_duplicates_and_blanks(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
