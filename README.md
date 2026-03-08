@@ -304,9 +304,12 @@ The dashboard preserves existing operator controls and visibility:
 - Library status cards stacked by enabled library
 - Each card shows library name, path, last run, next run (or `Manual Only` when no schedule), and recent savings from the latest SQLite `runs` entry
 - One **Run Now** control per enabled library (`POST /libraries/{library_id}/run`)
+- Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
+- Single-worker in-memory queue processes library jobs in FIFO order
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
+- Current runtime status block (idle/queued/running, current library/trigger, queue depth, run id, started timestamp)
 
 Runs page:
 
@@ -390,6 +393,7 @@ It includes recent service events such as:
 - scheduler start
 - schedule registration
 - manual and scheduled run requests
+- queued job start/completion and queue rejections
 - run start/completion
 - busy overlap rejections
 
@@ -405,6 +409,7 @@ The System page provides lightweight operator visibility into the running servic
 
 - service/runtime information (version, host/port, service mode)
 - scheduler status
+- current background job status (idle/queued/running with queue depth)
 - configured schedules for enabled libraries
 - next scheduled run times per enabled library when available from scheduler metadata
 - SQLite database path and runtime/work path visibility
@@ -423,8 +428,10 @@ Scheduler notes:
 - Library schedules are owned by DB-backed library rows (`libraries.schedule`).
 - Global Settings do not include schedule fields.
 - Enabled libraries with schedules are auto-registered with the scheduler.
+- Both scheduler and manual run requests share the same queue-backed execution path.
 - Enabled libraries with blank schedules are not auto-scheduled and are manual-run only.
 - Disabled libraries are excluded from runtime scheduling and manual-run controls.
+- Queue model is intentionally minimal for now: single worker, in-memory queue, no cancellation/retries persistence/progress parsing.
 - `MOVIE_SCHEDULE` / `TV_SCHEDULE` remain optional legacy/bootstrap env defaults used only during first-time bootstrap.
 - If schedules are changed in Libraries, restart the service for new cron schedules to be applied.
 
