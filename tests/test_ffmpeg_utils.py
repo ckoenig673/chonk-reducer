@@ -34,3 +34,17 @@ def test_run_cmd_terminates_process_when_cancelled(tmp_path):
     assert proc["pid"] is not None
     with pytest.raises(ProcessLookupError):
         os.kill(proc["pid"], 0)
+
+
+def test_run_cmd_streams_output_lines_to_callback(tmp_path):
+    log_path = tmp_path / "run.log"
+    logger = Logger(str(log_path))
+    lines = []
+    script = "import sys, time\nfor i in range(3):\n print('line=%s' % i, flush=True)\n time.sleep(0.05)"
+
+    rc, out = run_cmd([sys.executable, "-c", script], logger, on_output_line=lines.append)
+
+    assert rc == 0
+    assert "line=0" in out
+    assert "line=2" in out
+    assert any("line=1" in line for line in lines)

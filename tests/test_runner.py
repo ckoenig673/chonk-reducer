@@ -322,6 +322,42 @@ def test_run_reports_processed_only_after_successful_encode(tmp_path, monkeypatc
     assert any(int(s.get("files_processed", 0)) == 1 for s in snapshots)
 
 
+def test_run_progress_callback_reports_encode_runtime_fields(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=1)
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    def fake_encode(src, encoded, cfg, logger, progress_callback=None, **kwargs):
+        del src, cfg, logger, kwargs
+        encoded.write_bytes(b"x" * 1000)
+        if progress_callback is not None:
+            progress_callback(encode_percent="62.5", encode_speed="3.2x", encode_eta="102", encode_out_time="12345678")
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    snapshots = []
+    rc = runner.run(progress_callback=lambda values: snapshots.append(dict(values)))
+
+    assert rc == 0
+    assert any(s.get("encode_percent") == "62.5" for s in snapshots)
+    assert any(s.get("encode_speed") == "3.2x" for s in snapshots)
+    assert any(s.get("encode_eta") == "102" for s in snapshots)
+
+
 def test_run_stops_processing_after_cancel_requested(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, max_files=5)
     src1 = cfg.media_root / "a.mkv"
@@ -357,5 +393,4 @@ def test_run_stops_processing_after_cancel_requested(tmp_path, monkeypatch):
 
     assert rc == 0
     assert state["calls"] == 1
-
 

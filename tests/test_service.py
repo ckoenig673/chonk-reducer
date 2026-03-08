@@ -1059,6 +1059,10 @@ def test_api_status_returns_valid_json_payload():
         "files_skipped",
         "files_failed",
         "bytes_saved",
+        "encode_percent",
+        "encode_speed",
+        "encode_eta",
+        "encode_out_time",
     }
     assert expected.issubset(set(effective.keys()))
 
@@ -1080,6 +1084,10 @@ def test_api_status_returns_current_runtime_snapshot_data():
             "files_skipped": "0",
             "files_failed": "0",
             "bytes_saved": "0",
+            "encode_percent": "62.5",
+            "encode_speed": "3.2x",
+            "encode_eta": "102",
+            "encode_out_time": "12345678",
         }
 
     status_code, body, payload = _call_get(service, "/api/status")
@@ -1092,6 +1100,10 @@ def test_api_status_returns_current_runtime_snapshot_data():
     assert effective["current_file"] == "episode.mkv"
     assert effective["files_evaluated"] == "1"
     assert effective["candidates_found"] == "1"
+    assert effective["encode_percent"] == "62.5"
+    assert effective["encode_speed"] == "3.2x"
+    assert effective["encode_eta"] == "102"
+    assert effective["encode_out_time"] == "12345678"
 
 
 def test_api_status_endpoint_remains_responsive_while_run_active(monkeypatch):
@@ -1432,6 +1444,9 @@ def test_dashboard_progress_bar_renders_for_active_run():
             "files_skipped": "3",
             "files_failed": "0",
             "bytes_saved": str(4 * 1024 * 1024 * 1024),
+            "encode_percent": "62.0",
+            "encode_speed": "3.2x",
+            "encode_eta": "102",
         }
 
     status_code, body, _ = _call_get(service, "/dashboard")
@@ -1445,6 +1460,9 @@ def test_dashboard_progress_bar_renders_for_active_run():
     assert "Files Skipped:</strong> 3" in body
     assert "Files Failed:</strong> 0" in body
     assert "Total Saved:</strong> 4.0 GB" in body
+    assert "Percent Complete:</strong> 62%" in body
+    assert "Speed:</strong> 3.2x" in body
+    assert "ETA:</strong> 1m 42s" in body
 
 
 def test_dashboard_progress_not_complete_during_active_encode():
@@ -2267,6 +2285,18 @@ def test_runtime_snapshot_and_dashboard_match_during_active_encode(monkeypatch):
     assert dashboard_status == 200
     assert "0 / 1 files processed" in dashboard_body
     assert "Current File:</strong> movie.mkv" in dashboard_body
+
+
+def test_update_runtime_progress_tracks_encode_fields():
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    service._update_runtime_progress({"encode_percent": "55.5", "encode_speed": "2.1x", "encode_eta": "45", "encode_out_time": "1234"})
+    snapshot = service._runtime_status_snapshot()
+
+    assert snapshot["encode_percent"] == "55.5"
+    assert snapshot["encode_speed"] == "2.1x"
+    assert snapshot["encode_eta"] == "45"
+    assert snapshot["encode_out_time"] == "1234"
 
 
 def test_activity_page_shows_recent_entries(tmp_path, monkeypatch):
