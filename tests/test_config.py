@@ -20,8 +20,8 @@ def test_load_config_returns_expected_defaults(monkeypatch):
 
     assert str(cfg.media_root) == "/movies"
     assert str(cfg.work_root) == "/work"
-    assert cfg.min_size_gb == 18.0
-    assert cfg.max_files == 2
+    assert cfg.min_size_gb == 0.0
+    assert cfg.max_files == 1
     assert cfg.min_savings_percent == 15.0
     assert cfg.out_mode == int("664", 8)
     assert cfg.out_dir_mode == int("775", 8)
@@ -35,8 +35,8 @@ def test_invalid_config_values_fall_back_to_safe_defaults(monkeypatch):
 
     cfg = load_config()
 
-    assert cfg.max_files == 2
-    assert cfg.min_size_gb == 18.0
+    assert cfg.max_files == 1
+    assert cfg.min_size_gb == 0.0
     assert cfg.out_mode == int("664", 8)
 
 

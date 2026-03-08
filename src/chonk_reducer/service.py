@@ -67,7 +67,6 @@ WEEKDAY_CHOICES = [
 
 EDITABLE_SETTINGS = {
     "min_file_age_minutes": {"env": "MIN_FILE_AGE_MINUTES", "default": "10"},
-    "max_files": {"env": "MAX_FILES", "default": "1"},
     "min_savings_percent": {"env": "MIN_SAVINGS_PERCENT", "default": "15"},
     "max_savings_percent": {"env": "MAX_SAVINGS_PERCENT", "default": "0"},
     "retry_count": {"env": "RETRY_COUNT", "default": "1"},
@@ -98,6 +97,8 @@ class LibraryRecord:
     path: str
     enabled: bool
     schedule: str
+    min_size_gb: float
+    max_files: int
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,8 @@ class RuntimeLibrary:
     name: str
     path: str
     schedule: str
+    min_size_gb: float
+    max_files: int
 
 
 @dataclass(frozen=True)
@@ -866,21 +869,25 @@ class ChonkService:
                     _env("MOVIE_MEDIA_ROOT", _library_values("movies").get("MEDIA_ROOT", "/movies")),
                     1,
                     movies_schedule,
+                    0.0,
+                    1,
                 ),
                 (
                     "TV",
                     _env("TV_MEDIA_ROOT", _library_values("tv").get("MEDIA_ROOT", "/tv_shows")),
                     1,
                     tv_schedule,
+                    0.0,
+                    1,
                 ),
             ]
-            for name, path, enabled, schedule in defaults:
+            for name, path, enabled, schedule, min_size_gb, max_files in defaults:
                 conn.execute(
                     """
-                    INSERT INTO libraries(name, path, enabled, schedule, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, path, enabled, schedule, now, now),
+                    (name, path, enabled, schedule, min_size_gb, max_files, now, now),
                 )
         conn.close()
 
@@ -892,7 +899,9 @@ class ChonkService:
 
     def list_libraries(self) -> List[LibraryRecord]:
         conn = _connect_settings_db(self._settings_db_path)
-        rows = conn.execute("SELECT id, name, path, enabled, schedule FROM libraries ORDER BY id ASC").fetchall()
+        rows = conn.execute(
+            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files FROM libraries ORDER BY id ASC"
+        ).fetchall()
         conn.close()
         return [
             LibraryRecord(
@@ -901,6 +910,8 @@ class ChonkService:
                 path=str(row["path"]),
                 enabled=bool(int(row["enabled"])),
                 schedule=str(row["schedule"] or ""),
+                min_size_gb=float(row["min_size_gb"]),
+                max_files=int(row["max_files"]),
             )
             for row in rows
         ]
@@ -914,14 +925,16 @@ class ChonkService:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO libraries(name, path, enabled, schedule, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         normalized["name"],
                         normalized["path"],
                         int(normalized["enabled"]),
                         normalized["schedule"],
+                        float(normalized["min_size_gb"]),
+                        int(normalized["max_files"]),
                         _utc_timestamp(),
                         _utc_timestamp(),
                     ),
@@ -945,7 +958,7 @@ class ChonkService:
                 cursor = conn.execute(
                     """
                     UPDATE libraries
-                    SET name = ?, path = ?, enabled = ?, schedule = ?, updated_at = ?
+                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -953,6 +966,8 @@ class ChonkService:
                         normalized["path"],
                         int(normalized["enabled"]),
                         normalized["schedule"],
+                        float(normalized["min_size_gb"]),
+                        int(normalized["max_files"]),
                         _utc_timestamp(),
                         int(library_id),
                     ),
@@ -1023,6 +1038,22 @@ class ChonkService:
         if not path:
             return {}, "Library validation failed: path is required."
 
+        min_size_raw = str(values.get("min_size_gb", "0")).strip() or "0"
+        try:
+            min_size_gb = float(min_size_raw)
+        except ValueError:
+            return {}, "Library validation failed: minimum file size must be a number."
+        if min_size_gb < 0:
+            return {}, "Library validation failed: minimum file size must be >= 0."
+
+        max_files_raw = str(values.get("max_files", "1")).strip() or "1"
+        try:
+            max_files = int(max_files_raw)
+        except ValueError:
+            return {}, "Library validation failed: max files per run must be an integer."
+        if max_files < 1:
+            return {}, "Library validation failed: max files per run must be >= 1."
+
         if schedule_mode == "legacy":
             schedule = str(values.get("schedule", "")).strip()
         elif schedule_mode == "advanced":
@@ -1044,6 +1075,8 @@ class ChonkService:
             "path": path,
             "schedule": schedule,
             "enabled": enabled,
+            "min_size_gb": min_size_gb,
+            "max_files": max_files,
         }, ""
 
     def _library_integrity_error_message(self, exc: sqlite3.IntegrityError) -> str:
@@ -1081,7 +1114,14 @@ class ChonkService:
         <label><strong>Name</strong></label><br />
         <input name=\"name\" value=\"{name}\" style=\"width: 100%; max-width: 420px;\" /><br />
         <label><strong>Path</strong></label><br />
-        <input name=\"path\" value=\"{path}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        <input name="path" value="{path}" style="width: 100%; max-width: 420px;" /><br />
+        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
+          <legend><strong>Processing Settings</strong></legend>
+          <label><strong>Minimum File Size (GB)</strong></label><br />
+          <input name="min_size_gb" type="number" step="0.1" min="0" value="{min_size_gb}" style="width: 100%;" /><br />
+          <label><strong>Max Files Per Run</strong></label><br />
+          <input name="max_files" type="number" step="1" min="1" value="{max_files}" style="width: 100%;" /><br />
+        </fieldset>
         {schedule_fields}
         <label><strong>Enabled</strong></label>
         <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
@@ -1094,6 +1134,8 @@ class ChonkService:
                     path=_escape_html(library.path),
                     enabled=enabled_label,
                     schedule=_escape_html(library.schedule),
+                    min_size_gb=_escape_html("%s" % library.min_size_gb),
+                    max_files=_escape_html(str(library.max_files)),
                     schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
                     library_id=library.id,
                     enabled_yes="selected" if library.enabled else "",
@@ -1136,6 +1178,13 @@ class ChonkService:
   <input name="name" style="width: 100%; max-width: 420px;" /><br />
   <label><strong>Path</strong></label><br />
   <input name="path" style="width: 100%; max-width: 420px;" /><br />
+  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
+    <legend><strong>Processing Settings</strong></legend>
+    <label><strong>Minimum File Size (GB)</strong></label><br />
+    <input name="min_size_gb" type="number" step="0.1" min="0" value="0.0" style="width: 100%;" /><br />
+    <label><strong>Max Files Per Run</strong></label><br />
+    <input name="max_files" type="number" step="1" min="1" value="1" style="width: 100%;" /><br />
+  </fieldset>
   {schedule_fields}
   <label><strong>Enabled</strong></label>
   <select name="enabled"><option value="1" selected>Yes</option><option value="0">No</option></select>
@@ -1272,7 +1321,14 @@ class ChonkService:
 
     def enabled_runtime_libraries(self) -> List[RuntimeLibrary]:
         return [
-            RuntimeLibrary(id=library.id, name=library.name, path=library.path, schedule=library.schedule)
+            RuntimeLibrary(
+                id=library.id,
+                name=library.name,
+                path=library.path,
+                schedule=library.schedule,
+                min_size_gb=library.min_size_gb,
+                max_files=library.max_files,
+            )
             for library in self.list_libraries()
             if library.enabled
         ]
@@ -2372,7 +2428,8 @@ def library_runtime_environment(library: RuntimeLibrary) -> Iterator[None]:
         "LIBRARY": library.name,
         "LOG_PREFIX": _slugify_library_name(library.name),
         "MEDIA_ROOT": library.path,
-        "MIN_SIZE_GB": _env("MIN_SIZE_GB", "0"),
+        "MIN_SIZE_GB": str(library.min_size_gb),
+        "MAX_FILES": str(library.max_files),
     }
     original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
 
@@ -2409,7 +2466,6 @@ def library_environment(library: str) -> Iterator[None]:
 def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
     env_map = {
         "min_file_age_minutes": "MIN_FILE_AGE_MINUTES",
-        "max_files": "MAX_FILES",
         "min_savings_percent": "MIN_SAVINGS_PERCENT",
         "max_savings_percent": "MAX_SAVINGS_PERCENT",
         "retry_count": "RETRY_COUNT",
@@ -2490,11 +2546,20 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
             path TEXT NOT NULL UNIQUE,
             enabled INTEGER NOT NULL DEFAULT 1,
             schedule TEXT NOT NULL DEFAULT '',
+            min_size_gb REAL NOT NULL DEFAULT 0.0,
+            max_files INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+    library_columns = {str(row[1]).strip().lower() for row in conn.execute("PRAGMA table_info(libraries)").fetchall()}
+    if "min_size_gb" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN min_size_gb REAL NOT NULL DEFAULT 0.0")
+    if "max_files" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN max_files INTEGER NOT NULL DEFAULT 1")
+    conn.execute("UPDATE libraries SET min_size_gb = COALESCE(min_size_gb, 0.0)")
+    conn.execute("UPDATE libraries SET max_files = CASE WHEN max_files IS NULL OR max_files < 1 THEN 1 ELSE max_files END")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS activity_events (
