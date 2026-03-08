@@ -70,16 +70,20 @@ Supported notification targets:
 
 Configure notifications from the **Settings** page:
 
-- `Discord Webhook URL` (optional)
-- `Generic Webhook URL` (optional)
+- `Discord Webhook URL` (optional, encrypted at rest)
+- `Generic Webhook URL` (optional, encrypted at rest)
 - `Enable Run Complete Notifications`
 - `Enable Run Failure Notifications`
 
 Notes:
 
 - If both webhook URLs are empty, notifications are effectively disabled.
+- Webhook URL values are encrypted before being written to SQLite (using `CHONK_SECRET_KEY`) and decrypted only at send time.
+- The Settings UI does not re-render plaintext secrets after save; it shows masked/hidden status and supports explicit clear + replace behavior.
+- The Settings page includes a `Send Test Notification` action for operator verification.
 - Notification delivery failures are non-fatal and only logged as warnings.
 - Notifications are sent once per run completion/failure event in service mode.
+- If `CHONK_SECRET_KEY` is changed or lost, existing encrypted webhook values may need to be re-entered.
 
 ---
 
@@ -472,6 +476,11 @@ Library-specific service overrides (optional):
 - `TV_MEDIA_ROOT`, `TV_MIN_SIZE_GB`, `TV_LOG_PREFIX`, `TV_LIBRARY`
 
 If `SERVICE_MODE` is unset/false, Chonk keeps the existing one-shot behavior.
+
+Notification secret key:
+
+- `CHONK_SECRET_KEY` must be set when saving or using encrypted notification webhook settings.
+- Use a strong random passphrase value (for example, `openssl rand -base64 32`).
 
 ---
 

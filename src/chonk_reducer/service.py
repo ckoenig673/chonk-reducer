@@ -48,6 +48,7 @@ except Exception:  # pragma: no cover - exercised by fallback tests
 
 from .runner import run
 from . import notifications
+from . import secrets
 from . import __version__
 
 
@@ -84,6 +85,7 @@ EDITABLE_SETTINGS = {
 }
 
 CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications"}
+SECRET_SETTINGS = {"discord_webhook_url", "generic_webhook_url"}
 
 RESTART_REQUIRED_SETTINGS = set()
 
@@ -282,6 +284,15 @@ class ChonkService:
             self.update_editable_settings(normalized)
             return self._html_response(self.settings_page_html(self.settings_saved_message(normalized)))
 
+        @self.app.post("/settings/test-notification")
+        def test_notification():
+            result = notifications.send_test_notification(settings_db_path=str(self._settings_db_path))
+            if result.get("ok"):
+                self._record_activity("notification_test", str(result.get("message", "Test notification sent.")))
+            else:
+                self._record_activity("notification_test_failed", str(result.get("message", "Test notification failed.")))
+            return self._html_response(self.settings_page_html(str(result.get("message", ""))))
+
         @self.app.post("/settings/libraries/create")
         async def create_library(request: Request = None):  # type: ignore[assignment]
             values = await self._request_form_values(request)
@@ -415,18 +426,32 @@ class ChonkService:
             if key in CHECKBOX_SETTINGS:
                 checked = "checked" if _env_bool_text(value) else ""
                 rows.append(
-                    """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong>{restart_badge}</label>
-  <input id=\"{key}\" name=\"{key}\" type=\"checkbox\" value=\"1\" {checked} />""".format(
+                    """<label for="{key}" style="display:block; margin-top: 0.75rem;"><strong>{label}</strong>{restart_badge}</label>
+  <input id="{key}" name="{key}" type="checkbox" value="1" {checked} />""".format(
                         key=key,
                         label=key.replace("_", " ").title(),
                         restart_badge=restart_badge,
                         checked=checked,
                     )
                 )
+            elif key in SECRET_SETTINGS:
+                configured = bool(str(value or "").strip())
+                status = "Configured (hidden)" if configured else "Not configured"
+                rows.append(
+                    """<label for="{key}" style="display:block; margin-top: 0.75rem;"><strong>{label}</strong>{restart_badge}</label>
+  <input id="{key}" name="{key}" value="" placeholder="Set (hidden)" style="width: 100%; max-width: 420px;" autocomplete="off" />
+  <div style="font-size: 0.9rem; color: #555; margin-top: 0.2rem;">{status}</div>
+  <label style="display:block; margin-top: 0.3rem; color:#444;"><input type="checkbox" name="clear_{key}" value="1" /> Clear stored secret</label>""".format(
+                        key=key,
+                        label=key.replace("_", " ").title(),
+                        restart_badge=restart_badge,
+                        status=_escape_html(status),
+                    )
+                )
             else:
                 rows.append(
-                    """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong>{restart_badge}</label>
-  <input id=\"{key}\" name=\"{key}\" value=\"{value}\" style=\"width: 100%; max-width: 420px;\" />""".format(
+                    """<label for="{key}" style="display:block; margin-top: 0.75rem;"><strong>{label}</strong>{restart_badge}</label>
+  <input id="{key}" name="{key}" value="{value}" style="width: 100%; max-width: 420px;" />""".format(
                         key=key,
                         label=key.replace("_", " ").title(),
                         restart_badge=restart_badge,
@@ -443,12 +468,15 @@ class ChonkService:
 <section>
 <h2>Global Settings</h2>
 <p>Editable service defaults persisted in SQLite.</p>
-<form method=\"post\" action=\"/settings\">%s
-  <div style=\"margin-top: 1rem;\"><button type=\"submit\">Save</button></div>
+<form method="post" action="/settings">%s
+  <div style="margin-top: 1rem;"><button type="submit">Save</button></div>
 </form>
-<p style=\"margin-top: 1rem; color: #555;\">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
+<form method="post" action="/settings/test-notification" style="margin-top: 0.75rem;">
+  <button type="submit">Send Test Notification</button>
+</form>
+<p style="margin-top: 1rem; color: #555;">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
 </section>
-<section style=\"margin-top: 2rem;\">
+<section style="margin-top: 2rem;">
 <h2>Libraries</h2>
 <p>Configured media library roots for future dynamic scheduling.</p>
 %s
@@ -470,6 +498,13 @@ class ChonkService:
         for key in CHECKBOX_SETTINGS:
             if key not in normalized:
                 normalized[key] = "0"
+        for key in SECRET_SETTINGS:
+            clear_key = "clear_%s" % key
+            if str(normalized.get(clear_key, "")).strip() == "1":
+                normalized[key] = ""
+                continue
+            if key in normalized and not str(normalized.get(key, "")).strip():
+                normalized.pop(key, None)
         return normalized
 
     def activity_page_html(self) -> str:
@@ -712,12 +747,24 @@ class ChonkService:
                 row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
                 if row is None:
                     value = _env(meta["env"], meta["default"])
+                    if key in SECRET_SETTINGS and value:
+                        value = secrets.encrypt_secret(value)
                     conn.execute(
                         "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)",
                         (key, value, _utc_timestamp()),
                     )
                 else:
                     value = str(row["value"])
+                    if key in SECRET_SETTINGS and value and not secrets.is_encrypted(value):
+                        try:
+                            encrypted = secrets.encrypt_secret(value)
+                            conn.execute(
+                                "UPDATE settings SET value = ?, updated_at = ? WHERE key = ?",
+                                (encrypted, _utc_timestamp(), key),
+                            )
+                            value = encrypted
+                        except secrets.SecretConfigError:
+                            LOGGER.warning("%s is configured in plaintext and could not be auto-encrypted yet.", key)
                 values[key] = value
         conn.close()
         return values
@@ -732,6 +779,8 @@ class ChonkService:
                 if key not in updates:
                     continue
                 value = str(updates[key]).strip()
+                if key in SECRET_SETTINGS and value:
+                    value = secrets.encrypt_secret(value)
                 conn.execute(
                     """
                     INSERT INTO settings(key, value, updated_at)
@@ -2203,6 +2252,7 @@ class ChonkService:
                     self.system_page_html,
                     self.update_editable_settings,
                     self.settings_saved_message,
+                    notifications.send_test_notification,
                     self.create_library,
                     self.update_library,
                     self.delete_library,
@@ -2543,6 +2593,7 @@ def _run_simple_http_server(
     system_html_fn: Callable[[], str],
     update_settings_fn: Callable[[Dict[str, str]], None],
     settings_saved_message_fn: Callable[[Dict[str, str]], str],
+    test_notification_fn: Callable[[Optional[str]], Dict[str, object]],
     create_library_fn: Callable[[Dict[str, str]], str],
     update_library_fn: Callable[[Dict[str, str]], str],
     delete_library_fn: Callable[[Dict[str, str]], str],
@@ -2656,6 +2707,16 @@ def _run_simple_http_server(
                         updates[key] = "0"
                 update_settings_fn(updates)
                 html = settings_html_fn(settings_saved_message_fn(updates))
+                encoded = html.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+            elif self.path == "/settings/test-notification":
+                result = test_notification_fn(None)
+                html = settings_html_fn(str(result.get("message", "")))
                 encoded = html.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")

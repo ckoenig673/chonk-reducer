@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import urllib.request
 
+from . import secrets
 
 LOGGER = logging.getLogger("chonk_reducer.notifications")
 
@@ -39,6 +40,16 @@ def _load_settings(settings_db_path: Optional[str] = None) -> Dict[str, str]:
     values = dict(defaults)
     for key, value in rows:
         values[str(key)] = str(value or "")
+
+    for key in ("discord_webhook_url", "generic_webhook_url"):
+        raw_value = values.get(key, "")
+        if not raw_value:
+            continue
+        try:
+            values[key] = secrets.decrypt_secret(raw_value)
+        except secrets.SecretConfigError as exc:
+            LOGGER.warning("Unable to decrypt %s: %s", key, exc)
+            values[key] = ""
     return values
 
 
@@ -169,6 +180,39 @@ def send_run_failure(run_summary: Dict[str, object], settings_db_path: Optional[
             _post_json(generic_url, payload)
         except Exception as exc:
             LOGGER.warning("Generic run failure notification failed: %s", exc)
+
+
+def send_test_notification(settings_db_path: Optional[str] = None) -> Dict[str, object]:
+    settings = _load_settings(settings_db_path)
+    discord_url = str(settings.get("discord_webhook_url", "")).strip()
+    generic_url = str(settings.get("generic_webhook_url", "")).strip()
+
+    if not discord_url and not generic_url:
+        return {"ok": False, "message": "No webhook URL configured. Add one and try again."}
+
+    sent = 0
+    failures = []
+    if discord_url:
+        try:
+            _post_json(discord_url, {"content": "Chonk Reducer test notification: configuration looks good."})
+            sent += 1
+        except Exception as exc:
+            failures.append("Discord: %s" % exc)
+            LOGGER.warning("Discord test notification failed: %s", exc)
+
+    if generic_url:
+        try:
+            _post_json(generic_url, {"event": "test_notification", "message": "Chonk Reducer test notification"})
+            sent += 1
+        except Exception as exc:
+            failures.append("Generic: %s" % exc)
+            LOGGER.warning("Generic test notification failed: %s", exc)
+
+    if sent and not failures:
+        return {"ok": True, "message": "Test notification sent successfully."}
+    if sent:
+        return {"ok": True, "message": "Test notification sent with partial failures: %s" % "; ".join(failures)}
+    return {"ok": False, "message": "Test notification failed: %s" % "; ".join(failures)}
 
 
 def build_run_complete_summary(library: str, run_id: str, row: Optional[sqlite3.Row] = None) -> Dict[str, object]:
