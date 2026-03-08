@@ -307,6 +307,16 @@ The dashboard preserves existing operator controls and visibility:
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
+- A minimal current job status panel (Idle/Queued/Running, current library, trigger source, queue depth)
+
+Service run orchestration is now unified through an in-memory background queue:
+
+- Manual run requests enqueue a library job (`POST /libraries/{library_id}/run` and compatibility routes)
+- Scheduled triggers enqueue the same job type
+- A single worker processes queued jobs one-at-a-time
+- Duplicate requests for a library already queued/running are rejected as busy
+
+This queue is intentionally minimal (single worker, in-memory only) and does not yet provide persistence, cancellation, retries beyond existing run behavior, or live ffmpeg progress parsing.
 
 Runs page:
 
@@ -389,9 +399,10 @@ It includes recent service events such as:
 - service startup
 - scheduler start
 - schedule registration
+- job queued/job started
 - manual and scheduled run requests
 - run start/completion
-- busy overlap rejections
+- duplicate queued/running rejections
 
 Raw detailed run logs are unchanged and still written to log files. The Activity page is intentionally a small recent-events view, not a full raw log replacement.
 
@@ -407,6 +418,7 @@ The System page provides lightweight operator visibility into the running servic
 - scheduler status
 - configured schedules for enabled libraries
 - next scheduled run times per enabled library when available from scheduler metadata
+- current queue/worker status (status, current library, trigger, queue depth, current run id, started-at)
 - SQLite database path and runtime/work path visibility
 
 It is intentionally minimal and is not a full diagnostics framework.
