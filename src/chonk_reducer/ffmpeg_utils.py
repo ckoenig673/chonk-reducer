@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import json
 import time
+import select
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -19,6 +20,7 @@ def run_cmd(
     timeout: int | None = None,
     cancel_requested: Optional[Callable[[], bool]] = None,
     on_process_start: Optional[Callable[[subprocess.Popen], None]] = None,
+    on_output_line: Optional[Callable[[str], None]] = None,
 ) -> tuple[int, str]:
     logger.log("CMD: " + " ".join(args))
     started = time.monotonic()
@@ -35,6 +37,17 @@ def run_cmd(
             pass
 
     cancelled = False
+    output_lines = []
+
+    def _emit_output(line: str) -> None:
+        text = str(line)
+        output_lines.append(text)
+        if callable(on_output_line):
+            try:
+                on_output_line(text)
+            except Exception:
+                pass
+
     try:
         while True:
             if timeout is not None and (time.monotonic() - started) > timeout:
@@ -54,6 +67,14 @@ def run_cmd(
 
             if p.poll() is not None:
                 break
+
+            if p.stdout is not None:
+                ready, _, _ = select.select([p.stdout], [], [], 0.1)
+                if ready:
+                    line = p.stdout.readline()
+                    if line:
+                        _emit_output(line)
+                continue
             time.sleep(0.1)
     finally:
         if callable(on_process_start):
@@ -64,7 +85,11 @@ def run_cmd(
 
     out = ""
     if p.stdout is not None:
-        out = p.stdout.read() or ""
+        remaining = p.stdout.read() or ""
+        if remaining:
+            for line in remaining.splitlines(keepends=True):
+                _emit_output(line)
+        out = "".join(output_lines)
     if out:
         for line in out.splitlines()[-30:]:
             logger.log("  " + line)

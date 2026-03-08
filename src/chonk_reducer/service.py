@@ -527,6 +527,19 @@ class ChonkService:
         return parsed;
       }
 
+      function formatEtaSeconds(rawValue) {
+        var seconds = parseInt(rawValue, 10);
+        if (isNaN(seconds) || seconds < 0) {
+          return "-";
+        }
+        if (seconds < 60) {
+          return String(seconds) + "s";
+        }
+        var minutes = Math.floor(seconds / 60);
+        var rem = seconds %% 60;
+        return String(minutes) + "m " + String(rem) + "s";
+      }
+
       function progressMarkup(snapshot) {
         if (String(snapshot.status || "") !== "Running") {
           return "";
@@ -543,7 +556,13 @@ class ChonkService:
           progressLabel = String(processed) + " files processed";
         }
         var pctLabel = String(Math.round(ratio * 100)) + "%%";
+        var encodePercent = parseFloat(snapshot.encode_percent);
+        if (!isNaN(encodePercent)) {
+          pctLabel = String(Math.round(Math.max(0, Math.min(100, encodePercent)))) + "%%";
+        }
         var currentFile = textValue(snapshot.current_file, "Waiting for first file");
+        var encodeSpeed = textValue(snapshot.encode_speed, "-");
+        var encodeEta = formatEtaSeconds(snapshot.encode_eta);
         return '' +
           '<div style="margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;">' +
           '<div style="font-weight:600; margin-bottom:0.35rem;">Run Progress</div>' +
@@ -551,6 +570,9 @@ class ChonkService:
           '<div style="background:#2a6fd6; width:' + pctLabel + '; height:100%%;"></div>' +
           '</div>' +
           '<div style="margin-top:0.35rem;">' + progressLabel + ' (' + pctLabel + ')</div>' +
+          '<div style="margin-top:0.35rem;"><strong>Percent Complete:</strong> ' + pctLabel + '</div>' +
+          '<div><strong>Speed:</strong> ' + encodeSpeed + '</div>' +
+          '<div><strong>ETA:</strong> ' + encodeEta + '</div>' +
           '<div style="margin-top:0.55rem;"><strong>Current Library:</strong> ' + textValue(snapshot.current_library, "-") + '</div>' +
           '<div><strong>Current File:</strong> ' + currentFile + '</div>' +
           '<div style="margin-top:0.4rem;"><strong>Files Evaluated:</strong> ' + String(parseCount(snapshot.files_evaluated)) + '</div>' +
@@ -888,6 +910,10 @@ class ChonkService:
             "files_skipped": snapshot["files_skipped"],
             "files_failed": snapshot["files_failed"],
             "bytes_saved": snapshot["bytes_saved"],
+            "encode_percent": snapshot["encode_percent"],
+            "encode_speed": snapshot["encode_speed"],
+            "encode_eta": snapshot["encode_eta"],
+            "encode_out_time": snapshot["encode_out_time"],
             "evaluated_count": snapshot["files_evaluated"],
             "processed_count": snapshot["files_processed"],
             "skipped_count": snapshot["files_skipped"],
@@ -1791,6 +1817,10 @@ class ChonkService:
             "files_skipped": str(run_snapshot.get("files_skipped", run_snapshot.get("skipped_count", ""))),
             "files_failed": str(run_snapshot.get("files_failed", run_snapshot.get("failed_count", ""))),
             "bytes_saved": str(run_snapshot.get("bytes_saved", "")),
+            "encode_percent": str(run_snapshot.get("encode_percent", "")),
+            "encode_speed": str(run_snapshot.get("encode_speed", "")),
+            "encode_eta": str(run_snapshot.get("encode_eta", "")),
+            "encode_out_time": str(run_snapshot.get("encode_out_time", "")),
             "cancel_requested": "1" if cancel_requested else "0",
         }
 
@@ -1848,6 +1878,14 @@ class ChonkService:
             ratio = 1.0 if processed > 0 else 0.0
             progress_label = "%s files processed" % processed
         pct_label = "%.0f%%" % (ratio * 100.0)
+        encode_percent_raw = str(snapshot.get("encode_percent", "") or "").strip()
+        if encode_percent_raw:
+            try:
+                pct_label = "%.0f%%" % max(0.0, min(100.0, float(encode_percent_raw)))
+            except Exception:
+                pass
+        encode_speed = str(snapshot.get("encode_speed", "") or "").strip() or "-"
+        encode_eta = _format_eta_seconds(snapshot.get("encode_eta", ""))
 
         return """
 <div style=\"margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;\">
@@ -1856,6 +1894,9 @@ class ChonkService:
     <div style=\"background:#2a6fd6; width:%s; height:100%%;\"></div>
   </div>
   <div style=\"margin-top:0.35rem;\">%s (%s)</div>
+  <div style=\"margin-top:0.35rem;\"><strong>Percent Complete:</strong> %s</div>
+  <div><strong>Speed:</strong> %s</div>
+  <div><strong>ETA:</strong> %s</div>
   <div style=\"margin-top:0.55rem;\"><strong>Current Library:</strong> %s</div>
   <div><strong>Current File:</strong> %s</div>
   <div style=\"margin-top:0.4rem;\"><strong>Files Evaluated:</strong> %s</div>
@@ -1868,6 +1909,9 @@ class ChonkService:
             _escape_html(pct_label),
             _escape_html(progress_label),
             _escape_html(pct_label),
+            _escape_html(pct_label),
+            _escape_html(encode_speed),
+            _escape_html(encode_eta),
             _escape_html(snapshot.get("current_library") or "-"),
             _escape_html(snapshot.get("current_file") or "Waiting for first file"),
             _escape_html(str(self._snapshot_int(snapshot, "files_evaluated"))),
@@ -3117,6 +3161,23 @@ def _format_saved_bytes(value) -> str:
         if scaled < 1024.0 or unit == units[-1]:
             return "%.1f %s" % (scaled, unit)
     return "%d B" % saved_bytes
+
+
+def _format_eta_seconds(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    try:
+        seconds = int(text)
+    except Exception:
+        return "-"
+    if seconds < 0:
+        return "-"
+    if seconds < 60:
+        return "%ss" % seconds
+    minutes = seconds // 60
+    remainder = seconds % 60
+    return "%sm %ss" % (minutes, remainder)
 
 
 

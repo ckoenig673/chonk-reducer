@@ -345,7 +345,7 @@ The dashboard preserves existing operator controls and visibility:
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
 - Current runtime status block (idle/queued/running, current library, trigger, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
-- Active runs now render a lightweight progress panel with an HTML progress bar (`files_processed / candidates_found` when available), plus Current Library, Current File, Files Evaluated, Files Processed, Files Skipped, Files Failed, and Total Saved
+- Active runs now render a lightweight progress panel with an HTML progress bar. During active ffmpeg encode the panel now also shows encoding percent complete (`out_time_ms / duration_ms`), live speed (`speed`), and ETA, while still showing file counters and current file/library context
 - Dashboard runtime status now auto-refreshes every 3 seconds using `GET /api/status` so Current Job Status + Run Progress update live without full page refresh
 - Active runs show a **Stop Run** button that calls `POST /api/run/cancel`; runtime status transitions through `Cancelling` and then `Cancelled` once the worker stops
 - Library cards show inline running progress (`Progress: processed / candidates files`) for the currently active library

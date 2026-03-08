@@ -300,7 +300,14 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
 
             evaluated += 1
             logger.log(f"Processing: {src}")
-            _progress(current_file=str(src), files_evaluated=evaluated)
+            _progress(
+                current_file=str(src),
+                files_evaluated=evaluated,
+                encode_percent="",
+                encode_speed="",
+                encode_eta="",
+                encode_out_time="",
+            )
 
             try:
                 before_bytes = src.stat().st_size
@@ -387,9 +394,10 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                             logger,
                             cancel_requested=cancel_requested,
                             on_process_start=_set_active_ffmpeg,
+                            progress_callback=_progress,
                         )
                     except TypeError as exc:
-                        if "cancel_requested" not in str(exc) and "on_process_start" not in str(exc):
+                        if "cancel_requested" not in str(exc) and "on_process_start" not in str(exc) and "progress_callback" not in str(exc):
                             raise
                         encode_qsv(src, encoded, cfg, logger)
                     if _cancel_check("encoding"):
