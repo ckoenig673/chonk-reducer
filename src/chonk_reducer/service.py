@@ -75,7 +75,7 @@ EDITABLE_SETTINGS = {
     "min_savings_percent": {"env": "MIN_SAVINGS_PERCENT", "default": "15"},
     "max_savings_percent": {"env": "MAX_SAVINGS_PERCENT", "default": "0"},
     "retry_count": {"env": "RETRY_COUNT", "default": "1"},
-    "retry_backoff_secs": {"env": "RETRY_BACKOFF_SECS", "default": "5"},
+    "retry_backoff_seconds": {"env": "RETRY_BACKOFF_SECONDS", "default": "5"},
     "skip_codecs": {"env": "SKIP_CODECS", "default": ""},
     "skip_resolution_tags": {"env": "SKIP_RESOLUTION_TAGS", "default": ""},
     "skip_min_height": {"env": "SKIP_MIN_HEIGHT", "default": "0"},
@@ -160,6 +160,13 @@ def _env_bootstrap(name: str, default: str) -> str:
             baseline = _ENV_RUNTIME_BASELINES.get(name)
             return (baseline or default).strip()
         return (os.getenv(name) or default).strip()
+
+
+def _env_bootstrap_compat(primary: str, fallback: str, default: str) -> str:
+    primary_value = _env_bootstrap(primary, "")
+    if primary_value:
+        return primary_value
+    return _env_bootstrap(fallback, default)
 
 def _env_int(name: str, default: int) -> int:
     value = _env(name, str(default))
@@ -563,6 +570,12 @@ class ChonkService:
         var currentFile = textValue(snapshot.current_file, "Waiting for first file");
         var encodeSpeed = textValue(snapshot.encode_speed, "-");
         var encodeEta = formatEtaSeconds(snapshot.encode_eta);
+        var retryAttempt = parseInt(snapshot.retry_attempt, 10);
+        var retryMax = parseInt(snapshot.retry_max, 10);
+        var retryMarkup = '';
+        if (!isNaN(retryAttempt) && !isNaN(retryMax) && retryAttempt > 0 && retryAttempt <= retryMax) {
+          retryMarkup = '<div><strong>Retry Attempt:</strong> ' + String(retryAttempt) + ' / ' + String(retryMax) + '</div>';
+        }
         return '' +
           '<div style="margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;">' +
           '<div style="font-weight:600; margin-bottom:0.35rem;">Run Progress</div>' +
@@ -573,6 +586,7 @@ class ChonkService:
           '<div style="margin-top:0.35rem;"><strong>Percent Complete:</strong> ' + pctLabel + '</div>' +
           '<div><strong>Speed:</strong> ' + encodeSpeed + '</div>' +
           '<div><strong>ETA:</strong> ' + encodeEta + '</div>' +
+          retryMarkup +
           '<div style="margin-top:0.55rem;"><strong>Current Library:</strong> ' + textValue(snapshot.current_library, "-") + '</div>' +
           '<div><strong>Current File:</strong> ' + currentFile + '</div>' +
           '<div style="margin-top:0.4rem;"><strong>Files Evaluated:</strong> ' + String(parseCount(snapshot.files_evaluated)) + '</div>' +
@@ -781,6 +795,18 @@ class ChonkService:
                 normalized.pop(key, None)
                 continue
             normalized[key] = raw_value
+
+        for key in ("retry_count", "retry_backoff_seconds"):
+            if key not in normalized:
+                continue
+            raw_value = str(normalized.get(key, "")).strip()
+            try:
+                parsed = int(raw_value)
+            except Exception:
+                parsed = 0
+            if parsed < 0:
+                parsed = 0
+            normalized[key] = str(parsed)
         return normalized
 
     def activity_page_html(self) -> str:
@@ -1038,7 +1064,10 @@ class ChonkService:
             for key, meta in EDITABLE_SETTINGS.items():
                 row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
                 if row is None:
-                    value = _env_bootstrap(meta["env"], meta["default"])
+                    if key == "retry_backoff_seconds":
+                        value = _env_bootstrap_compat(meta["env"], "RETRY_BACKOFF_SECS", meta["default"])
+                    else:
+                        value = _env_bootstrap(meta["env"], meta["default"])
                     if key in SECRET_SETTINGS and value:
                         value = secrets.encrypt_secret(value)
                     conn.execute(
@@ -1821,6 +1850,8 @@ class ChonkService:
             "encode_speed": str(run_snapshot.get("encode_speed", "")),
             "encode_eta": str(run_snapshot.get("encode_eta", "")),
             "encode_out_time": str(run_snapshot.get("encode_out_time", "")),
+            "retry_attempt": str(run_snapshot.get("retry_attempt", "")),
+            "retry_max": str(run_snapshot.get("retry_max", "")),
             "cancel_requested": "1" if cancel_requested else "0",
         }
 
@@ -1886,6 +1917,11 @@ class ChonkService:
                 pass
         encode_speed = str(snapshot.get("encode_speed", "") or "").strip() or "-"
         encode_eta = _format_eta_seconds(snapshot.get("encode_eta", ""))
+        retry_attempt = self._snapshot_int(snapshot, "retry_attempt")
+        retry_max = self._snapshot_int(snapshot, "retry_max")
+        retry_line = ""
+        if retry_attempt > 0 and retry_max >= retry_attempt:
+            retry_line = '  <div><strong>Retry Attempt:</strong> %s / %s</div>\n' % (_escape_html(str(retry_attempt)), _escape_html(str(retry_max)))
 
         return """
 <div style=\"margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;\">
@@ -1897,7 +1933,7 @@ class ChonkService:
   <div style=\"margin-top:0.35rem;\"><strong>Percent Complete:</strong> %s</div>
   <div><strong>Speed:</strong> %s</div>
   <div><strong>ETA:</strong> %s</div>
-  <div style=\"margin-top:0.55rem;\"><strong>Current Library:</strong> %s</div>
+%s  <div style=\"margin-top:0.55rem;\"><strong>Current Library:</strong> %s</div>
   <div><strong>Current File:</strong> %s</div>
   <div style=\"margin-top:0.4rem;\"><strong>Files Evaluated:</strong> %s</div>
   <div><strong>Files Processed:</strong> %s</div>
@@ -1912,6 +1948,7 @@ class ChonkService:
             _escape_html(pct_label),
             _escape_html(encode_speed),
             _escape_html(encode_eta),
+            retry_line,
             _escape_html(snapshot.get("current_library") or "-"),
             _escape_html(snapshot.get("current_file") or "Waiting for first file"),
             _escape_html(str(self._snapshot_int(snapshot, "files_evaluated"))),
@@ -2902,7 +2939,7 @@ def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
         "min_savings_percent": "MIN_SAVINGS_PERCENT",
         "max_savings_percent": "MAX_SAVINGS_PERCENT",
         "retry_count": "RETRY_COUNT",
-        "retry_backoff_secs": "RETRY_BACKOFF_SECS",
+        "retry_backoff_seconds": "RETRY_BACKOFF_SECONDS",
         "skip_codecs": "SKIP_CODECS",
         "skip_resolution_tags": "SKIP_RESOLUTION_TAGS",
         "skip_min_height": "SKIP_MIN_HEIGHT",

@@ -52,3 +52,21 @@ def test_min_file_age_minutes_invalid_or_negative_defaults_to_zero(monkeypatch):
 
     monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "not-a-number")
     assert load_config().min_file_age_minutes == 0
+
+
+def test_retry_backoff_seconds_prefers_new_env_name(monkeypatch):
+    monkeypatch.setenv("RETRY_BACKOFF_SECONDS", "12")
+    monkeypatch.setenv("RETRY_BACKOFF_SECS", "5")
+
+    cfg = load_config()
+
+    assert cfg.retry_backoff_seconds == 12
+
+
+def test_retry_backoff_seconds_falls_back_to_legacy_env_name(monkeypatch):
+    monkeypatch.delenv("RETRY_BACKOFF_SECONDS", raising=False)
+    monkeypatch.setenv("RETRY_BACKOFF_SECS", "9")
+
+    cfg = load_config()
+
+    assert cfg.retry_backoff_seconds == 9

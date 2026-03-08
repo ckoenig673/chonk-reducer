@@ -19,6 +19,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_int_with_fallback(primary: str, fallback: str, default: int) -> int:
+    raw_primary = (os.environ.get(primary) or "").strip()
+    if raw_primary:
+        try:
+            return int(raw_primary)
+        except ValueError:
+            return default
+    return _env_int(fallback, default)
+
+
 def _env_float(name: str, default: float) -> float:
     v = _env(name, str(default))
     try:
@@ -103,7 +113,7 @@ class Config:
     log_skips: bool
     top_candidates: int
     retry_count: int
-    retry_backoff_secs: int
+    retry_backoff_seconds: int
     preview: bool
 
     # Skip policies (Story 40/41)
@@ -184,7 +194,7 @@ def load_config() -> Config:
         log_skips=_env_bool("LOG_SKIPS", False),
         top_candidates=_env_int("TOP_CANDIDATES", 5),
         retry_count=_env_int("RETRY_COUNT", 1),
-        retry_backoff_secs=_env_int("RETRY_BACKOFF_SECS", 5),
+        retry_backoff_seconds=_env_int_with_fallback("RETRY_BACKOFF_SECONDS", "RETRY_BACKOFF_SECS", 5),
         preview=_env_bool("PREVIEW", False),
 
         skip_codecs=skip_codecs,
