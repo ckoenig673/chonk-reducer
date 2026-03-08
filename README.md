@@ -309,7 +309,12 @@ Settings page:
 open http://localhost:8080/settings
 ```
 
-The settings page is backed by SQLite (`STATS_PATH`) and currently manages a small editable subset:
+The settings page is backed by SQLite (`STATS_PATH`) and now has two sections:
+
+- **Global Settings** (DB-backed key/value settings)
+- **Libraries** (DB-backed library rows)
+
+Global Settings currently manage a small editable subset:
 
 - `movie_schedule` *(restart required)*
 - `tv_schedule` *(restart required)*
@@ -318,6 +323,21 @@ The settings page is backed by SQLite (`STATS_PATH`) and currently manages a sma
 - `min_savings_percent`
 
 Saving settings writes values to SQLite immediately. The page shows a save confirmation, and when restart-required settings are changed it indicates that some changes only take effect after a service restart.
+
+Libraries are now persisted in a `libraries` table and support simple operator CRUD:
+
+- create library
+- edit library
+- delete library
+- enable/disable library
+
+Bootstrap model for the new config foundation:
+
+1. Environment/compose values remain bootstrap defaults.
+2. Missing global settings keys are initialized from env/default values.
+3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized from current env/library values.
+
+Runtime note: scheduler/manual execution remains the existing fixed Movies/TV model in this release. DB-backed libraries are foundation data for future dynamic multi-library scheduling.
 
 Activity page:
 

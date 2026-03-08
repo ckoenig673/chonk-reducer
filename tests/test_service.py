@@ -89,6 +89,14 @@ def _call_post(service, path, data=None):
             if path == "/settings" and data is not None:
                 service.update_editable_settings(data)
                 return 200, service.settings_page_html(service.settings_saved_message(data))
+            if path == "/settings/libraries/create" and data is not None:
+                return 200, service.settings_page_html(service.create_library(data))
+            if path == "/settings/libraries/update" and data is not None:
+                return 200, service.settings_page_html(service.update_library(data))
+            if path == "/settings/libraries/delete" and data is not None:
+                return 200, service.settings_page_html(service.delete_library(data))
+            if path == "/settings/libraries/toggle" and data is not None:
+                return 200, service.settings_page_html(service.toggle_library(data))
             for route in service.app.routes:
                 methods = getattr(route, "methods", set())
                 if getattr(route, "path", None) == path and "POST" in methods:
@@ -105,6 +113,15 @@ def _call_post(service, path, data=None):
     if hasattr(handler, "__call__") and getattr(handler, "__name__", "") == "save_settings":
         service.update_editable_settings(data)
         return 200, service.settings_page_html(service.settings_saved_message(data))
+
+    if path == "/settings/libraries/create":
+        return 200, service.settings_page_html(service.create_library(data))
+    if path == "/settings/libraries/update":
+        return 200, service.settings_page_html(service.update_library(data))
+    if path == "/settings/libraries/delete":
+        return 200, service.settings_page_html(service.delete_library(data))
+    if path == "/settings/libraries/toggle":
+        return 200, service.settings_page_html(service.toggle_library(data))
 
     result = handler()
     return (202 if result["status"] == "started" else 409), result
@@ -1247,6 +1264,146 @@ def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch)
     assert "name=\"min_file_age_minutes\"" in body
     assert "name=\"max_files\"" in body
     assert "value=\"9\"" in body
+    assert "Global Settings" in body
+    assert "Libraries" in body
+
+
+def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("MOVIE_MEDIA_ROOT", "/mnt/media/movies")
+    monkeypatch.setenv("TV_MEDIA_ROOT", "/mnt/media/tv")
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 3 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "0 4 * * *")
+
+    ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT name, path, enabled, schedule FROM libraries ORDER BY id ASC").fetchall()
+    conn.close()
+
+    assert len(rows) == 2
+    assert rows[0]["name"] == "Movies"
+    assert rows[0]["path"] == "/mnt/media/movies"
+    assert int(rows[0]["enabled"]) == 1
+    assert rows[0]["schedule"] == "0 3 * * *"
+    assert rows[1]["name"] == "TV"
+    assert rows[1]["path"] == "/mnt/media/tv"
+    assert int(rows[1]["enabled"]) == 1
+    assert rows[1]["schedule"] == "0 4 * * *"
+
+
+def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    create_status, create_body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={"name": "Anime", "path": "/data/anime", "enabled": "1", "schedule": "10 1 * * *"},
+    )
+    assert create_status == 200
+    assert "Library created." in create_body
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    anime = conn.execute("SELECT id, name, path, enabled, schedule FROM libraries WHERE name = 'Anime'").fetchone()
+    assert anime is not None
+    library_id = int(anime["id"])
+    assert anime["path"] == "/data/anime"
+    assert int(anime["enabled"]) == 1
+    assert anime["schedule"] == "10 1 * * *"
+    conn.close()
+
+    update_status, update_body = _call_post(
+        service,
+        "/settings/libraries/update",
+        data={
+            "library_id": str(library_id),
+            "name": "Anime Updated",
+            "path": "/data/anime-updated",
+            "enabled": "0",
+            "schedule": "20 2 * * *",
+        },
+    )
+    assert update_status == 200
+    assert "Library updated." in update_body
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    updated = conn.execute("SELECT name, path, enabled, schedule FROM libraries WHERE id = ?", (library_id,)).fetchone()
+    assert updated is not None
+    assert updated["name"] == "Anime Updated"
+    assert updated["path"] == "/data/anime-updated"
+    assert int(updated["enabled"]) == 0
+    assert updated["schedule"] == "20 2 * * *"
+    conn.close()
+
+    toggle_status, toggle_body = _call_post(
+        service,
+        "/settings/libraries/toggle",
+        data={"library_id": str(library_id), "enabled": "1"},
+    )
+    assert toggle_status == 200
+    assert "Library enabled." in toggle_body
+
+    conn = sqlite3.connect(str(db_path))
+    enabled_value = conn.execute("SELECT enabled FROM libraries WHERE id = ?", (library_id,)).fetchone()[0]
+    conn.close()
+    assert int(enabled_value) == 1
+
+    delete_status, delete_body = _call_post(
+        service,
+        "/settings/libraries/delete",
+        data={"library_id": str(library_id)},
+    )
+    assert delete_status == 200
+    assert "Library deleted." in delete_body
+
+    conn = sqlite3.connect(str(db_path))
+    remaining = conn.execute("SELECT COUNT(*) FROM libraries WHERE id = ?", (library_id,)).fetchone()[0]
+    conn.close()
+    assert int(remaining) == 0
+
+
+def test_library_validation_rejects_duplicates_and_blanks(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={"name": "", "path": "/data/custom", "enabled": "1", "schedule": ""},
+    )
+    assert status_code == 200
+    assert "name is required" in body
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={"name": "Custom", "path": "", "enabled": "1", "schedule": ""},
+    )
+    assert status_code == 200
+    assert "path is required" in body
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={"name": "Movies", "path": "/data/another", "enabled": "1", "schedule": ""},
+    )
+    assert status_code == 200
+    assert "duplicate library name" in body
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/create",
+        data={"name": "Another", "path": "/movies", "enabled": "1", "schedule": ""},
+    )
+    assert status_code == 200
+    assert "duplicate library path" in body
 
 
 def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):

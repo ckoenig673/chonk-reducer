@@ -63,6 +63,15 @@ RESTART_REQUIRED_SETTINGS = {"movie_schedule", "tv_schedule"}
 
 
 @dataclass(frozen=True)
+class LibraryRecord:
+    id: int
+    name: str
+    path: str
+    enabled: bool
+    schedule: str
+
+
+@dataclass(frozen=True)
 class ServiceSettings:
     enabled: bool
     host: str
@@ -149,6 +158,7 @@ class ChonkService:
         settings_db_path = (settings.settings_db_path or _env("STATS_PATH", "/config/chonk.db")).strip() or "/config/chonk.db"
         self._settings_db_path = Path(settings_db_path)
         self._editable_settings = self._bootstrap_editable_settings()
+        self._bootstrap_libraries()
         self.settings = ServiceSettings(
             enabled=settings.enabled,
             host=settings.host,
@@ -207,12 +217,29 @@ class ChonkService:
 
         @self.app.post("/settings")
         async def save_settings(request: Request = None):  # type: ignore[assignment]
-            values: Dict[str, str] = {}
-            if request is not None and hasattr(request, "form"):
-                form = await request.form()
-                values = {key: str(value) for key, value in form.items()}
+            values = await self._request_form_values(request)
             self.update_editable_settings(values)
             return self._html_response(self.settings_page_html(self.settings_saved_message(values)))
+
+        @self.app.post("/settings/libraries/create")
+        async def create_library(request: Request = None):  # type: ignore[assignment]
+            values = await self._request_form_values(request)
+            return self._html_response(self.settings_page_html(self.create_library(values)))
+
+        @self.app.post("/settings/libraries/update")
+        async def update_library(request: Request = None):  # type: ignore[assignment]
+            values = await self._request_form_values(request)
+            return self._html_response(self.settings_page_html(self.update_library(values)))
+
+        @self.app.post("/settings/libraries/delete")
+        async def delete_library(request: Request = None):  # type: ignore[assignment]
+            values = await self._request_form_values(request)
+            return self._html_response(self.settings_page_html(self.delete_library(values)))
+
+        @self.app.post("/settings/libraries/toggle")
+        async def toggle_library(request: Request = None):  # type: ignore[assignment]
+            values = await self._request_form_values(request)
+            return self._html_response(self.settings_page_html(self.toggle_library(values)))
 
         @self.app.get("/health")
         def health() -> dict:
@@ -236,6 +263,13 @@ class ChonkService:
         if HTMLResponse is not None:
             return HTMLResponse(content=html, status_code=status_code)
         return html
+
+    async def _request_form_values(self, request: Request = None) -> Dict[str, str]:
+        values: Dict[str, str] = {}
+        if request is not None and hasattr(request, "form"):
+            form = await request.form()
+            values = {key: str(value) for key, value in form.items()}
+        return values
 
     def home_page_html(self) -> str:
         movies_status = self._latest_run_status("movies")
@@ -268,6 +302,7 @@ class ChonkService:
         return self._render_shell_html("Dashboard", content)
 
     def settings_page_html(self, message: str = "") -> str:
+        libraries = self.list_libraries()
         rows = []
         for key in EDITABLE_SETTINGS:
             value = self._editable_settings.get(key, "")
@@ -284,16 +319,29 @@ class ChonkService:
                 )
             )
 
-        content = "<h1>Settings</h1><p>Editable service settings persisted in SQLite.</p>"
+        content = "<h1>Settings</h1>"
         if message:
             content += '<div style="padding: 0.5rem; border: 1px solid #cfe9cf; background:#f4fff4;">%s</div>' % _escape_html(
                 message
             )
-        content += """<form method=\"post\" action=\"/settings\">%s
+        content += """
+<section>
+<h2>Global Settings</h2>
+<p>Editable service defaults persisted in SQLite.</p>
+<form method=\"post\" action=\"/settings\">%s
   <div style=\"margin-top: 1rem;\"><button type=\"submit\">Save</button></div>
 </form>
-<p style=\"margin-top: 1rem; color: #555;\">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>""" % "".join(
-            rows
+<p style=\"margin-top: 1rem; color: #555;\">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
+</section>
+<section style=\"margin-top: 2rem;\">
+<h2>Libraries</h2>
+<p>Configured media library roots for future dynamic scheduling.</p>
+%s
+%s
+</section>""" % (
+            "".join(rows),
+            self._libraries_table_html(libraries),
+            self._library_create_form_html(),
         )
         return self._render_shell_html("Settings", content)
 
@@ -529,6 +577,268 @@ class ChonkService:
                 )
                 self._editable_settings[key] = value
         conn.close()
+
+    def _bootstrap_libraries(self) -> None:
+        conn = _connect_settings_db(self._settings_db_path)
+        should_bootstrap = False
+        with conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM libraries").fetchone()
+            should_bootstrap = int(row["c"] if row is not None else 0) <= 0
+
+            if not should_bootstrap:
+                return
+
+            now = _utc_timestamp()
+            defaults = [
+                (
+                    "Movies",
+                    _env("MOVIE_MEDIA_ROOT", _library_values("movies").get("MEDIA_ROOT", "/movies")),
+                    1,
+                    self._editable_settings.get("movie_schedule", ""),
+                ),
+                (
+                    "TV",
+                    _env("TV_MEDIA_ROOT", _library_values("tv").get("MEDIA_ROOT", "/tv_shows")),
+                    1,
+                    self._editable_settings.get("tv_schedule", ""),
+                ),
+            ]
+            for name, path, enabled, schedule in defaults:
+                conn.execute(
+                    """
+                    INSERT INTO libraries(name, path, enabled, schedule, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (name, path, enabled, schedule, now, now),
+                )
+        conn.close()
+
+    def list_libraries(self) -> List[LibraryRecord]:
+        conn = _connect_settings_db(self._settings_db_path)
+        rows = conn.execute("SELECT id, name, path, enabled, schedule FROM libraries ORDER BY id ASC").fetchall()
+        conn.close()
+        return [
+            LibraryRecord(
+                id=int(row["id"]),
+                name=str(row["name"]),
+                path=str(row["path"]),
+                enabled=bool(int(row["enabled"])),
+                schedule=str(row["schedule"] or ""),
+            )
+            for row in rows
+        ]
+
+    def create_library(self, values: Dict[str, str]) -> str:
+        normalized, message = self._validate_library_values(values)
+        if message:
+            return message
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO libraries(name, path, enabled, schedule, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized["name"],
+                        normalized["path"],
+                        int(normalized["enabled"]),
+                        normalized["schedule"],
+                        _utc_timestamp(),
+                        _utc_timestamp(),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            conn.close()
+            return self._library_integrity_error_message(exc)
+        conn.close()
+        return "Library created."
+
+    def update_library(self, values: Dict[str, str]) -> str:
+        library_id = str(values.get("library_id", "")).strip()
+        if not library_id:
+            return "Library update failed: missing library id."
+        normalized, message = self._validate_library_values(values)
+        if message:
+            return message
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE libraries
+                    SET name = ?, path = ?, enabled = ?, schedule = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        normalized["name"],
+                        normalized["path"],
+                        int(normalized["enabled"]),
+                        normalized["schedule"],
+                        _utc_timestamp(),
+                        int(library_id),
+                    ),
+                )
+                if cursor.rowcount <= 0:
+                    return "Library update failed: library not found."
+        except ValueError:
+            conn.close()
+            return "Library update failed: invalid library id."
+        except sqlite3.IntegrityError as exc:
+            conn.close()
+            return self._library_integrity_error_message(exc)
+        conn.close()
+        return "Library updated."
+
+    def delete_library(self, values: Dict[str, str]) -> str:
+        library_id = str(values.get("library_id", "")).strip()
+        if not library_id:
+            return "Library delete failed: missing library id."
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            with conn:
+                cursor = conn.execute("DELETE FROM libraries WHERE id = ?", (int(library_id),))
+                if cursor.rowcount <= 0:
+                    return "Library delete failed: library not found."
+        except ValueError:
+            conn.close()
+            return "Library delete failed: invalid library id."
+        conn.close()
+        return "Library deleted."
+
+    def toggle_library(self, values: Dict[str, str]) -> str:
+        library_id = str(values.get("library_id", "")).strip()
+        enabled_value = str(values.get("enabled", "")).strip()
+        if not library_id:
+            return "Library toggle failed: missing library id."
+        enabled = 1 if enabled_value == "1" else 0
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            with conn:
+                cursor = conn.execute(
+                    "UPDATE libraries SET enabled = ?, updated_at = ? WHERE id = ?",
+                    (enabled, _utc_timestamp(), int(library_id)),
+                )
+                if cursor.rowcount <= 0:
+                    return "Library toggle failed: library not found."
+        except ValueError:
+            conn.close()
+            return "Library toggle failed: invalid library id."
+        conn.close()
+        return "Library %s." % ("enabled" if enabled else "disabled")
+
+    def _validate_library_values(self, values: Dict[str, str]) -> tuple:
+        name = str(values.get("name", "")).strip()
+        path = str(values.get("path", "")).strip()
+        schedule = str(values.get("schedule", "")).strip()
+        enabled = 1 if str(values.get("enabled", "1")).strip() == "1" else 0
+        if not name:
+            return {}, "Library validation failed: name is required."
+        if not path:
+            return {}, "Library validation failed: path is required."
+        return {
+            "name": name,
+            "path": path,
+            "schedule": schedule,
+            "enabled": enabled,
+        }, ""
+
+    def _library_integrity_error_message(self, exc: sqlite3.IntegrityError) -> str:
+        msg = str(exc).lower()
+        if "libraries.name" in msg:
+            return "Library validation failed: duplicate library name."
+        if "libraries.path" in msg:
+            return "Library validation failed: duplicate library path."
+        return "Library validation failed: duplicate value."
+
+    def _libraries_table_html(self, libraries: List[LibraryRecord]) -> str:
+        if not libraries:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No libraries configured.</div>'
+
+        row_html = []
+        for library in libraries:
+            enabled_label = "Enabled" if library.enabled else "Disabled"
+            toggle_target = "0" if library.enabled else "1"
+            toggle_label = "Disable" if library.enabled else "Enable"
+            row_html.append(
+                """<tr>
+  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{name}</td>
+  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\"><code>{path}</code></td>
+  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{enabled}</td>
+  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\"><code>{schedule}</code></td>
+  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{actions}</td>
+</tr>
+<tr>
+  <td colspan=\"5\" style=\"padding: 0.35rem 0.35rem 0.75rem 0.35rem; border-bottom: 1px solid #ddd; background: #fafcff;\">
+    <details>
+      <summary>Edit {name}</summary>
+      <form method=\"post\" action=\"/settings/libraries/update\" style=\"margin-top: 0.5rem;\">
+        <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
+        <label><strong>Name</strong></label><br />
+        <input name=\"name\" value=\"{name}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        <label><strong>Path</strong></label><br />
+        <input name=\"path\" value=\"{path}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        <label><strong>Schedule</strong></label><br />
+        <input name=\"schedule\" value=\"{schedule}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        <label><strong>Enabled</strong></label>
+        <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
+        <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Save Library</button></div>
+      </form>
+    </details>
+  </td>
+</tr>""".format(
+                    name=_escape_html(library.name),
+                    path=_escape_html(library.path),
+                    enabled=enabled_label,
+                    schedule=_escape_html(library.schedule),
+                    library_id=library.id,
+                    enabled_yes="selected" if library.enabled else "",
+                    enabled_no="selected" if not library.enabled else "",
+                    actions="""
+<form method=\"post\" action=\"/settings/libraries/toggle\" style=\"display: inline-block; margin-right: 0.4rem;\">
+  <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
+  <input type=\"hidden\" name=\"enabled\" value=\"{toggle_target}\" />
+  <button type=\"submit\">{toggle_label}</button>
+</form>
+<form method=\"post\" action=\"/settings/libraries/delete\" style=\"display: inline-block;\">
+  <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
+  <button type=\"submit\">Delete</button>
+</form>""".format(
+                        library_id=library.id,
+                        toggle_target=toggle_target,
+                        toggle_label=toggle_label,
+                    ),
+                )
+            )
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <thead>
+    <tr>
+      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Name</th>
+      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Path</th>
+      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Enabled</th>
+      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Schedule</th>
+      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Actions</th>
+    </tr>
+  </thead>
+  <tbody>%s</tbody>
+</table>""" % "".join(row_html)
+
+    def _library_create_form_html(self) -> str:
+        return """
+<h3 style=\"margin-top: 1rem;\">Create Library</h3>
+<form method=\"post\" action=\"/settings/libraries/create\">
+  <label><strong>Name</strong></label><br />
+  <input name=\"name\" style=\"width: 100%; max-width: 420px;\" /><br />
+  <label><strong>Path</strong></label><br />
+  <input name=\"path\" style=\"width: 100%; max-width: 420px;\" /><br />
+  <label><strong>Schedule</strong></label><br />
+  <input name=\"schedule\" style=\"width: 100%; max-width: 420px;\" /><br />
+  <label><strong>Enabled</strong></label>
+  <select name=\"enabled\"><option value=\"1\" selected>Yes</option><option value=\"0\">No</option></select>
+  <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Create Library</button></div>
+</form>
+"""
 
     def register_jobs(self) -> None:
         self._register_library_job("movies", self.settings.movie_schedule)
@@ -1216,6 +1526,10 @@ class ChonkService:
                     self.system_page_html,
                     self.update_editable_settings,
                     self.settings_saved_message,
+                    self.create_library,
+                    self.update_library,
+                    self.delete_library,
+                    self.toggle_library,
                     self.manual_run_payload,
                 )
         finally:
@@ -1301,6 +1615,19 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS libraries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            schedule TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
@@ -1394,6 +1721,10 @@ def _run_simple_http_server(
     system_html_fn: Callable[[], str],
     update_settings_fn: Callable[[Dict[str, str]], None],
     settings_saved_message_fn: Callable[[Dict[str, str]], str],
+    create_library_fn: Callable[[Dict[str, str]], str],
+    update_library_fn: Callable[[Dict[str, str]], str],
+    delete_library_fn: Callable[[Dict[str, str]], str],
+    toggle_library_fn: Callable[[Dict[str, str]], str],
     manual_run_fn: Callable[[str], tuple],
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
@@ -1477,6 +1808,31 @@ def _run_simple_http_server(
                 updates = {key: values[-1] for key, values in parse_qs(body, keep_blank_values=True).items() if values}
                 update_settings_fn(updates)
                 html = settings_html_fn(settings_saved_message_fn(updates))
+                encoded = html.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+            elif self.path in (
+                "/settings/libraries/create",
+                "/settings/libraries/update",
+                "/settings/libraries/delete",
+                "/settings/libraries/toggle",
+            ):
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
+                values = {key: items[-1] for key, items in parse_qs(body, keep_blank_values=True).items() if items}
+                if self.path == "/settings/libraries/create":
+                    message = create_library_fn(values)
+                elif self.path == "/settings/libraries/update":
+                    message = update_library_fn(values)
+                elif self.path == "/settings/libraries/delete":
+                    message = delete_library_fn(values)
+                else:
+                    message = toggle_library_fn(values)
+                html = settings_html_fn(message)
                 encoded = html.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
