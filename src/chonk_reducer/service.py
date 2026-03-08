@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import strftime
 from typing import Callable, Deque, Dict, Iterator, List, Optional, Set
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, quote, unquote
 
 try:
     from zoneinfo import ZoneInfo  # type: ignore
@@ -34,12 +34,13 @@ except Exception:  # pragma: no cover - exercised by fallback tests
 
 try:
     from fastapi import FastAPI, Request  # type: ignore
-    from fastapi.responses import HTMLResponse, JSONResponse  # type: ignore
+    from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # type: ignore
 except Exception:  # pragma: no cover - exercised by fallback tests
     FastAPI = None
     Request = None
     HTMLResponse = None
     JSONResponse = None
+    RedirectResponse = None
 
 try:
     import uvicorn  # type: ignore
@@ -334,6 +335,19 @@ class ChonkService:
                 return JSONResponse(content=payload, status_code=status_code)
             return payload
 
+        @self.app.post("/dashboard/libraries/{library_id}/run")
+        def run_library_from_dashboard(library_id: int):
+            payload, _ = self.manual_run_payload_for_id(int(library_id))
+            location = "/dashboard"
+            if payload.get("status") in ("queued", "busy"):
+                location = "/dashboard?manual_run=%s&library_id=%s" % (
+                    quote(str(payload.get("status", ""))),
+                    quote(str(payload.get("library_id", ""))),
+                )
+            if RedirectResponse is not None:
+                return RedirectResponse(url=location, status_code=303)
+            return self._html_response(self.home_page_html())
+
         @self.app.post("/run/movies")
         def run_movies():
             payload, status_code = self.manual_run_payload("movies")
@@ -391,7 +405,7 @@ class ChonkService:
     <div><strong>Total Saved:</strong> %s</div>
     <div><strong>Recent Savings:</strong> %s across %s files</div>
     %s
-    <form method="post" action="/libraries/%d/run" style="margin-top: 0.75rem;">
+    <form method="post" action="/dashboard/libraries/%d/run" style="margin-top: 0.75rem;">
       <button type="submit">Run Now</button>
     </form>
   </section>
@@ -2989,6 +3003,31 @@ def _run_simple_http_server(
             self.wfile.write(payload)
 
         def do_POST(self):  # noqa: N802
+            if self.path.startswith("/dashboard/libraries/") and self.path.endswith("/run"):
+                parts = [part for part in self.path.split("/") if part]
+                if len(parts) == 4 and parts[0] == "dashboard" and parts[1] == "libraries" and parts[3] == "run":
+                    try:
+                        library_id = int(parts[2])
+                    except ValueError:
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    payload, _ = manual_run_fn(str(library_id))
+                    location = "/dashboard"
+                    if payload.get("status") in ("queued", "busy"):
+                        location = "/dashboard?manual_run=%s&library_id=%s" % (
+                            quote(str(payload.get("status", ""))),
+                            quote(str(payload.get("library_id", ""))),
+                        )
+                    self.send_response(303)
+                    self.send_header("Location", location)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(404)
+                self.end_headers()
+                return
+
             if self.path.startswith("/libraries/") and self.path.endswith("/run"):
                 parts = [part for part in self.path.split("/") if part]
                 if len(parts) == 3 and parts[0] == "libraries" and parts[2] == "run":

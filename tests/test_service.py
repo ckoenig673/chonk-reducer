@@ -73,7 +73,7 @@ def _call_get(service, path):
     return 200, result, None
 
 
-def _call_post(service, path, data=None):
+def _call_post(service, path, data=None, follow_redirects=True):
     def _status_code_from_payload(payload):
         status = payload.get("status")
         if status in ("queued", "started"):
@@ -90,7 +90,9 @@ def _call_post(service, path, data=None):
             from starlette.testclient import TestClient
 
             with TestClient(service.app) as client:
-                response = client.post(path, data=data or {})
+                response = client.post(path, data=data or {}, follow_redirects=follow_redirects)
+            if not follow_redirects and 300 <= int(response.status_code) < 400:
+                return response.status_code, response
             try:
                 payload = response.json()
             except Exception:
@@ -125,6 +127,12 @@ def _call_post(service, path, data=None):
                     if hasattr(result, "status_code") and hasattr(result, "body"):
                         return int(result.status_code), json.loads(result.body.decode("utf-8"))
                     return (202 if result.get("status") in ("started", "queued") else 409), result
+                if route_path == "/dashboard/libraries/{library_id}/run" and path.startswith("/dashboard/libraries/") and path.endswith("/run") and "POST" in methods:
+                    library_id = int(path.split("/")[3])
+                    result = route.endpoint(library_id)
+                    if hasattr(result, "status_code") and hasattr(result, "headers"):
+                        return int(result.status_code), result
+                    return 200, result
 
     if not isinstance(service.app.routes, dict):
         raise TypeError("POST helper fallback expects dict routes")
@@ -137,6 +145,14 @@ def _call_post(service, path, data=None):
             if hasattr(result, "status_code") and hasattr(result, "body"):
                 return int(result.status_code), json.loads(result.body.decode("utf-8"))
             return (202 if result.get("status") in ("started", "queued") else 409), result
+    if handler is None and path.startswith("/dashboard/libraries/") and path.endswith("/run"):
+        handler = service.app.routes.get("POST /dashboard/libraries/{library_id}/run")
+        if handler is not None:
+            library_id = int(path.split("/")[3])
+            result = handler(library_id)
+            if hasattr(result, "status_code") and hasattr(result, "headers"):
+                return int(result.status_code), result
+            return 200, result
     if handler is None:
         raise KeyError("No POST route for %s" % path)
     if data is None:
@@ -678,6 +694,45 @@ def test_post_run_tv_starts_manual_run(monkeypatch):
     assert status_code == 202
     assert payload == {"status": "queued", "library": "tv", "library_id": 2}
     assert done.wait(timeout=1)
+
+
+def test_dashboard_run_library_redirects_immediately_after_queueing(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        entered.set()
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+
+    start = time.monotonic()
+    status_code, response = _call_post(service, "/dashboard/libraries/1/run", follow_redirects=False)
+    elapsed = time.monotonic() - start
+
+    assert status_code == 303
+    assert response.headers["location"].startswith("/dashboard")
+    assert elapsed < 0.5
+    release.set()
+
+
+def test_dashboard_run_library_redirects_promptly_when_busy(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    monkeypatch.setattr(service, "_enqueue_library_job", lambda library, trigger: False)
+
+    start = time.monotonic()
+    status_code, response = _call_post(service, "/dashboard/libraries/1/run", follow_redirects=False)
+    elapsed = time.monotonic() - start
+
+    assert status_code == 303
+    assert "manual_run=busy" in response.headers["location"]
+    assert elapsed < 0.2
 
 
 def test_post_run_library_id_starts_manual_run(monkeypatch):
