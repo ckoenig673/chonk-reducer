@@ -2078,6 +2078,10 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
         "validate_seconds",
         "log_retention_days",
         "bak_retention_days",
+        "discord_webhook_url",
+        "generic_webhook_url",
+        "enable_run_complete_notifications",
+        "enable_run_failure_notifications",
     }
     values = {row["key"]: row["value"] for row in rows}
     assert values["min_file_age_minutes"] == "22"
@@ -2209,3 +2213,105 @@ def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
     assert captured["max_files"] == "11"
     assert captured["min_file_age_minutes"] == "7"
     assert captured["retry_count"] == "9"
+
+
+def test_settings_route_renders_notification_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, body, _ = _call_get(service, "/settings")
+
+    assert status_code == 200
+    assert "name=\"discord_webhook_url\"" in body
+    assert "name=\"generic_webhook_url\"" in body
+    assert "name=\"enable_run_complete_notifications\"" in body
+    assert "name=\"enable_run_failure_notifications\"" in body
+
+
+def test_post_settings_persists_notification_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, _ = _call_post(
+        service,
+        "/settings",
+        data={
+            "discord_webhook_url": "https://discord.example/hook",
+            "generic_webhook_url": "https://generic.example/hook",
+            "enable_run_complete_notifications": "1",
+            "enable_run_failure_notifications": "1",
+        },
+    )
+
+    assert status_code == 200
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    values = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM settings").fetchall()}
+    conn.close()
+
+    assert values["discord_webhook_url"] == "https://discord.example/hook"
+    assert values["generic_webhook_url"] == "https://generic.example/hook"
+    assert values["enable_run_complete_notifications"] == "1"
+    assert values["enable_run_failure_notifications"] == "1"
+
+
+def test_run_completion_triggers_notification(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    called = {}
+
+    def fake_send(summary, settings_db_path=None):
+        called["summary"] = summary
+        called["settings_db_path"] = settings_db_path
+
+    monkeypatch.setattr(service_module, "run", lambda: 0)
+    monkeypatch.setattr(service_module.notifications, "send_run_complete", fake_send)
+
+    service._run_library_once("movies", "manual")
+
+    assert called["summary"]["library"] == "Movies"
+    assert called["summary"]["run_id"]
+    assert called["settings_db_path"] == str(db_path)
+
+
+def test_notification_errors_do_not_crash_service(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    monkeypatch.setattr(service_module, "run", lambda: 0)
+
+    def explode(summary, settings_db_path=None):
+        raise RuntimeError("webhook unavailable")
+
+    monkeypatch.setattr(service_module.notifications, "send_run_complete", explode)
+
+    service._run_library_once("movies", "manual")
+
+
+def test_run_failure_triggers_notification(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    called = {}
+
+    def fake_failure(summary, settings_db_path=None):
+        called["summary"] = summary
+        called["settings_db_path"] = settings_db_path
+
+    monkeypatch.setattr(service_module, "run", lambda: 3)
+    monkeypatch.setattr(service_module.notifications, "send_run_failure", fake_failure)
+
+    service._run_library_once("movies", "manual")
+
+    assert called["summary"]["library"] == "Movies"
+    assert "Run exited with code 3" in called["summary"]["error_message"]
+    assert called["settings_db_path"] == str(db_path)

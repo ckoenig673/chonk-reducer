@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.25.0
+**Current Version:** v1.29.0
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -56,6 +56,30 @@ docker compose run --rm movie-transcoder healthcheck
 ```
 
 Most deployments schedule the job using **Synology DSM Task Scheduler**.
+
+---
+
+# Notifications
+
+Chonk Reducer can send webhook alerts when a run completes or fails.
+
+Supported notification targets:
+
+- Discord webhook
+- Generic HTTP webhook
+
+Configure notifications from the **Settings** page:
+
+- `Discord Webhook URL` (optional)
+- `Generic Webhook URL` (optional)
+- `Enable Run Complete Notifications`
+- `Enable Run Failure Notifications`
+
+Notes:
+
+- If both webhook URLs are empty, notifications are effectively disabled.
+- Notification delivery failures are non-fatal and only logged as warnings.
+- Notifications are sent once per run completion/failure event in service mode.
 
 ---
 
