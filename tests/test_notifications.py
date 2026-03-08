@@ -188,3 +188,100 @@ def test_send_test_notification_failure_is_non_fatal(tmp_path, monkeypatch):
 
     assert result["ok"] is False
     assert "failed" in result["message"].lower()
+
+
+def test_run_complete_decrypts_urls_before_http_requests(monkeypatch):
+    encrypted_discord = "enc::discord-token"
+    encrypted_generic = "enc::generic-token"
+    monkeypatch.setattr(
+        notifications,
+        "_load_settings",
+        lambda settings_db_path=None: {
+            "discord_webhook_url": encrypted_discord,
+            "generic_webhook_url": encrypted_generic,
+            "enable_run_complete_notifications": "1",
+        },
+    )
+
+    seen_decrypt_inputs = []
+
+    def fake_decrypt(value):
+        seen_decrypt_inputs.append(value)
+        if value == encrypted_discord:
+            return "https://discord.example/decrypted"
+        if value == encrypted_generic:
+            return "https://generic.example/decrypted"
+        return value
+
+    sent_urls = []
+
+    def fake_post(url, payload):
+        del payload
+        sent_urls.append(url)
+
+    monkeypatch.setattr(secrets, "decrypt_secret", fake_decrypt)
+    monkeypatch.setattr(notifications, "_post_json", fake_post)
+
+    notifications.send_run_complete({"library": "Movies", "run_id": "run-1"})
+
+    assert seen_decrypt_inputs == [encrypted_discord, encrypted_generic]
+    assert sent_urls == ["https://discord.example/decrypted", "https://generic.example/decrypted"]
+
+
+def test_test_notification_supports_plaintext_and_encrypted_urls(monkeypatch):
+    monkeypatch.setattr(
+        notifications,
+        "_load_settings",
+        lambda settings_db_path=None: {
+            "discord_webhook_url": "https://discord.example/plaintext",
+            "generic_webhook_url": "enc::generic-token",
+        },
+    )
+
+    def fake_decrypt(value):
+        if value == "enc::generic-token":
+            return "https://generic.example/decrypted"
+        return value
+
+    sent_urls = []
+
+    def fake_post(url, payload):
+        del payload
+        sent_urls.append(url)
+
+    monkeypatch.setattr(secrets, "decrypt_secret", fake_decrypt)
+    monkeypatch.setattr(notifications, "_post_json", fake_post)
+
+    result = notifications.send_test_notification()
+
+    assert result["ok"] is True
+    assert sent_urls == ["https://discord.example/plaintext", "https://generic.example/decrypted"]
+
+
+def test_run_failure_uses_decrypted_generic_url(monkeypatch):
+    monkeypatch.setattr(
+        notifications,
+        "_load_settings",
+        lambda settings_db_path=None: {
+            "discord_webhook_url": "",
+            "generic_webhook_url": "enc::generic-token",
+            "enable_run_failure_notifications": "1",
+        },
+    )
+    monkeypatch.setattr(
+        secrets,
+        "decrypt_secret",
+        lambda value: "https://generic.example/decrypted" if value == "enc::generic-token" else value,
+    )
+
+    sent_urls = []
+
+    def fake_post(url, payload):
+        del payload
+        sent_urls.append(url)
+
+    monkeypatch.setattr(notifications, "_post_json", fake_post)
+
+    notifications.send_run_failure({"library": "Movies", "run_id": "run-1", "error_message": "boom"})
+
+    assert sent_urls == ["https://generic.example/decrypted"]
