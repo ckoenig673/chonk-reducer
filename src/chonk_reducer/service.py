@@ -2576,11 +2576,13 @@ def library_runtime_environment(library: RuntimeLibrary) -> Iterator[None]:
     original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
 
     with _ENV_MUTATION_LOCK:
-        try:
-            for key, value in values.items():
-                os.environ[key] = value
-            yield
-        finally:
+        for key, value in values.items():
+            os.environ[key] = value
+
+    try:
+        yield
+    finally:
+        with _ENV_MUTATION_LOCK:
             for key, value in original.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -2594,11 +2596,13 @@ def library_environment(library: str) -> Iterator[None]:
     original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
 
     with _ENV_MUTATION_LOCK:
-        try:
-            for key, value in values.items():
-                os.environ[key] = value
-            yield
-        finally:
+        for key, value in values.items():
+            os.environ[key] = value
+
+    try:
+        yield
+    finally:
+        with _ENV_MUTATION_LOCK:
             for key, value in original.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -2624,12 +2628,14 @@ def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
     original: Dict[str, Optional[str]] = {name: os.environ.get(name) for name in env_map.values()}
 
     with _ENV_MUTATION_LOCK:
-        try:
-            for key, env_name in env_map.items():
-                if key in values:
-                    os.environ[env_name] = str(values[key])
-            yield
-        finally:
+        for key, env_name in env_map.items():
+            if key in values:
+                os.environ[env_name] = str(values[key])
+
+    try:
+        yield
+    finally:
+        with _ENV_MUTATION_LOCK:
             for env_name, value in original.items():
                 if value is None:
                     os.environ.pop(env_name, None)

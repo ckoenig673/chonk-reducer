@@ -307,6 +307,7 @@ Chonk Reducer supports an optional long-running service mode for internal schedu
   - `/system`
   - `/favicon.ico` (returns `204 No Content` to prevent browser tab spinner hangs)
 - Fallback built-in HTTP mode now uses a threaded server so dashboard, favicon, and other small requests stay responsive while background jobs are actively running
+- Runtime environment mutation now uses short lock windows (set/restore only), so `/dashboard` and `/runs` remain refreshable while an active run is processing in the background.
 - `/` renders the dashboard in the new shell.
 
 Enable service mode:

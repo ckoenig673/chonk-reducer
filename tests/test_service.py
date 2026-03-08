@@ -2003,6 +2003,82 @@ def test_current_job_status_reflects_idle_queued_and_running(monkeypatch):
     assert service.current_job_status()["status"] == "Idle"
 
 
+def test_dashboard_route_remains_responsive_while_run_active(monkeypatch):
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_run(progress_callback=None):
+        del progress_callback
+        started.set()
+        release.wait(timeout=2)
+        return 0
+
+    monkeypatch.setattr(service_module, "run", blocking_run)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert started.wait(timeout=1)
+
+    result = {}
+
+    def call_dashboard():
+        result["status_code"], result["body"], _ = _call_get(service, "/dashboard")
+
+    request_thread = threading.Thread(target=call_dashboard)
+    request_thread.start()
+    request_thread.join(timeout=0.75)
+
+    release.set()
+
+    assert not request_thread.is_alive()
+    assert result["status_code"] == 200
+    assert "<h1>Dashboard</h1>" in result["body"]
+
+
+def test_runs_route_remains_responsive_while_run_active(monkeypatch):
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    started = threading.Event()
+    progress_reached = threading.Event()
+    release = threading.Event()
+
+    def blocking_run(progress_callback=None):
+        started.set()
+        if progress_callback is not None:
+            progress_callback({"current_file": "movie.mkv", "files_processed": 1, "candidates_found": 3})
+            progress_reached.set()
+        release.wait(timeout=2)
+        return 0
+
+    monkeypatch.setattr(service_module, "run", blocking_run)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert started.wait(timeout=1)
+    assert progress_reached.wait(timeout=1)
+
+    result = {}
+
+    def call_runs():
+        result["status_code"], result["body"], _ = _call_get(service, "/runs")
+
+    request_thread = threading.Thread(target=call_runs)
+    request_thread.start()
+    request_thread.join(timeout=0.75)
+
+    snapshot = service._runtime_status_snapshot()
+    release.set()
+
+    assert not request_thread.is_alive()
+    assert result["status_code"] == 200
+    assert "<h1>Runs</h1>" in result["body"]
+    assert snapshot["status"] == "Running"
+    assert snapshot["files_processed"] == "1"
+    assert snapshot["candidates_found"] == "3"
+
+
 def test_activity_page_shows_recent_entries(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
