@@ -203,6 +203,17 @@ class ChonkService:
         self.scheduler = self._build_scheduler()
         self.app = self._build_app()
         self._library_locks: Dict[str, threading.Lock] = {}
+        self._job_state_lock = threading.Lock()
+        self._job_queue_condition = threading.Condition(self._job_state_lock)
+        self._job_queue: deque = deque()
+        self._queued_library_ids = set()
+        self._running_library_ids = set()
+        self._active_job: Optional[QueuedRunJob] = None
+        self._active_run_id: Optional[str] = None
+        self._active_started_at: Optional[str] = None
+        self._worker_shutdown = False
+        self._worker_thread = threading.Thread(target=self._job_worker_loop, daemon=True)
+        self._worker_thread.start()
         for library in self.enabled_runtime_libraries():
             self._library_locks[str(library.id)] = threading.Lock()
             self._library_locks[library.name.strip().lower()] = self._library_locks[str(library.id)]
@@ -369,6 +380,8 @@ class ChonkService:
         content = """
   <h1>Dashboard</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
+  %s
   %s
   %s
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Lifetime Savings</h2>
@@ -522,6 +535,9 @@ class ChonkService:
     </tbody>
   </table>
 
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
+  %s
+
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Settings Source Information</h2>
   <p>Schedules and paths shown above are loaded from SQLite-backed settings and libraries, with environment/compose values used only for compatibility defaults.</p>
 """ % (
@@ -536,8 +552,47 @@ class ChonkService:
             _escape_html(work_root),
             _escape_html(self._enabled_library_roots_label(enabled_libraries)),
             _escape_html(now_label),
+            self._runtime_job_status_html(),
         )
         return self._render_shell_html("System", content)
+
+    def current_job_status(self) -> Dict[str, str]:
+        with self._job_state_lock:
+            queue_depth = len(self._job_queue)
+            if self._active_job is not None:
+                status = "Running"
+            elif queue_depth > 0:
+                status = "Queued"
+            else:
+                status = "Idle"
+            return {
+                "status": status,
+                "current_library": self._active_job.library_name if self._active_job is not None else "",
+                "trigger": self._active_job.trigger if self._active_job is not None else "",
+                "queue_depth": str(queue_depth),
+                "run_id": self._active_run_id or "",
+                "started_at": self._active_started_at or "",
+            }
+
+    def _runtime_job_status_html(self) -> str:
+        status = self.current_job_status()
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <tbody>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; padding: 0.35rem;\">Started At</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+  </tbody>
+</table>""" % (
+            _escape_html(status["status"]),
+            _escape_html(status["current_library"] or "-"),
+            _escape_html(status["trigger"] or "-"),
+            _escape_html(status["queue_depth"]),
+            _escape_html(status["run_id"] or "-"),
+            _escape_html(status["started_at"] or "-"),
+        )
 
     def _scheduler_running_label(self) -> str:
         running = getattr(self.scheduler, "running", None)
@@ -1962,7 +2017,7 @@ class ChonkService:
             )
         conn.close()
 
-    def _run_library_once(self, library: str, trigger: str) -> None:
+    def _run_library_once(self, library: str, trigger: str, run_id: Optional[str] = None) -> None:
         library_record = self._library_by_key(library)
         if library_record is None:
             return
@@ -2023,6 +2078,7 @@ class ChonkService:
                 self._worker_shutdown = True
                 self._job_condition.notify_all()
             self.scheduler.shutdown(wait=False)
+            self.stop_background_worker()
 
         return 0
 

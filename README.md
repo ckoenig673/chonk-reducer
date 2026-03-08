@@ -392,10 +392,11 @@ It includes recent service events such as:
 - service startup
 - scheduler start
 - schedule registration
+- job queued/job started
 - manual and scheduled run requests
 - queued job start/completion and queue rejections
 - run start/completion
-- busy overlap rejections
+- duplicate queued/running rejections
 
 Raw detailed run logs are unchanged and still written to log files. The Activity page is intentionally a small recent-events view, not a full raw log replacement.
 
@@ -412,6 +413,7 @@ The System page provides lightweight operator visibility into the running servic
 - current background job status (idle/queued/running with queue depth)
 - configured schedules for enabled libraries
 - next scheduled run times per enabled library when available from scheduler metadata
+- current queue/worker status (status, current library, trigger, queue depth, current run id, started-at)
 - SQLite database path and runtime/work path visibility
 
 It is intentionally minimal and is not a full diagnostics framework.
