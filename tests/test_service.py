@@ -20,6 +20,7 @@ def _service_settings_db_path(tmp_path, monkeypatch):
 
 
 def _call_get(service, path):
+    normalized_path = path.split("?", 1)[0]
     can_use_test_client = service_module.FastAPI is not None and isinstance(service.app, service_module.FastAPI)
     if can_use_test_client:
         try:
@@ -44,6 +45,8 @@ def _call_get(service, path):
 
     if isinstance(service.app.routes, dict):
         handler = service.app.routes.get("GET %s" % path)
+        if handler is None:
+            handler = service.app.routes.get("GET %s" % normalized_path)
         if handler is None and path.startswith("/runs/"):
             handler = service.app.routes["GET /runs/{run_id}"]
             result = handler(path.split("/runs/", 1)[1])
@@ -56,7 +59,7 @@ def _call_get(service, path):
         for route in service.app.routes:
             methods = getattr(route, "methods", set())
             route_path = getattr(route, "path", None)
-            if route_path == path and "GET" in methods:
+            if route_path in (path, normalized_path) and "GET" in methods:
                 result = route.endpoint()
                 break
             if route_path == "/runs/{run_id}" and path.startswith("/runs/") and "GET" in methods:
@@ -714,7 +717,7 @@ def test_dashboard_run_library_redirects_immediately_after_queueing(monkeypatch)
     elapsed = time.monotonic() - start
 
     assert status_code == 303
-    assert response.headers["location"].startswith("/dashboard")
+    assert response.headers["location"] == "/dashboard?manual_run=queued&library_id=1"
     assert elapsed < 0.5
     release.set()
 
@@ -731,8 +734,33 @@ def test_dashboard_run_library_redirects_promptly_when_busy(monkeypatch):
     elapsed = time.monotonic() - start
 
     assert status_code == 303
-    assert "manual_run=busy" in response.headers["location"]
+    assert response.headers["location"] == "/dashboard?manual_run=busy&library_id=1"
     assert elapsed < 0.2
+
+
+def test_dashboard_manual_run_redirect_lands_on_successful_dashboard_response(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    monkeypatch.setattr(service, "_enqueue_library_job", lambda library, trigger: True)
+
+    status_code, response = _call_post(service, "/dashboard/libraries/1/run", follow_redirects=False)
+    dashboard_code, body, _ = _call_get(service, response.headers["location"])
+
+    assert status_code == 303
+    assert dashboard_code == 200
+    assert "Run Now" in body
+
+
+def test_dashboard_route_accepts_manual_run_status_query_params():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/dashboard?manual_run=queued&library_id=1")
+
+    assert status_code == 200
+    assert "Run Now" in body
 
 
 def test_post_run_library_id_starts_manual_run(monkeypatch):
