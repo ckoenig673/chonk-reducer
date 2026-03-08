@@ -33,11 +33,12 @@ except Exception:  # pragma: no cover - exercised by fallback tests
     CronTrigger = None
 
 try:
-    from fastapi import FastAPI, Request  # type: ignore
+    from fastapi import FastAPI, Request, Response  # type: ignore
     from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # type: ignore
 except Exception:  # pragma: no cover - exercised by fallback tests
     FastAPI = None
     Request = None
+    Response = None
     HTMLResponse = None
     JSONResponse = None
     RedirectResponse = None
@@ -263,6 +264,10 @@ class ChonkService:
         def dashboard():
             return self._html_response(self.home_page_html())
 
+        @self.app.get("/favicon.ico")
+        def favicon():
+            return self._no_content_response()
+
         @self.app.get("/runs")
         def runs_page():
             return self._html_response(self.runs_page_html())
@@ -366,6 +371,11 @@ class ChonkService:
         if HTMLResponse is not None:
             return HTMLResponse(content=html, status_code=status_code)
         return html
+
+    def _no_content_response(self):
+        if Response is not None:
+            return Response(status_code=204)
+        return ""
 
     async def _request_form_values(self, request: Request = None) -> Dict[str, str]:
         values: Dict[str, str] = {}
@@ -2926,6 +2936,12 @@ def _run_simple_http_server(
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             request_path = urlsplit(self.path).path
+
+            if request_path == "/favicon.ico":
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
 
             if request_path in ("/", "/dashboard"):
                 payload = home_html_fn().encode("utf-8")
