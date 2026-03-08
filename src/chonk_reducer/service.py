@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import strftime
 from typing import Callable, Deque, Dict, Iterator, List, Optional, Set
-from urllib.parse import parse_qs, quote, unquote
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 try:
     from zoneinfo import ZoneInfo  # type: ignore
@@ -2925,7 +2925,9 @@ def _run_simple_http_server(
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
-            if self.path in ("/", "/dashboard"):
+            request_path = urlsplit(self.path).path
+
+            if request_path in ("/", "/dashboard"):
                 payload = home_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2934,7 +2936,7 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path == "/settings":
+            if request_path == "/settings":
                 payload = settings_html_fn("").encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2943,7 +2945,7 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path == "/runs":
+            if request_path == "/runs":
                 payload = runs_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2952,7 +2954,7 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path == "/history":
+            if request_path == "/history":
                 payload = history_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2961,8 +2963,8 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path.startswith("/runs/"):
-                run_id = unquote(self.path[len("/runs/") :])
+            if request_path.startswith("/runs/"):
+                run_id = unquote(request_path[len("/runs/") :])
                 html, status_code = run_detail_html_fn(run_id)
                 payload = html.encode("utf-8")
                 self.send_response(status_code)
@@ -2972,7 +2974,7 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path == "/activity":
+            if request_path == "/activity":
                 payload = activity_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2981,7 +2983,7 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path == "/system":
+            if request_path == "/system":
                 payload = system_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2990,7 +2992,7 @@ def _run_simple_http_server(
                 self.wfile.write(payload)
                 return
 
-            if self.path != "/health":
+            if request_path != "/health":
                 self.send_response(404)
                 self.end_headers()
                 return
