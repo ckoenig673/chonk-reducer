@@ -1322,6 +1322,31 @@ def test_dashboard_progress_bar_renders_for_active_run():
     assert "Total Saved:</strong> 4.0 GB" in body
 
 
+def test_dashboard_progress_not_complete_during_active_encode():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    with service._job_condition:
+        service._current_job = service_module.RuntimeJob(library_id=1, library_name="Movies", trigger="manual", priority=100)
+        service._current_run_snapshot = {
+            "current_file": "/movies/Example.mkv",
+            "candidates_found": "1",
+            "files_evaluated": "1",
+            "files_processed": "0",
+            "files_skipped": "0",
+            "files_failed": "0",
+            "bytes_saved": "0",
+        }
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "0 / 1 files processed" in body
+    assert "(0%)" in body
+    assert "(100%)" not in body
+
+
 def test_dashboard_progress_renders_without_candidates_total():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
@@ -2077,6 +2102,46 @@ def test_runs_route_remains_responsive_while_run_active(monkeypatch):
     assert snapshot["status"] == "Running"
     assert snapshot["files_processed"] == "1"
     assert snapshot["candidates_found"] == "3"
+
+
+def test_runtime_snapshot_and_dashboard_match_during_active_encode(monkeypatch):
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    started = threading.Event()
+    progress_reached = threading.Event()
+    release = threading.Event()
+
+    def blocking_run(progress_callback=None):
+        started.set()
+        if progress_callback is not None:
+            progress_callback({
+                "current_file": "movie.mkv",
+                "candidates_found": 1,
+                "files_evaluated": 1,
+                "files_processed": 0,
+            })
+            progress_reached.set()
+        release.wait(timeout=2)
+        return 0
+
+    monkeypatch.setattr(service_module, "run", blocking_run)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert started.wait(timeout=1)
+    assert progress_reached.wait(timeout=1)
+
+    snapshot = service._runtime_status_snapshot()
+    dashboard_status, dashboard_body, _ = _call_get(service, "/dashboard")
+    release.set()
+
+    assert snapshot["status"] == "Running"
+    assert snapshot["current_file"] == "movie.mkv"
+    assert snapshot["files_processed"] == "0"
+    assert snapshot["candidates_found"] == "1"
+    assert dashboard_status == 200
+    assert "0 / 1 files processed" in dashboard_body
+    assert "Current File:</strong> movie.mkv" in dashboard_body
 
 
 def test_activity_page_shows_recent_entries(tmp_path, monkeypatch):

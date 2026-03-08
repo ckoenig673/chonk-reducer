@@ -336,7 +336,6 @@ def run(progress_callback=None) -> int:
                 continue
 
             attempt_errors: list[str] = []
-            encode_attempted = False
             for attempt in range(cfg.retry_count + 1):
                 if attempt > 0:
                     logger.log(f"RETRY {attempt}/{cfg.retry_count}: {src}")
@@ -346,10 +345,6 @@ def run(progress_callback=None) -> int:
                 t0 = time.monotonic()
                 try:
                     stage = "encode"
-                    if not encode_attempted:
-                        processed += 1
-                        encode_attempted = True
-                        _progress(files_processed=processed, current_file=str(src))
                     encode_qsv(src, encoded, cfg, logger)
 
                     stage = "validate"
@@ -502,6 +497,8 @@ def run(progress_callback=None) -> int:
                         bak_path=bak_path,
                     )
                     succeeded += 1
+                    processed += 1
+                    _progress(files_processed=processed, current_file=str(src))
                     _progress(success_count=succeeded, bytes_saved=saved_bytes_run, current_file=str(src))
                     done += 1
                     break
