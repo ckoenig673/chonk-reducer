@@ -283,3 +283,40 @@ def test_run_persists_run_summary_counters(tmp_path, monkeypatch):
     conn.close()
 
     assert row == (1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0)
+
+def test_run_reports_processed_only_after_successful_encode(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=1)
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    snapshots = []
+
+    def progress_callback(values):
+        snapshots.append(dict(values))
+
+    def fake_encode(src, encoded, cfg, logger):
+        del src, cfg, logger
+        encoded.write_bytes(b"x" * 1000)
+        assert max(int(s.get("files_processed", 0)) for s in snapshots) == 0
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    rc = runner.run(progress_callback=progress_callback)
+
+    assert rc == 0
+    assert any(s.get("current_file") == str(src) and int(s.get("files_evaluated", 0)) == 1 for s in snapshots)
+    assert any(int(s.get("files_processed", 0)) == 1 for s in snapshots)
