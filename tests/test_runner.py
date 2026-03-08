@@ -78,6 +78,30 @@ def test_run_initializes_logs(tmp_path, monkeypatch):
     assert "TRANSCODE START" in run_log.read_text()
 
 
+def test_run_records_raw_log_path_for_run_detail(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path)
+    (cfg.media_root / ".chonkpause").write_text("1")
+
+    captured = {"run_id": None, "path": None}
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "make_run_stamp", lambda: "20240101_000000")
+    monkeypatch.setattr(runner.uuid, "uuid4", lambda: types.SimpleNamespace(hex="abcd1234ef"))
+
+    def fake_record_run_log_path(cfg_obj, logger, *, run_id, mode, raw_log_path):
+        del cfg_obj, logger, mode
+        captured["run_id"] = run_id
+        captured["path"] = str(raw_log_path)
+
+    monkeypatch.setattr(runner, "record_run_log_path", fake_record_run_log_path)
+
+    rc = runner.run()
+
+    assert rc == 0
+    assert captured["run_id"] == "abcd1234"
+    assert captured["path"].endswith("transcode_20240101_000000.log")
+
+
 def test_run_respects_chonkpause_without_lock(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path)
     (cfg.media_root / ".chonkpause").write_text("1")

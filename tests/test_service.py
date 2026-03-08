@@ -119,6 +119,7 @@ def _seed_run(
     skipped_count=0,
     duration_seconds=0.0,
     saved_bytes=0,
+    raw_log_path=None,
 ):
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -153,6 +154,7 @@ def _seed_run(
             ,skipped_dry_run_count INTEGER NOT NULL DEFAULT 0
             ,ignored_folder_count INTEGER NOT NULL DEFAULT 0
             ,ignored_file_count INTEGER NOT NULL DEFAULT 0
+            ,raw_log_path TEXT
         )
         """
     )
@@ -160,8 +162,8 @@ def _seed_run(
         """
         INSERT INTO runs(
             run_id, ts_start, ts_end, mode, library, version, encoder, quality, preset,
-            success_count, failed_count, skipped_count, before_bytes, after_bytes, saved_bytes, duration_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            success_count, failed_count, skipped_count, before_bytes, after_bytes, saved_bytes, duration_seconds, raw_log_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             f"{library}-{ts_end}",
@@ -180,6 +182,7 @@ def _seed_run(
             0,
             int(saved_bytes),
             float(duration_seconds),
+            raw_log_path,
         ),
     )
     conn.commit()
@@ -922,12 +925,35 @@ def test_run_detail_page_renders_summary_and_file_rows(tmp_path, monkeypatch):
     assert "<strong>Result:</strong> failed" in body
     assert "<strong>Duration:</strong> 15.0s" in body
     assert "<strong>Saved:</strong> 1.0 MB" in body
+    assert "Raw Log Path" in body
+    assert "No raw log path recorded for this run" in body
     assert "File-Level Entries" in body
     assert "/movies/A.mkv" in body
     assert "/movies/B.mkv" in body
     assert "/movies/C.mkv" in body
     assert "min_savings: below threshold" in body
     assert "encode_error: ffmpeg failed" in body
+
+
+def test_run_detail_page_shows_raw_log_path_when_available(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    run_id = "movies-2026-01-02T08:00:00"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T08:00:00",
+        raw_log_path="/work/logs/movie_transcode_20260307_154335.log",
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "Raw Log Path" in body
+    assert "/work/logs/movie_transcode_20260307_154335.log" in body
 
 
 def test_run_detail_page_shows_no_file_entries_message(tmp_path, monkeypatch):

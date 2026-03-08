@@ -312,6 +312,7 @@ class ChonkService:
         encodes = self._encodes_for_run(run_id)
         content = "<h1>Run Detail</h1><p>Operator-facing summary for this run from SQLite.</p>"
         content += self._run_summary_html(run)
+        content += self._raw_log_path_html(run)
         content += '<h2 style="margin-top: 1rem;">File-Level Entries</h2>'
         content += self._run_encodes_html(encodes)
         return self._render_shell_html("Runs", content), 200
@@ -786,6 +787,7 @@ class ChonkService:
             "skipped_dry_run_count",
             "ignored_folder_count",
             "ignored_file_count",
+            "raw_log_path",
         ]
 
         try:
@@ -980,6 +982,12 @@ class ChonkService:
 
         lines = ["<li><strong>%s:</strong> %s</li>" % (label, value) for label, value in items]
         return '<h2>Run Summary</h2><ul style="line-height:1.5;">%s</ul>' % "".join(lines)
+
+    def _raw_log_path_html(self, run: Dict[str, str]) -> str:
+        raw_log_path = str(run.get("raw_log_path") or "").strip()
+        if raw_log_path:
+            return '<h2 style="margin-top: 1rem;">Raw Log Path</h2><pre style="padding: 0.5rem; border: 1px solid #ddd; background: #fafafa;">%s</pre>' % _escape_html(raw_log_path)
+        return '<h2 style="margin-top: 1rem;">Raw Log Path</h2><div style="padding: 0.5rem; border: 1px solid #ddd;">No raw log path recorded for this run.</div>'
 
     def _run_encodes_html(self, rows: List[Dict[str, str]]) -> str:
         if not rows:

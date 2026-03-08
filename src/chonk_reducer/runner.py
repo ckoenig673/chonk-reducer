@@ -16,7 +16,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .skip_policy import evaluate_skip
-from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters
+from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path
 from . import __version__ as PKG_VERSION
 
 
@@ -96,6 +96,7 @@ def run() -> int:
         mode = "PREVIEW"
     if cfg.dry_run:
         mode = "DRY_RUN"
+    record_run_log_path(cfg, logger, run_id=run_id, mode=mode.lower(), raw_log_path=run_log)
     logger.log(f"RUN_ID={run_id} MODE={mode}")
     logger.log(f"VERSION={cfg.version}")
     logger.log(f"STATS_ENABLED={getattr(cfg, 'stats_enabled', False)}")
