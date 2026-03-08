@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS runs (
     skipped_max_savings_count INTEGER NOT NULL DEFAULT 0,
     skipped_dry_run_count INTEGER NOT NULL DEFAULT 0,
     ignored_folder_count INTEGER NOT NULL DEFAULT 0,
-    ignored_file_count INTEGER NOT NULL DEFAULT 0
+    ignored_file_count INTEGER NOT NULL DEFAULT 0,
+    raw_log_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS encodes (
@@ -95,6 +96,7 @@ RUNS_COUNTER_COLUMNS = {
     "skipped_dry_run_count": "INTEGER NOT NULL DEFAULT 0",
     "ignored_folder_count": "INTEGER NOT NULL DEFAULT 0",
     "ignored_file_count": "INTEGER NOT NULL DEFAULT 0",
+    "raw_log_path": "TEXT",
 }
 
 
@@ -540,6 +542,51 @@ def record_run_counters(
         conn.close()
     except Exception as e:
         logger.log(f"WARN: run summary stats update failed: {cfg.stats_path} ({e})")
+
+
+def record_run_log_path(
+    cfg: Config,
+    logger: Logger,
+    *,
+    run_id: str,
+    mode: str,
+    raw_log_path: Path,
+) -> None:
+    if not getattr(cfg, "stats_enabled", False):
+        return
+
+    now = _iso_ts()
+    try:
+        db_path = ensure_database(cfg, logger)
+        conn = _connect(db_path)
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO runs(
+                    run_id, ts_start, ts_end, mode, library, version, encoder, quality, preset, raw_log_path
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    ts_start = MIN(runs.ts_start, excluded.ts_start),
+                    ts_end = MAX(runs.ts_end, excluded.ts_end),
+                    raw_log_path = excluded.raw_log_path
+                """,
+                (
+                    str(run_id),
+                    now,
+                    now,
+                    str(mode),
+                    infer_library(cfg),
+                    getattr(cfg, "version", "") or "unknown",
+                    getattr(cfg, "encoder", "hevc_qsv"),
+                    int(cfg.qsv_quality),
+                    int(cfg.qsv_preset),
+                    str(raw_log_path),
+                ),
+            )
+        conn.close()
+    except Exception as e:
+        logger.log(f"WARN: run log path update failed: {cfg.stats_path} ({e})")
 
 
 def fetch_encodes_since(db_paths: List[Path], start: datetime) -> List[Dict[str, Any]]:

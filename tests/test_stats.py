@@ -11,6 +11,7 @@ from chonk_reducer.stats import (
     record_failure,
     record_skip,
     record_success,
+    record_run_log_path,
 )
 
 
@@ -283,8 +284,30 @@ def test_runs_table_migration_adds_summary_counter_columns(tmp_path):
         "skipped_dry_run_count",
         "ignored_folder_count",
         "ignored_file_count",
+        "raw_log_path",
     }
     assert expected.issubset(cols)
+
+def test_record_run_log_path_persists_value(tmp_path):
+    cfg = _cfg(tmp_path)
+    src = tmp_path / "movie.mkv"
+    src.write_bytes(b"x")
+
+    record_run_log_path(
+        cfg,
+        StubLogger(),
+        run_id="run-log-path",
+        mode="live",
+        raw_log_path=tmp_path / "work" / "logs" / "transcode_20260101_000000.log",
+    )
+
+    conn = sqlite3.connect(str(cfg.stats_path))
+    row = conn.execute("SELECT raw_log_path FROM runs WHERE run_id = ?", ("run-log-path",)).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row[0].endswith("transcode_20260101_000000.log")
+
 
 def test_encode_insertion(tmp_path):
     cfg = _cfg(tmp_path)
