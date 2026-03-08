@@ -59,6 +59,8 @@ EDITABLE_SETTINGS = {
     "min_savings_percent": {"env": "MIN_SAVINGS_PERCENT", "default": "15"},
 }
 
+RESTART_REQUIRED_SETTINGS = {"movie_schedule", "tv_schedule"}
+
 
 @dataclass(frozen=True)
 class ServiceSettings:
@@ -210,7 +212,7 @@ class ChonkService:
                 form = await request.form()
                 values = {key: str(value) for key, value in form.items()}
             self.update_editable_settings(values)
-            return self._html_response(self.settings_page_html("Settings saved."))
+            return self._html_response(self.settings_page_html(self.settings_saved_message(values)))
 
         @self.app.get("/health")
         def health() -> dict:
@@ -269,11 +271,15 @@ class ChonkService:
         rows = []
         for key in EDITABLE_SETTINGS:
             value = self._editable_settings.get(key, "")
+            restart_badge = ""
+            if key in RESTART_REQUIRED_SETTINGS:
+                restart_badge = ' <span style="color: #8a4f00; font-size: 0.9rem;">(restart required)</span>'
             rows.append(
-                """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong></label>
+                """<label for=\"{key}\" style=\"display:block; margin-top: 0.75rem;\"><strong>{label}</strong>{restart_badge}</label>
   <input id=\"{key}\" name=\"{key}\" value=\"{value}\" style=\"width: 100%; max-width: 420px;\" />""".format(
                     key=key,
                     label=key.replace("_", " ").title(),
+                    restart_badge=restart_badge,
                     value=_escape_html(value),
                 )
             )
@@ -286,10 +292,15 @@ class ChonkService:
         content += """<form method=\"post\" action=\"/settings\">%s
   <div style=\"margin-top: 1rem;\"><button type=\"submit\">Save</button></div>
 </form>
-<p style=\"margin-top: 1rem; color: #555;\">Schedule changes are applied on service startup. Restart the service after updating schedules.</p>""" % "".join(
+<p style=\"margin-top: 1rem; color: #555;\">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>""" % "".join(
             rows
         )
         return self._render_shell_html("Settings", content)
+
+    def settings_saved_message(self, updates: Dict[str, str]) -> str:
+        if any(key in RESTART_REQUIRED_SETTINGS for key in updates):
+            return "Settings saved. Some changes require a service restart to take effect."
+        return "Settings saved."
 
     def activity_page_html(self) -> str:
         rows = self._recent_activity(limit=25)
@@ -1204,6 +1215,7 @@ class ChonkService:
                     self.activity_page_html,
                     self.system_page_html,
                     self.update_editable_settings,
+                    self.settings_saved_message,
                     self.manual_run_payload,
                 )
         finally:
@@ -1381,6 +1393,7 @@ def _run_simple_http_server(
     activity_html_fn: Callable[[], str],
     system_html_fn: Callable[[], str],
     update_settings_fn: Callable[[Dict[str, str]], None],
+    settings_saved_message_fn: Callable[[Dict[str, str]], str],
     manual_run_fn: Callable[[str], tuple],
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
@@ -1463,7 +1476,7 @@ def _run_simple_http_server(
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
                 updates = {key: values[-1] for key, values in parse_qs(body, keep_blank_values=True).items() if values}
                 update_settings_fn(updates)
-                html = settings_html_fn("Settings saved.")
+                html = settings_html_fn(settings_saved_message_fn(updates))
                 encoded = html.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
