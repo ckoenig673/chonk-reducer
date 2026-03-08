@@ -4,6 +4,7 @@ name: nas-transcoder
 # Common Environment (shared by movie + tv)
 # ============================================================
 x-common-env: &common-env
+  CHONK_SECRET_KEY: ${CHONK_SECRET_KEY}
   # ---- Python / container hygiene ----
   PYTHONPATH: /project/src                 # lets `python -m chonk_reducer` import project code
   PYTHONPYCACHEPREFIX: /work/pycache       # keep __pycache__ out of the read-only /project mount
