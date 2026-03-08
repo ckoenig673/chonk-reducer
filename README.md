@@ -404,8 +404,8 @@ Cron remains the internal scheduler storage format. If a saved cron expression m
 Bootstrap model for the new config foundation:
 
 1. Environment/compose values remain bootstrap defaults.
-2. Missing global settings keys are initialized from env/default values.
-3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized from current env/library values (including schedule bootstrap from legacy global schedule keys when present).
+2. Missing service settings keys are initialized from env/default values.
+3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`) and schedule bootstrap from legacy global schedule keys when present.
 
 Runtime note: service scheduling and manual execution are now driven by enabled library rows in SQLite (`libraries`), not a fixed Movies/TV runtime model. Enabled libraries with blank schedules remain manual-run only until a schedule is configured.
 
@@ -453,8 +453,8 @@ It is intentionally minimal and is not a full diagnostics framework.
 Settings precedence / bootstrap model:
 
 1. Environment/compose values are bootstrap defaults.
-2. On first startup, missing global settings rows are initialized from those environment values.
-3. On first startup, missing `libraries` rows are initialized from current fixed Movie/TV env/library defaults (and legacy global schedule keys when present).
+2. On first startup, missing service settings rows are initialized from those environment values.
+3. On first startup, missing `libraries` rows are initialized from current Movie/TV media roots, with per-library processing defaults (`min_size_gb=0.0`, `max_files=1`) and legacy schedule bootstrap.
 4. After initialization, SQLite values are used by service-driven runs.
 
 Scheduler notes:
@@ -476,8 +476,8 @@ Service scheduler environment variables:
 - `SERVICE_PORT` (default: `8080`)
 Library-specific service overrides (optional):
 
-- `MOVIE_MEDIA_ROOT`, `MOVIE_MIN_SIZE_GB`, `MOVIE_LOG_PREFIX`, `MOVIE_LIBRARY`
-- `TV_MEDIA_ROOT`, `TV_MIN_SIZE_GB`, `TV_LOG_PREFIX`, `TV_LIBRARY`
+- `MOVIE_MEDIA_ROOT`, `MOVIE_LOG_PREFIX`, `MOVIE_LIBRARY`
+- `TV_MEDIA_ROOT`, `TV_LOG_PREFIX`, `TV_LIBRARY`
 
 If `SERVICE_MODE` is unset/false, Chonk keeps the existing one-shot behavior.
 
@@ -500,13 +500,17 @@ Example balanced schedule:
 
 Run on alternating days.
 
-Set:
+Set per-library **Max Files Per Run** in **Settings → Libraries → Edit Library** to control runtime for each library independently.
 
-```
-MAX_FILES=1
-```
+Per-library processing fields in the library create/edit forms:
 
-to control runtime.
+- **Minimum File Size (GB)** (`min_size_gb`): files smaller than this value are skipped for that library.
+- **Max Files Per Run** (`max_files`): a run for that library stops after this many files.
+
+Defaults for existing and new libraries are:
+
+- `min_size_gb = 0.0`
+- `max_files = 1`
 
 ---
 
@@ -580,8 +584,6 @@ These are configured via `compose.yaml`.
 LIBRARY_NAME | | logical library name |
 MEDIA_ROOT | /movies | root scan path |
 WORK_ROOT | /work | workspace directory |
-MAX_FILES | 2 | files processed per run |
-MIN_SIZE_GB | 18 | minimum file size |
 MIN_FILE_AGE_MINUTES | 0 | skip recently modified files |
 MIN_SAVINGS_PERCENT | 15 | minimum savings |
 MAX_SAVINGS_PERCENT | 0 | optional savings cap |

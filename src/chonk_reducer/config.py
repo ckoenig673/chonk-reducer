@@ -145,8 +145,8 @@ def load_config() -> Config:
         media_root=media_root,
         work_root=work_root,
 
-        min_size_gb=_env_float("MIN_SIZE_GB", 18.0),
-        max_files=_env_int("MAX_FILES", 2),
+        min_size_gb=_env_float("MIN_SIZE_GB", 0.0),
+        max_files=_env_int("MAX_FILES", 1),
         min_media_free_gb=_env_float("MIN_MEDIA_FREE_GB", 0.0),
         max_gb_per_run=_env_float("MAX_GB_PER_RUN", 0.0),
         max_savings_percent=_env_float("MAX_SAVINGS_PERCENT", 0.0),

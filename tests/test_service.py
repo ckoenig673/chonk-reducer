@@ -1806,8 +1806,6 @@ def test_activity_page_shows_empty_state(tmp_path, monkeypatch):
 def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
-    monkeypatch.setenv("MAX_FILES", "9")
-
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
@@ -1819,8 +1817,6 @@ def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch)
     assert "name=\"movie_schedule\"" not in body
     assert "name=\"tv_schedule\"" not in body
     assert "name=\"min_file_age_minutes\"" in body
-    assert "name=\"max_files\"" in body
-    assert "value=\"9\"" in body
     assert "Global Settings" in body
     assert "Libraries" in body
     assert "<strong>Schedule</strong>" in body
@@ -1891,19 +1887,21 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     create_status, create_body = _call_post(
         service,
         "/settings/libraries/create",
-        data={"name": "Anime", "path": "/data/anime", "enabled": "1", "schedule": "10 1 * * *"},
+        data={"name": "Anime", "path": "/data/anime", "enabled": "1", "schedule": "10 1 * * *", "min_size_gb": "0.5", "max_files": "3"},
     )
     assert create_status == 200
     assert "Library created." in create_body
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    anime = conn.execute("SELECT id, name, path, enabled, schedule FROM libraries WHERE name = 'Anime'").fetchone()
+    anime = conn.execute("SELECT id, name, path, enabled, schedule, min_size_gb, max_files FROM libraries WHERE name = 'Anime'").fetchone()
     assert anime is not None
     library_id = int(anime["id"])
     assert anime["path"] == "/data/anime"
     assert int(anime["enabled"]) == 1
     assert anime["schedule"] == "10 1 * * *"
+    assert float(anime["min_size_gb"]) == 0.5
+    assert int(anime["max_files"]) == 3
     conn.close()
 
     update_status, update_body = _call_post(
@@ -1915,6 +1913,8 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "path": "/data/anime-updated",
             "enabled": "0",
             "schedule": "20 2 * * *",
+            "min_size_gb": "1.25",
+            "max_files": "2",
         },
     )
     assert update_status == 200
@@ -1922,12 +1922,14 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    updated = conn.execute("SELECT name, path, enabled, schedule FROM libraries WHERE id = ?", (library_id,)).fetchone()
+    updated = conn.execute("SELECT name, path, enabled, schedule, min_size_gb, max_files FROM libraries WHERE id = ?", (library_id,)).fetchone()
     assert updated is not None
     assert updated["name"] == "Anime Updated"
     assert updated["path"] == "/data/anime-updated"
     assert int(updated["enabled"]) == 0
     assert updated["schedule"] == "20 2 * * *"
+    assert float(updated["min_size_gb"]) == 1.25
+    assert int(updated["max_files"]) == 2
     conn.close()
 
     toggle_status, toggle_body = _call_post(
@@ -2148,13 +2150,63 @@ def test_library_validation_rejects_duplicates_and_blanks(tmp_path, monkeypatch)
     assert "duplicate library path" in body
 
 
+
+def test_library_columns_migrated_with_defaults(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS libraries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            schedule TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO libraries(name, path, enabled, schedule, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ("Legacy", "/legacy", 1, "", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute("SELECT min_size_gb, max_files FROM libraries WHERE name = ?", ("Legacy",)).fetchone()
+    conn.close()
+
+    assert float(row[0]) == 0.0
+    assert int(row[1]) == 1
+
+
+def test_library_validation_rejects_invalid_processing_inputs(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    message = service.create_library(
+        {"name": "Bad1", "path": "/data/bad1", "enabled": "1", "schedule": "", "min_size_gb": "-1", "max_files": "1"}
+    )
+    assert "minimum file size must be >= 0" in message
+
+    message = service.create_library(
+        {"name": "Bad2", "path": "/data/bad2", "enabled": "1", "schedule": "", "min_size_gb": "0", "max_files": "0"}
+    )
+    assert "max files per run must be >= 1" in message
+
 def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
     monkeypatch.setenv("MOVIE_SCHEDULE", "0 5 * * *")
     monkeypatch.setenv("TV_SCHEDULE", "30 6 * * *")
     monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "22")
-    monkeypatch.setenv("MAX_FILES", "3")
     monkeypatch.setenv("MIN_SAVINGS_PERCENT", "18")
     monkeypatch.setenv("MAX_SAVINGS_PERCENT", "45")
     monkeypatch.setenv("RETRY_COUNT", "4")
@@ -2175,7 +2227,6 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
 
     assert {row["key"] for row in rows} == {
         "min_file_age_minutes",
-        "max_files",
         "min_savings_percent",
         "max_savings_percent",
         "retry_count",
@@ -2193,7 +2244,6 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     }
     values = {row["key"]: row["value"] for row in rows}
     assert values["min_file_age_minutes"] == "22"
-    assert values["max_files"] == "3"
     assert values["min_savings_percent"] == "18"
     assert values["max_savings_percent"] == "45"
     assert values["retry_count"] == "4"
@@ -2219,7 +2269,6 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
         "/settings",
         data={
             "min_file_age_minutes": "40",
-            "max_files": "6",
             "min_savings_percent": "25",
             "max_savings_percent": "35",
             "retry_count": "3",
@@ -2245,7 +2294,6 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
     conn.close()
 
     assert values["min_file_age_minutes"] == "40"
-    assert values["max_files"] == "6"
     assert values["min_savings_percent"] == "25"
     assert values["max_savings_percent"] == "35"
     assert values["retry_count"] == "3"
@@ -2271,7 +2319,6 @@ def test_post_settings_update_shows_standard_saved_message(tmp_path, monkeypatch
         "/settings",
         data={
             "min_file_age_minutes": "40",
-            "max_files": "6",
             "min_savings_percent": "25",
         },
     )
@@ -2296,20 +2343,25 @@ def test_settings_page_hides_schedule_fields_and_shows_operator_note(tmp_path, m
     assert "Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only." in body
 
 
-def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
+def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
-    monkeypatch.setenv("MAX_FILES", "2")
 
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
-    service.update_editable_settings({"max_files": "11", "min_file_age_minutes": "7", "retry_count": "9"})
+    service.update_editable_settings({"min_file_age_minutes": "7", "retry_count": "9"})
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET min_size_gb = ?, max_files = ? WHERE name = ?", (2.5, 4, "Movies"))
+    conn.commit()
+    conn.close()
 
     captured = {}
 
     def fake_run_once():
         captured["max_files"] = os.getenv("MAX_FILES")
+        captured["min_size_gb"] = os.getenv("MIN_SIZE_GB")
         captured["min_file_age_minutes"] = os.getenv("MIN_FILE_AGE_MINUTES")
         captured["retry_count"] = os.getenv("RETRY_COUNT")
         return 0
@@ -2318,7 +2370,8 @@ def test_run_uses_db_backed_editable_settings(tmp_path, monkeypatch):
 
     service._run_library_once("movies", "manual")
 
-    assert captured["max_files"] == "11"
+    assert captured["max_files"] == "4"
+    assert captured["min_size_gb"] == "2.5"
     assert captured["min_file_age_minutes"] == "7"
     assert captured["retry_count"] == "9"
 
@@ -2369,7 +2422,7 @@ def test_blank_secret_submission_preserves_existing_notification_secret(tmp_path
     service.update_editable_settings({"discord_webhook_url": "https://discord.example/hook"})
 
     before = service._editable_settings["discord_webhook_url"]
-    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": "", "max_files": "12"})
+    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": "", "min_file_age_minutes": "12"})
 
     assert status_code == 200
     assert service._editable_settings["discord_webhook_url"] == before
@@ -2438,7 +2491,7 @@ def test_masked_secret_placeholder_submission_preserves_existing_notification_se
     service.update_editable_settings({"discord_webhook_url": "https://discord.example/hook"})
 
     before = service._editable_settings["discord_webhook_url"]
-    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": "Configured (hidden)", "max_files": "12"})
+    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": "Configured (hidden)", "min_file_age_minutes": "12"})
 
     assert status_code == 200
     assert service._editable_settings["discord_webhook_url"] == before
