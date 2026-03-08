@@ -83,6 +83,8 @@ def _call_post(service, path, data=None, follow_redirects=True):
         status = payload.get("status")
         if status in ("queued", "started"):
             return 202
+        if status in ("cancelling", "idle"):
+            return 200
         if status == "busy":
             return 409
         if status == "not_found":
@@ -163,7 +165,7 @@ def _call_post(service, path, data=None, follow_redirects=True):
     if data is None:
         result = handler()
         if isinstance(result, dict):
-            return (202 if result.get("status") in ("started", "queued") else 409), result
+            return _status_code_from_payload(result), result
         return 200, result
 
     if hasattr(handler, "__call__") and getattr(handler, "__name__", "") == "save_settings":
@@ -185,7 +187,7 @@ def _call_post(service, path, data=None, follow_redirects=True):
 
     result = handler()
     if isinstance(result, dict):
-        return (202 if result.get("status") in ("started", "queued") else 409), result
+        return _status_code_from_payload(result), result
     return 200, result
 
 
@@ -3289,3 +3291,70 @@ def test_run_failure_triggers_notification(tmp_path, monkeypatch):
     assert called["summary"]["library"] == "Movies"
     assert "Run exited with code 3" in called["summary"]["error_message"]
     assert called["settings_db_path"] == str(db_path)
+
+
+def test_cancel_endpoint_returns_idle_when_no_active_run():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, payload = _call_post(service, "/api/run/cancel")
+
+    assert status_code == 200
+    assert payload == {"status": "idle"}
+
+
+def test_cancel_endpoint_sets_cancelling_and_runtime_status(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_run(library, trigger):
+        del library, trigger
+        started.set()
+        while not service._is_cancel_requested():
+            time.sleep(0.01)
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run)
+
+    payload, status_code = service.manual_run_payload("movies")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert started.wait(timeout=1)
+
+    status_code, payload = _call_post(service, "/api/run/cancel")
+    assert status_code == 200
+    assert payload == {"status": "cancelling"}
+
+    observed = None
+    for _ in range(40):
+        status_code, body, snapshot = _call_get(service, "/api/status")
+        assert status_code == 200
+        if snapshot is None:
+            if isinstance(body, dict):
+                snapshot = body
+            else:
+                snapshot = json.loads(body or "{}")
+        observed = snapshot.get("status")
+        if observed == "Cancelling":
+            break
+        time.sleep(0.01)
+    assert observed == "Cancelling"
+
+    release.set()
+
+
+def test_dashboard_includes_stop_run_button():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "runtime-stop-button" in body
+    assert "Stop Run" in body

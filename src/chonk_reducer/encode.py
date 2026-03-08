@@ -3,11 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import Config
-from .ffmpeg_utils import run_cmd, CmdError
+from .ffmpeg_utils import CmdError, run_cmd
 from .logging_utils import Logger
 
 
-def encode_qsv(src: Path, encoded_out: Path, cfg: Config, logger: Logger) -> None:
+def encode_qsv(
+    src: Path,
+    encoded_out: Path,
+    cfg: Config,
+    logger: Logger,
+    cancel_requested=None,
+    on_process_start=None,
+) -> None:
     args = [
         "ffmpeg",
         "-hide_banner",
@@ -25,6 +32,12 @@ def encode_qsv(src: Path, encoded_out: Path, cfg: Config, logger: Logger) -> Non
         "-map_chapters", "0",
         str(encoded_out),
     ]
-    rc, _ = run_cmd(args, logger, timeout=None)
+    rc, _ = run_cmd(
+        args,
+        logger,
+        timeout=None,
+        cancel_requested=cancel_requested,
+        on_process_start=on_process_start,
+    )
     if rc != 0:
         raise CmdError(f"ffmpeg encode failed rc={rc}")

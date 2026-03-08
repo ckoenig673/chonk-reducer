@@ -320,3 +320,42 @@ def test_run_reports_processed_only_after_successful_encode(tmp_path, monkeypatc
     assert rc == 0
     assert any(s.get("current_file") == str(src) and int(s.get("files_evaluated", 0)) == 1 for s in snapshots)
     assert any(int(s.get("files_processed", 0)) == 1 for s in snapshots)
+
+
+def test_run_stops_processing_after_cancel_requested(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=5)
+    src1 = cfg.media_root / "a.mkv"
+    src2 = cfg.media_root / "b.mkv"
+    src1.write_bytes(b"x" * 5000)
+    src2.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    state = {"cancel": False, "calls": 0}
+
+    def fake_encode(src, encoded, cfg, logger, **kwargs):
+        del src, cfg, logger, kwargs
+        state["calls"] += 1
+        encoded.write_bytes(b"x" * 1000)
+        state["cancel"] = True
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    rc = runner.run(cancel_requested=lambda: state["cancel"])
+
+    assert rc == 0
+    assert state["calls"] == 1
+
+

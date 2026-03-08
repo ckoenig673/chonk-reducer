@@ -56,6 +56,8 @@ from . import __version__
 
 LOGGER = logging.getLogger("chonk_reducer.service")
 _ENV_MUTATION_LOCK = threading.RLock()
+_ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
+_ENV_RUNTIME_DEPTH = 0
 
 WEEKDAY_CHOICES = [
     ("Su", "0"),
@@ -150,6 +152,15 @@ def _env(name: str, default: str) -> str:
         return (os.getenv(name) or default).strip()
 
 
+
+
+def _env_bootstrap(name: str, default: str) -> str:
+    with _ENV_MUTATION_LOCK:
+        if _ENV_RUNTIME_DEPTH > 0 and name in _ENV_RUNTIME_BASELINES:
+            baseline = _ENV_RUNTIME_BASELINES.get(name)
+            return (baseline or default).strip()
+        return (os.getenv(name) or default).strip()
+
 def _env_int(name: str, default: int) -> int:
     value = _env(name, str(default))
     try:
@@ -240,6 +251,8 @@ class ChonkService:
         self._current_job_started_at = ""
         self._current_job_run_id = ""
         self._worker_shutdown = False
+        self._cancel_requested = False
+        self._last_run_was_cancelled = False
         self._current_run_snapshot: Dict[str, str] = {}
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()
@@ -336,6 +349,13 @@ class ChonkService:
         @self.app.get("/api/status")
         def api_status() -> dict:
             return self.current_job_status()
+
+        @self.app.post("/api/run/cancel")
+        def api_cancel_run():
+            payload = self.request_cancel_active_run()
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=200)
+            return payload
 
         @self.app.post("/libraries/{library_id}/run")
         def run_library(library_id: int):
@@ -560,6 +580,21 @@ class ChonkService:
         if (progress) {
           progress.innerHTML = progressMarkup(snapshot);
         }
+        updateStopButton(snapshot);
+      }
+
+      function requestStopRun() {
+        return fetch("/api/run/cancel", { method: "POST" }).catch(function () { return null; });
+      }
+
+      function updateStopButton(snapshot) {
+        var button = document.getElementById("runtime-stop-button");
+        if (!button) {
+          return;
+        }
+        var running = String(snapshot.status || "") === "Running" || String(snapshot.status || "") === "Cancelling";
+        button.style.display = running ? "inline-block" : "none";
+        button.disabled = String(snapshot.status || "") === "Cancelling";
       }
 
       function fetchStatus() {
@@ -574,6 +609,13 @@ class ChonkService:
           .catch(function () {
             return null;
           });
+      }
+
+      var stopButton = document.getElementById("runtime-stop-button");
+      if (stopButton) {
+        stopButton.addEventListener("click", function () {
+          requestStopRun().then(fetchStatus);
+        });
       }
 
       fetchStatus();
@@ -850,6 +892,7 @@ class ChonkService:
             "processed_count": snapshot["files_processed"],
             "skipped_count": snapshot["files_skipped"],
             "failed_count": snapshot["files_failed"],
+            "cancel_requested": snapshot.get("cancel_requested", "0"),
         }
 
     def _runtime_job_status_html(self) -> str:
@@ -969,7 +1012,7 @@ class ChonkService:
             for key, meta in EDITABLE_SETTINGS.items():
                 row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
                 if row is None:
-                    value = _env(meta["env"], meta["default"])
+                    value = _env_bootstrap(meta["env"], meta["default"])
                     if key in SECRET_SETTINGS and value:
                         value = secrets.encrypt_secret(value)
                     conn.execute(
@@ -1611,6 +1654,30 @@ class ChonkService:
         )
         return payload, 409
 
+    def request_cancel_active_run(self) -> Dict[str, str]:
+        with self._job_condition:
+            if self._current_job is None:
+                return {"status": "idle"}
+            self._cancel_requested = True
+            self._current_run_snapshot["cancel_requested"] = "1"
+            library_name = self._current_job.library_name
+        self._record_activity(
+            event_type="run_cancel_requested",
+            message="Cancellation requested for %s" % library_name,
+            library=library_name,
+            run_id=self._current_job_run_id or None,
+        )
+        return {"status": "cancelling"}
+
+    def _is_cancel_requested(self) -> bool:
+        with self._job_condition:
+            return bool(self._cancel_requested)
+
+    def _on_run_cancelled(self, stage: str) -> None:
+        with self._job_condition:
+            self._current_run_snapshot["cancel_requested"] = "1"
+            self._current_run_snapshot["cancel_stage"] = str(stage)
+
     def _enqueue_library_job(self, library: RuntimeLibrary, trigger: str) -> bool:
         job = RuntimeJob(library_id=library.id, library_name=library.name, trigger=trigger, priority=library.priority)
         with self._job_condition:
@@ -1639,6 +1706,8 @@ class ChonkService:
                 self._current_job = job
                 self._current_job_started_at = _utc_timestamp()
                 self._current_job_run_id = ""
+                self._cancel_requested = False
+                self._last_run_was_cancelled = False
                 self._current_run_snapshot = {}
 
             lock = self._library_lock_for_id(job.library_id)
@@ -1668,6 +1737,7 @@ class ChonkService:
                     self._current_job = None
                     self._current_job_started_at = ""
                     self._current_job_run_id = ""
+                    self._cancel_requested = False
                     self._current_run_snapshot = {}
                 self._record_activity(
                     event_type="job_completed",
@@ -1697,10 +1767,14 @@ class ChonkService:
             started_at = self._current_job_started_at
             run_id = self._current_job_run_id
             run_snapshot = dict(self._current_run_snapshot)
+            cancel_requested = bool(self._cancel_requested)
+            last_run_was_cancelled = bool(self._last_run_was_cancelled)
         if current_job is not None:
-            status = "Running"
+            status = "Cancelling" if cancel_requested else "Running"
         elif queue_depth > 0:
             status = "Queued"
+        elif last_run_was_cancelled:
+            status = "Cancelled"
         else:
             status = "Idle"
         return {
@@ -1717,6 +1791,7 @@ class ChonkService:
             "files_skipped": str(run_snapshot.get("files_skipped", run_snapshot.get("skipped_count", ""))),
             "files_failed": str(run_snapshot.get("files_failed", run_snapshot.get("failed_count", ""))),
             "bytes_saved": str(run_snapshot.get("bytes_saved", "")),
+            "cancel_requested": "1" if cancel_requested else "0",
         }
 
     def _runtime_status_html(self) -> str:
@@ -1743,7 +1818,7 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Failed</th><td id=\"runtime-files-failed\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td id=\"runtime-bytes-saved\" style=\"padding: 0.35rem;\">%s</td></tr>
   </tbody>
-</table><div id=\"runtime-progress-section\">%s</div>""" % (
+</table><div style=\"margin-top:0.6rem;\"><button id=\"runtime-stop-button\" type=\"button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>""" % (
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
@@ -1842,7 +1917,7 @@ class ChonkService:
             row = conn.execute(
                 """
                 SELECT library, ts_end, ts_start, success_count, failed_count, skipped_count, duration_seconds
-                       , processed_count, saved_bytes
+                       , processed_count, saved_bytes, run_id
                 FROM runs
                 WHERE lower(COALESCE(library, '')) = lower(?)
                 ORDER BY ts_end DESC
@@ -1850,18 +1925,32 @@ class ChonkService:
                 """,
                 (library,),
             ).fetchone()
-            conn.close()
         except Exception:
+            conn.close()
             return None
 
         if row is None:
             return None
 
+        was_cancelled = False
+        try:
+            run_id = str(row["run_id"] or "")
+            if run_id:
+                cancelled_row = conn.execute(
+                    "SELECT 1 FROM encodes WHERE run_id = ? AND lower(COALESCE(skip_reason, '')) = 'cancelled' LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+                was_cancelled = cancelled_row is not None
+        except Exception:
+            was_cancelled = False
+
         status = _derive_run_status(
             success_count=int(row["success_count"] or 0),
             failed_count=int(row["failed_count"] or 0),
             skipped_count=int(row["skipped_count"] or 0),
+            was_cancelled=was_cancelled,
         )
+        conn.close()
         return {
             "library": str(row["library"] or library),
             "ts_end": str(row["ts_end"] or ""),
@@ -2016,8 +2105,8 @@ class ChonkService:
                 "SELECT %s FROM runs WHERE run_id = ? LIMIT 1" % ", ".join(columns),
                 (run_id,),
             ).fetchone()
-            conn.close()
         except Exception:
+            conn.close()
             return None
 
         if row is None:
@@ -2381,8 +2470,8 @@ class ChonkService:
                 WHERE COALESCE(success_count, 0) > 0
                 """
             ).fetchone()
-            conn.close()
         except Exception:
+            conn.close()
             return None
 
         if row is None:
@@ -2582,11 +2671,19 @@ class ChonkService:
                 LOGGER.info("Starting %s %s run", trigger, library_record.name)
                 try:
                     try:
-                        rc = run(progress_callback=self._update_runtime_progress)
+                        rc = run(
+                            progress_callback=self._update_runtime_progress,
+                            cancel_requested=self._is_cancel_requested,
+                            on_cancelled=self._on_run_cancelled,
+                        )
                     except TypeError as exc:
-                        if "progress_callback" not in str(exc):
+                        msg = str(exc)
+                        if "progress_callback" not in msg and "cancel_requested" not in msg and "on_cancelled" not in msg:
                             raise
-                        rc = run()
+                        try:
+                            rc = run(progress_callback=self._update_runtime_progress)
+                        except TypeError:
+                            rc = run()
                 except Exception as exc:
                     self._notify_run_failure(library_record.name, run_id, str(exc))
                     raise
@@ -2598,14 +2695,25 @@ class ChonkService:
                             os.environ["STATS_PATH"] = original_stats_path
                 LOGGER.info("Finished %s %s run with exit code %s", trigger, library_record.name, rc)
 
-        if rc == 0:
+        was_cancelled = self._is_cancel_requested()
+        if was_cancelled:
+            with self._job_condition:
+                self._last_run_was_cancelled = True
+            self._record_activity(
+                event_type="run_cancelled",
+                message="%s run cancelled" % library_record.name,
+                library=library_record.name,
+                run_id=run_id,
+                level="warning",
+            )
+        elif rc == 0:
             self._notify_run_complete(library_record.name, run_id)
         else:
             self._notify_run_failure(library_record.name, run_id, "Run exited with code %s" % rc)
 
         self._record_activity(
             event_type="run_completed",
-            message="%s run completed" % library_record.name,
+            message="%s run %s" % (library_record.name, "cancelled" if was_cancelled else "completed"),
             library=library_record.name,
             run_id=run_id,
         )
@@ -2685,6 +2793,7 @@ class ChonkService:
                     self.delete_library,
                     self.toggle_library,
                     self.manual_run_payload,
+                    self.request_cancel_active_run,
                 )
         finally:
             with self._job_condition:
@@ -2760,6 +2869,11 @@ def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
     original: Dict[str, Optional[str]] = {name: os.environ.get(name) for name in env_map.values()}
 
     with _ENV_MUTATION_LOCK:
+        global _ENV_RUNTIME_DEPTH
+        _ENV_RUNTIME_DEPTH += 1
+        for env_name, baseline in original.items():
+            if env_name not in _ENV_RUNTIME_BASELINES:
+                _ENV_RUNTIME_BASELINES[env_name] = baseline
         for key, env_name in env_map.items():
             if key in values:
                 os.environ[env_name] = str(values[key])
@@ -2773,6 +2887,9 @@ def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
                     os.environ.pop(env_name, None)
                 else:
                     os.environ[env_name] = value
+            _ENV_RUNTIME_DEPTH = max(0, _ENV_RUNTIME_DEPTH - 1)
+            if _ENV_RUNTIME_DEPTH == 0:
+                _ENV_RUNTIME_BASELINES.clear()
 
 
 def _library_values(library: str) -> Dict[str, str]:
@@ -2959,8 +3076,10 @@ def _is_valid_crontab(expr: str) -> bool:
     return all(bool(part.strip()) for part in parts)
 
 
-def _derive_run_status(success_count: int, failed_count: int, skipped_count: int) -> str:
+def _derive_run_status(success_count: int, failed_count: int, skipped_count: int, was_cancelled: bool = False) -> str:
     """Map run counters to a compact status label for the operator page."""
+    if was_cancelled:
+        return "cancelled"
     if failed_count > 0:
         return "failed"
     if success_count > 0:
@@ -3073,6 +3192,7 @@ def _run_simple_http_server(
     delete_library_fn: Callable[[Dict[str, str]], str],
     toggle_library_fn: Callable[[Dict[str, str]], str],
     manual_run_fn: Callable[[str], tuple],
+    cancel_run_fn: Optional[Callable[[], Dict[str, str]]] = None,
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -3214,6 +3334,9 @@ def _run_simple_http_server(
                 payload, status_code = manual_run_fn("movies")
             elif self.path == "/run/tv":
                 payload, status_code = manual_run_fn("tv")
+            elif self.path == "/api/run/cancel":
+                payload = cancel_run_fn() if callable(cancel_run_fn) else {"status": "idle"}
+                status_code = 200
             elif self.path == "/settings":
                 content_length = int(self.headers.get("Content-Length", "0") or "0")
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""

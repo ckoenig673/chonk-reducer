@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import subprocess
 import json
+import time
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Optional, Sequence
 
 from .logging_utils import Logger
 
@@ -12,23 +13,63 @@ class CmdError(RuntimeError):
     pass
 
 
-def run_cmd(args: Sequence[str], logger: Logger, timeout: int | None = None) -> tuple[int, str]:
+def run_cmd(
+    args: Sequence[str],
+    logger: Logger,
+    timeout: int | None = None,
+    cancel_requested: Optional[Callable[[], bool]] = None,
+    on_process_start: Optional[Callable[[subprocess.Popen], None]] = None,
+) -> tuple[int, str]:
     logger.log("CMD: " + " ".join(args))
-    try:
-        p = subprocess.run(
-            list(args),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise CmdError(f"Command timed out after {timeout}s") from e
+    started = time.monotonic()
+    p = subprocess.Popen(
+        list(args),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if callable(on_process_start):
+        try:
+            on_process_start(p)
+        except Exception:
+            pass
 
-    out = p.stdout or ""
+    cancelled = False
+    try:
+        while True:
+            if timeout is not None and (time.monotonic() - started) > timeout:
+                p.kill()
+                p.wait()
+                raise CmdError(f"Command timed out after {timeout}s")
+
+            if callable(cancel_requested) and cancel_requested():
+                cancelled = True
+                p.terminate()
+                try:
+                    p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait()
+                break
+
+            if p.poll() is not None:
+                break
+            time.sleep(0.1)
+    finally:
+        if callable(on_process_start):
+            try:
+                on_process_start(None)
+            except Exception:
+                pass
+
+    out = ""
+    if p.stdout is not None:
+        out = p.stdout.read() or ""
     if out:
         for line in out.splitlines()[-30:]:
             logger.log("  " + line)
+    if cancelled:
+        raise CmdError("Command cancelled")
     return p.returncode, out
 
 

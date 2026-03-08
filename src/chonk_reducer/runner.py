@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 import shutil
+from typing import Callable, Optional
 
 from .cleanup import cleanup_baks, cleanup_logs, cleanup_work_dir, cleanup_media_temp
 from .config import load_config
@@ -72,7 +73,7 @@ def _validate_config(cfg, logger: Logger) -> bool:
 
 
 
-def run(progress_callback=None) -> int:
+def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] = None, on_cancelled: Optional[Callable[[str], None]] = None) -> int:
     cfg = load_config()
 
     prefix = (cfg.log_prefix + "_") if cfg.log_prefix else ""
@@ -192,8 +193,31 @@ def run(progress_callback=None) -> int:
     marked_failed: list[Path] = []
 
     show_stats = {}  # show -> {files,before,after,elapsed}
+    cancelled = False
+    cancel_recorded = False
+    active_ffmpeg = None
+
+    def _cancel_check(stage: str) -> bool:
+        nonlocal cancelled
+        if callable(cancel_requested) and cancel_requested():
+            cancelled = True
+            logger.log(f"Cancellation requested during {stage}; stopping run.")
+            if callable(on_cancelled):
+                try:
+                    on_cancelled(stage)
+                except Exception:
+                    pass
+            return True
+        return False
+
+    def _set_active_ffmpeg(proc) -> None:
+        nonlocal active_ffmpeg
+        active_ffmpeg = proc
 
     try:
+        if _cancel_check("startup"):
+            return 0
+
         # Cleanup first
         cleanup_work_dir(cfg.work_root, cfg.work_cleanup_hours, logger)
         cleanup_media_temp(cfg.media_root, cfg.work_cleanup_hours, cfg.exclude_path_parts, logger)
@@ -219,6 +243,9 @@ def run(progress_callback=None) -> int:
                 logger.log("===== END =====")
                 return 2
 
+        if _cancel_check("cleanup"):
+            return 0
+
         # Discovery (returns candidates + ignored folder counts)
         cands, ignored_folders, recent_skipped = gather_candidates(cfg, logger)
         skipped_recent = len(recent_skipped)
@@ -242,6 +269,8 @@ def run(progress_callback=None) -> int:
                 f.write(str(p) + "\n")
 
         for src in cands:
+            if _cancel_check("candidate scanning"):
+                break
             if done >= cfg.max_files:
                 break
 
@@ -277,6 +306,9 @@ def run(progress_callback=None) -> int:
                 before_bytes = src.stat().st_size
             except Exception:
                 before_bytes = 0
+
+            if _cancel_check("evaluation"):
+                break
 
             # DRY RUN: don’t encode/swap/validate, just log intent
             if cfg.dry_run:
@@ -337,6 +369,8 @@ def run(progress_callback=None) -> int:
 
             attempt_errors: list[str] = []
             for attempt in range(cfg.retry_count + 1):
+                if _cancel_check("encoding"):
+                    break
                 if attempt > 0:
                     logger.log(f"RETRY {attempt}/{cfg.retry_count}: {src}")
                     if cfg.retry_backoff_secs:
@@ -345,7 +379,32 @@ def run(progress_callback=None) -> int:
                 t0 = time.monotonic()
                 try:
                     stage = "encode"
-                    encode_qsv(src, encoded, cfg, logger)
+                    try:
+                        encode_qsv(
+                            src,
+                            encoded,
+                            cfg,
+                            logger,
+                            cancel_requested=cancel_requested,
+                            on_process_start=_set_active_ffmpeg,
+                        )
+                    except TypeError as exc:
+                        if "cancel_requested" not in str(exc) and "on_process_start" not in str(exc):
+                            raise
+                        encode_qsv(src, encoded, cfg, logger)
+                    if _cancel_check("encoding"):
+                        try:
+                            encoded.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        break
+
+                    if _cancel_check("evaluation"):
+                        try:
+                            encoded.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        break
 
                     stage = "validate"
                     if not validate_post_encode(encoded, cfg, logger):
@@ -407,6 +466,13 @@ def run(progress_callback=None) -> int:
                             )
                             done += 1
                             break
+
+                    if _cancel_check("evaluation"):
+                        try:
+                            encoded.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        break
 
                     stage = "swap"
                     bak_path, marker_path = swap_in(src, encoded, cfg, logger)
@@ -549,7 +615,23 @@ def run(progress_callback=None) -> int:
                     done += 1
 
         # Summary
-                logger.log("===== SUMMARY =====")
+        if cancelled:
+            logger.log("RUN STATUS: cancelled")
+            if not cancel_recorded:
+                cancel_src = cands[0] if cands else cfg.media_root
+                record_skip(
+                    cfg,
+                    logger,
+                    run_id=run_id,
+                    mode=mode.lower(),
+                    skip_reason="cancelled",
+                    src=cancel_src,
+                    before_bytes=0,
+                    detail="Run cancelled by operator",
+                )
+                cancel_recorded = True
+
+        logger.log("===== SUMMARY =====")
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
         prefiltered = skipped_marker + skipped_backup + skipped_recent
         skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_max_savings + skipped_dry_run
@@ -626,6 +708,8 @@ def run(progress_callback=None) -> int:
         run_duration = time.monotonic() - run_start
         logger.log(f"RUN DURATION: {_fmt_hms(run_duration)}")
         logger.log("===== END =====")
+        if cancelled:
+            return 0
         return 0 if failed == 0 else 2
 
     finally:
