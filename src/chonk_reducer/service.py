@@ -13,7 +13,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import strftime
-from typing import Callable, Dict, Iterator, List, Optional
+from typing import Callable, Deque, Dict, Iterator, List, Optional, Set
 from urllib.parse import parse_qs, unquote
 
 try:
@@ -98,11 +98,10 @@ class RuntimeLibrary:
 
 
 @dataclass(frozen=True)
-class QueuedRunJob:
+class RuntimeJob:
     library_id: int
     library_name: str
     trigger: str
-    enqueued_at: str
 
 
 @dataclass(frozen=True)
@@ -218,6 +217,16 @@ class ChonkService:
         for library in self.enabled_runtime_libraries():
             self._library_locks[str(library.id)] = threading.Lock()
             self._library_locks[library.name.strip().lower()] = self._library_locks[str(library.id)]
+        self._job_state_lock = threading.Lock()
+        self._job_condition = threading.Condition(self._job_state_lock)
+        self._job_queue: Deque[RuntimeJob] = deque()
+        self._queued_or_running_library_ids: Set[int] = set()
+        self._current_job: Optional[RuntimeJob] = None
+        self._current_job_started_at = ""
+        self._current_job_run_id = ""
+        self._worker_shutdown = False
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
         self._configure_routes()
 
     def _build_scheduler(self):
@@ -374,12 +383,13 @@ class ChonkService:
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
   %s
+  %s
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Lifetime Savings</h2>
   %s
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Recent Runs</h2>
   %s
 """ % (
-            self._runtime_job_status_html(),
+            self._runtime_status_html(),
             "".join(library_sections),
             self._lifetime_savings_html(lifetime_savings),
             self._recent_runs_html(recent_runs),
@@ -494,6 +504,9 @@ class ChonkService:
   <h1>System</h1>
   <p>Operator-facing service and scheduler status for this instance.</p>
 
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
+  %s
+
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Service Information</h2>
   <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
@@ -528,6 +541,7 @@ class ChonkService:
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Settings Source Information</h2>
   <p>Schedules and paths shown above are loaded from SQLite-backed settings and libraries, with environment/compose values used only for compatibility defaults.</p>
 """ % (
+            self._runtime_status_html(),
             _escape_html(__version__),
             _escape_html(service_mode),
             _escape_html(self.settings.host),
@@ -1172,12 +1186,12 @@ class ChonkService:
             message="Scheduled run requested for %s" % library_name,
             library=library_name,
         )
-        queued = self._enqueue_run_job(library_record, trigger="schedule")
-        if not queued:
+        accepted = self._enqueue_library_job(library_record, trigger="schedule")
+        if not accepted:
             LOGGER.info("%s run already queued or in progress; skipping overlapping schedule", library_name)
             self._record_activity(
                 event_type="run_rejected_busy",
-                message="%s run skipped because library is already queued or busy" % library_name,
+                message="%s run skipped because library is already queued or running" % library_name,
                 library=library_name,
                 level="warning",
             )
@@ -1210,7 +1224,7 @@ class ChonkService:
             message="Manual run requested for %s" % library_name,
             library=library_name,
         )
-        queued = self._enqueue_run_job(library_record, trigger="manual")
+        queued = self._enqueue_library_job(library_record, trigger="manual")
         payload = {
             "status": "queued" if queued else "busy",
             "library": library,
@@ -1223,66 +1237,118 @@ class ChonkService:
         LOGGER.info("Manual %s run rejected; run already queued or in progress", library_name)
         self._record_activity(
             event_type="run_rejected_busy",
-            message="%s run skipped because library is already queued or busy" % library_name,
+            message="%s run skipped because library is already queued or running" % library_name,
             library=library_name,
             level="warning",
         )
         return payload, 409
 
-    def _enqueue_run_job(self, library: RuntimeLibrary, trigger: str) -> bool:
-        with self._job_queue_condition:
-            if library.id in self._queued_library_ids or library.id in self._running_library_ids:
+    def _enqueue_library_job(self, library: RuntimeLibrary, trigger: str) -> bool:
+        job = RuntimeJob(library_id=library.id, library_name=library.name, trigger=trigger)
+        with self._job_condition:
+            if job.library_id in self._queued_or_running_library_ids:
                 return False
-            job = QueuedRunJob(
-                library_id=library.id,
-                library_name=library.name,
-                trigger=trigger,
-                enqueued_at=_utc_timestamp(),
-            )
             self._job_queue.append(job)
-            self._queued_library_ids.add(library.id)
-            self._job_queue_condition.notify()
+            self._queued_or_running_library_ids.add(job.library_id)
+            self._job_condition.notify()
+            queue_depth = len(self._job_queue)
         self._record_activity(
             event_type="job_queued",
-            message="%s run queued (%s trigger)" % (library.name, trigger),
-            library=library.name,
+            message="%s run queued (%s trigger)" % (job.library_name, job.trigger),
+            library=job.library_name,
         )
+        LOGGER.info("Queued %s run via %s trigger (queue depth=%s)", job.library_name, job.trigger, queue_depth)
         return True
 
-    def _job_worker_loop(self) -> None:
+    def _worker_loop(self) -> None:
         while True:
-            with self._job_queue_condition:
+            with self._job_condition:
                 while not self._job_queue and not self._worker_shutdown:
-                    self._job_queue_condition.wait()
+                    self._job_condition.wait(timeout=0.5)
                 if self._worker_shutdown:
                     return
                 job = self._job_queue.popleft()
-                self._queued_library_ids.discard(job.library_id)
-                self._running_library_ids.add(job.library_id)
-                self._active_job = job
-                self._active_started_at = _utc_timestamp()
-                self._active_run_id = str(uuid.uuid4())
+                self._current_job = job
+                self._current_job_started_at = _utc_timestamp()
+                self._current_job_run_id = ""
 
+            lock = self._library_lock_for_id(job.library_id)
+            lock_acquired = lock.acquire(blocking=False)
             self._record_activity(
                 event_type="job_started",
                 message="%s queued job started (%s trigger)" % (job.library_name, job.trigger),
                 library=job.library_name,
-                run_id=self._active_run_id,
             )
             try:
-                self._run_library_once(job.library_name.lower(), trigger=job.trigger)
+                if not lock_acquired:
+                    self._record_activity(
+                        event_type="run_rejected_busy",
+                        message="%s queued job skipped because library is already busy" % job.library_name,
+                        library=job.library_name,
+                        level="warning",
+                    )
+                else:
+                    self._run_library_once(job.library_name.lower(), trigger=job.trigger)
+            except Exception:
+                LOGGER.exception("Queued job failed for %s", job.library_name)
             finally:
-                with self._job_queue_condition:
-                    self._running_library_ids.discard(job.library_id)
-                    self._active_job = None
-                    self._active_started_at = None
-                    self._active_run_id = None
+                if lock_acquired:
+                    lock.release()
+                with self._job_condition:
+                    self._queued_or_running_library_ids.discard(job.library_id)
+                    self._current_job = None
+                    self._current_job_started_at = ""
+                    self._current_job_run_id = ""
+                self._record_activity(
+                    event_type="job_completed",
+                    message="%s queued job completed" % job.library_name,
+                    library=job.library_name,
+                )
 
-    def stop_background_worker(self) -> None:
-        with self._job_queue_condition:
-            self._worker_shutdown = True
-            self._job_queue_condition.notify_all()
-        self._worker_thread.join(timeout=1)
+    def _runtime_status_snapshot(self) -> Dict[str, str]:
+        with self._job_condition:
+            queue_depth = len(self._job_queue)
+            current_job = self._current_job
+            started_at = self._current_job_started_at
+            run_id = self._current_job_run_id
+        if current_job is not None:
+            status = "Running"
+        elif queue_depth > 0:
+            status = "Queued"
+        else:
+            status = "Idle"
+        return {
+            "status": status,
+            "current_library": current_job.library_name if current_job is not None else "",
+            "current_trigger": current_job.trigger if current_job is not None else "",
+            "queue_depth": str(queue_depth),
+            "run_id": run_id,
+            "started_at": started_at,
+        }
+
+    def _runtime_status_html(self) -> str:
+        snapshot = self._runtime_status_snapshot()
+        current_library = snapshot["current_library"] or "N/A"
+        current_trigger = snapshot["current_trigger"] or "N/A"
+        run_id = snapshot["run_id"] or "N/A"
+        started_at = snapshot["started_at"] or "N/A"
+        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\">
+  <tbody>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; padding: 0.35rem;\">Started At</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+  </tbody>
+</table>""" % (
+            _escape_html(snapshot["status"]),
+            _escape_html(current_library),
+            _escape_html(current_trigger),
+            _escape_html(snapshot["queue_depth"]),
+            _escape_html(run_id),
+            _escape_html(started_at),
+        )
 
     def _latest_run_status(self, library: str) -> Optional[Dict[str, str]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
@@ -1955,8 +2021,9 @@ class ChonkService:
         library_record = self._library_by_key(library)
         if library_record is None:
             return
-        if run_id is None:
-            run_id = str(uuid.uuid4())
+        run_id = str(uuid.uuid4())
+        with self._job_condition:
+            self._current_job_run_id = run_id
         self._record_activity(
             event_type="run_started",
             message="%s run started" % library_record.name,
@@ -2007,6 +2074,9 @@ class ChonkService:
                     self.manual_run_payload,
                 )
         finally:
+            with self._job_condition:
+                self._worker_shutdown = True
+                self._job_condition.notify_all()
             self.scheduler.shutdown(wait=False)
             self.stop_background_worker()
 
