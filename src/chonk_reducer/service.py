@@ -593,7 +593,6 @@ class ChonkService:
             should_bootstrap = int(row["c"] if row is not None else 0) <= 0
 
             if not should_bootstrap:
-                conn.close()
                 return
 
             now = _utc_timestamp()
