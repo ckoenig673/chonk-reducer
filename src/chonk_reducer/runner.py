@@ -72,7 +72,7 @@ def _validate_config(cfg, logger: Logger) -> bool:
 
 
 
-def run() -> int:
+def run(progress_callback=None) -> int:
     cfg = load_config()
 
     prefix = (cfg.log_prefix + "_") if cfg.log_prefix else ""
@@ -88,6 +88,14 @@ def run() -> int:
     cand_log = log_dir / f"{prefix}candidates_{stamp}.log"
 
     logger = Logger(str(run_log))
+
+    def _progress(**values):
+        if not callable(progress_callback):
+            return
+        try:
+            progress_callback(values)
+        except Exception:
+            pass
 
     # Start banner (keep it verbose like your current logs)
     logger.log("===== TRANSCODE START =====")
@@ -215,6 +223,7 @@ def run() -> int:
         cands, ignored_folders, recent_skipped = gather_candidates(cfg, logger)
         skipped_recent = len(recent_skipped)
         logger.log(f"Found {len(cands)} candidates")
+        _progress(candidates_found=len(cands), current_file="", evaluated_count=evaluated, processed_count=processed, success_count=succeeded, skipped_count=0, failed_count=failed, bytes_saved=saved_bytes_run)
 
         # Log top candidates by size (quick sanity)
         if cfg.top_candidates and cands:
@@ -262,6 +271,7 @@ def run() -> int:
 
             evaluated += 1
             logger.log(f"Processing: {src}")
+            _progress(current_file=str(src), evaluated_count=evaluated)
 
             try:
                 before_bytes = src.stat().st_size
@@ -339,6 +349,7 @@ def run() -> int:
                     if not encode_attempted:
                         processed += 1
                         encode_attempted = True
+                        _progress(processed_count=processed, current_file=str(src))
                     encode_qsv(src, encoded, cfg, logger)
 
                     stage = "validate"
@@ -491,6 +502,7 @@ def run() -> int:
                         bak_path=bak_path,
                     )
                     succeeded += 1
+                    _progress(success_count=succeeded, bytes_saved=saved_bytes_run, current_file=str(src))
                     done += 1
                     break
 
@@ -523,6 +535,7 @@ def run() -> int:
                     )
                     # Final failure: mark file as failed/quarantined
                     failed += 1
+                    _progress(failed_count=failed, current_file=str(src))
                     fail_marker = src.with_suffix(src.suffix + ".failed")
                     try:
                         msg = "\n".join(attempt_errors[-5:])
@@ -543,6 +556,7 @@ def run() -> int:
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
         prefiltered = skipped_marker + skipped_backup + skipped_recent
         skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_max_savings + skipped_dry_run
+        _progress(evaluated_count=evaluated, processed_count=processed, success_count=succeeded, skipped_count=skipped_policy, failed_count=failed, bytes_saved=saved_bytes_run)
         logger.log(f"Candidates found:     {len(cands)}")
         logger.log(f"Pre-filtered:         {prefiltered}")
         logger.log(f"Evaluated:            {evaluated}")

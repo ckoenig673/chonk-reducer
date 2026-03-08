@@ -230,6 +230,7 @@ class ChonkService:
         self._current_job_started_at = ""
         self._current_job_run_id = ""
         self._worker_shutdown = False
+        self._current_run_snapshot: Dict[str, str] = {}
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()
         self._configure_routes()
@@ -360,6 +361,7 @@ class ChonkService:
         for library in libraries:
             status = self._latest_run_status(library.name)
             runtime_status = self._library_runtime_status(library)
+            runtime_summary = self._library_runtime_summary(library)
             last_run_label = "Never"
             processed_label = "0"
             savings_label = "0 B"
@@ -379,6 +381,7 @@ class ChonkService:
     <div><strong>Files Optimized:</strong> %s</div>
     <div><strong>Total Saved:</strong> %s</div>
     <div><strong>Recent Savings:</strong> %s across %s files</div>
+    %s
     <form method="post" action="/libraries/%d/run" style="margin-top: 0.75rem;">
       <button type="submit">Run Now</button>
     </form>
@@ -394,6 +397,7 @@ class ChonkService:
                     _escape_html(_format_saved_bytes(totals["total_saved"])),
                     _escape_html(savings_label),
                     _escape_html(processed_label),
+                    runtime_summary,
                     library.id,
                 )
             )
@@ -425,13 +429,31 @@ class ChonkService:
             queued_ids = {job.library_id for job in self._job_queue}
 
         if current_job is not None and current_job.library_id == library.id:
-            trigger = str(current_job.trigger or "").strip().lower()
-            if trigger:
-                return "Running now (%s trigger)" % trigger
-            return "Running now"
+            return "Running"
         if library.id in queued_ids:
             return "Queued"
         return "Idle"
+
+    def _library_runtime_summary(self, library: RuntimeLibrary) -> str:
+        snapshot = self._runtime_status_snapshot()
+        if snapshot["status"] != "Running":
+            return ""
+        current_library = str(snapshot.get("current_library") or "").strip().lower()
+        if current_library != library.name.strip().lower():
+            return ""
+        current_file = str(snapshot.get("current_file") or "").strip() or "Waiting for first file"
+        return (
+            '<div style="margin-top: 0.4rem; padding: 0.4rem; border: 1px solid #e3ebf6; background: #f7faff;">'
+            '<strong>Active:</strong> %s<br /><strong>Processed:</strong> %s  '
+            '<strong>Success:</strong> %s  <strong>Skipped:</strong> %s  <strong>Failed:</strong> %s'
+            "</div>"
+        ) % (
+            _escape_html(current_file),
+            _escape_html(snapshot.get("processed_count", "-")),
+            _escape_html(snapshot.get("success_count", "-")),
+            _escape_html(snapshot.get("skipped_count", "-")),
+            _escape_html(snapshot.get("failed_count", "-")),
+        )
 
     def settings_page_html(self, message: str = "") -> str:
         libraries = self.list_libraries()
@@ -650,6 +672,14 @@ class ChonkService:
             "queue_depth": snapshot["queue_depth"],
             "run_id": snapshot["run_id"],
             "started_at": snapshot["started_at"],
+            "current_file": snapshot["current_file"],
+            "candidates_found": snapshot["candidates_found"],
+            "evaluated_count": snapshot["evaluated_count"],
+            "processed_count": snapshot["processed_count"],
+            "success_count": snapshot["success_count"],
+            "skipped_count": snapshot["skipped_count"],
+            "failed_count": snapshot["failed_count"],
+            "bytes_saved": snapshot["bytes_saved"],
         }
 
     def _runtime_job_status_html(self) -> str:
@@ -666,7 +696,7 @@ class ChonkService:
 </table>""" % (
             _escape_html(status["status"]),
             _escape_html(status["current_library"] or "-"),
-            _escape_html(status["trigger"] or "-"),
+            _escape_html(_display_trigger(status["trigger"] or "-")),
             _escape_html(status["queue_depth"]),
             _escape_html(status["run_id"] or "-"),
             _escape_html(status["started_at"] or "-"),
@@ -704,7 +734,7 @@ class ChonkService:
         next_run_time = getattr(job, "next_run_time", None)
         if next_run_time is None:
             return "Unknown"
-        return str(next_run_time)
+        return _format_scheduler_datetime(next_run_time)
 
     def _current_time_label(self) -> str:
         tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
@@ -1364,6 +1394,7 @@ class ChonkService:
                 self._current_job = job
                 self._current_job_started_at = _utc_timestamp()
                 self._current_job_run_id = ""
+                self._current_run_snapshot = {}
 
             lock = self._library_lock_for_id(job.library_id)
             lock_acquired = lock.acquire(blocking=False)
@@ -1392,6 +1423,7 @@ class ChonkService:
                     self._current_job = None
                     self._current_job_started_at = ""
                     self._current_job_run_id = ""
+                    self._current_run_snapshot = {}
                 self._record_activity(
                     event_type="job_completed",
                     message="%s queued job completed" % job.library_name,
@@ -1404,6 +1436,7 @@ class ChonkService:
             current_job = self._current_job
             started_at = self._current_job_started_at
             run_id = self._current_job_run_id
+            run_snapshot = dict(self._current_run_snapshot)
         if current_job is not None:
             status = "Running"
         elif queue_depth > 0:
@@ -1417,14 +1450,24 @@ class ChonkService:
             "queue_depth": str(queue_depth),
             "run_id": run_id,
             "started_at": started_at,
+            "current_file": str(run_snapshot.get("current_file", "")),
+            "candidates_found": str(run_snapshot.get("candidates_found", "")),
+            "evaluated_count": str(run_snapshot.get("evaluated_count", "")),
+            "processed_count": str(run_snapshot.get("processed_count", "")),
+            "success_count": str(run_snapshot.get("success_count", "")),
+            "skipped_count": str(run_snapshot.get("skipped_count", "")),
+            "failed_count": str(run_snapshot.get("failed_count", "")),
+            "bytes_saved": str(run_snapshot.get("bytes_saved", "")),
         }
 
     def _runtime_status_html(self) -> str:
         snapshot = self._runtime_status_snapshot()
-        current_library = snapshot["current_library"] or "N/A"
-        current_trigger = snapshot["current_trigger"] or "N/A"
-        run_id = snapshot["run_id"] or "N/A"
-        started_at = snapshot["started_at"] or "N/A"
+        idle_placeholder = "-"
+        current_library = snapshot["current_library"] or idle_placeholder
+        current_trigger = snapshot["current_trigger"] or idle_placeholder
+        run_id = snapshot["run_id"] or idle_placeholder
+        started_at = snapshot["started_at"] or idle_placeholder
+        current_file = snapshot["current_file"] or ("Waiting for first file" if snapshot["status"] == "Running" else idle_placeholder)
         return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\">
   <tbody>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
@@ -1432,16 +1475,41 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; padding: 0.35rem;\">Started At</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Started At</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current File</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Candidates Found</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Evaluated</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Processed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Success</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Skipped</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Failed</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td style=\"padding: 0.35rem;\">%s</td></tr>
   </tbody>
 </table>""" % (
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
-            _escape_html(current_trigger),
+            _escape_html(_display_trigger(current_trigger)),
             _escape_html(snapshot["queue_depth"]),
             _escape_html(run_id),
             _escape_html(started_at),
+            _escape_html(current_file),
+            _escape_html(snapshot["candidates_found"] or "-"),
+            _escape_html(snapshot["evaluated_count"] or "-"),
+            _escape_html(snapshot["processed_count"] or "-"),
+            _escape_html(snapshot["success_count"] or "-"),
+            _escape_html(snapshot["skipped_count"] or "-"),
+            _escape_html(snapshot["failed_count"] or "-"),
+            _escape_html(_format_saved_bytes(snapshot["bytes_saved"]) if snapshot["bytes_saved"] else "-"),
         )
+
+    def _update_runtime_progress(self, values: Dict[str, object]) -> None:
+        if not values:
+            return
+        with self._job_condition:
+            for key, value in values.items():
+                if value is None:
+                    continue
+                self._current_run_snapshot[str(key)] = str(value)
 
     def _latest_run_status(self, library: str) -> Optional[Dict[str, str]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
@@ -2178,6 +2246,7 @@ class ChonkService:
         run_id = str(uuid.uuid4())
         with self._job_condition:
             self._current_job_run_id = run_id
+            self._current_run_snapshot = {"current_library": library_record.name}
         self._record_activity(
             event_type="run_started",
             message="%s run started" % library_record.name,
@@ -2189,7 +2258,12 @@ class ChonkService:
             with library_runtime_environment(library_record):
                 LOGGER.info("Starting %s %s run", trigger, library_record.name)
                 try:
-                    rc = run()
+                    try:
+                        rc = run(progress_callback=self._update_runtime_progress)
+                    except TypeError as exc:
+                        if "progress_callback" not in str(exc):
+                            raise
+                        rc = run()
                 except Exception as exc:
                     self._notify_run_failure(library_record.name, run_id, str(exc))
                     raise
@@ -2574,6 +2648,25 @@ def _format_saved_bytes(value) -> str:
     return "%d B" % saved_bytes
 
 
+
+
+def _display_trigger(trigger: str) -> str:
+    value = str(trigger or "").strip().lower()
+    if value == "manual":
+        return "Manual"
+    if value in ("schedule", "scheduled"):
+        return "Scheduled"
+    if not value:
+        return "-"
+    return str(trigger)
+
+
+def _format_scheduler_datetime(value) -> str:
+    if value is None:
+        return "Unknown"
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+    return str(value)
 
 
 def _format_savings_pct(size_before, size_after) -> str:
