@@ -920,6 +920,8 @@ class ChonkService:
         raw_value = _escape_html(str(schedule_state.get("raw", "")))
         simple_time = _escape_html(str(schedule_state.get("time", "00:00")))
         selected_days = set(schedule_state.get("days", []))
+        simple_radio_id = "schedule-mode-simple-%s" % form_id
+        advanced_radio_id = "schedule-mode-advanced-%s" % form_id
         simple_checked = "checked" if mode == "simple" else ""
         advanced_checked = "checked" if mode == "advanced" else ""
 
@@ -943,8 +945,8 @@ class ChonkService:
         return """
   <fieldset style=\"margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd;\">
     <legend><strong>Schedule</strong></legend>
-    <label style=\"margin-right: 1rem;\"><input type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
-    <label><input type=\"radio\" name=\"schedule_mode\" value=\"advanced\" %s onchange=\"toggleScheduleMode_%s()\" /> Advanced cron</label>
+    <label style=\"margin-right: 1rem;\"><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
+    <label><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"advanced\" %s onchange=\"toggleScheduleMode_%s()\" /> Advanced cron</label>
 
     <div id=\"simple-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
       <label><strong>Days</strong></label><br />
@@ -962,7 +964,7 @@ class ChonkService:
   </fieldset>
   <script>
     function toggleScheduleMode_%s() {
-      var simpleRadio = document.querySelector('input[name="schedule_mode"][value="simple"]');
+      var simpleRadio = document.getElementById('%s');
       var simple = document.getElementById('simple-schedule-%s');
       var advanced = document.getElementById('advanced-schedule-%s');
       if (!simpleRadio || !simple || !advanced) { return; }
@@ -977,8 +979,10 @@ class ChonkService:
     toggleScheduleMode_%s();
   </script>
 """ % (
+            simple_radio_id,
             simple_checked,
             form_id,
+            advanced_radio_id,
             advanced_checked,
             form_id,
             form_id,
@@ -990,6 +994,7 @@ class ChonkService:
             advanced_display,
             raw_value,
             form_id,
+            simple_radio_id,
             form_id,
             form_id,
             form_id,
@@ -1938,6 +1943,8 @@ def _parse_simple_cron(schedule: str) -> Optional[Dict[str, object]]:
     minute = int(minute_text)
     hour = int(hour_text)
     if minute < 0 or minute > 59 or hour < 0 or hour > 23:
+        return None
+    if minute not in {0, 15, 30, 45}:
         return None
 
     raw_days = [item.strip() for item in dow.split(",") if item.strip()]
