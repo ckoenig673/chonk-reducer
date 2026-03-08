@@ -223,7 +223,7 @@ def run(progress_callback=None) -> int:
         cands, ignored_folders, recent_skipped = gather_candidates(cfg, logger)
         skipped_recent = len(recent_skipped)
         logger.log(f"Found {len(cands)} candidates")
-        _progress(candidates_found=len(cands), current_file="", evaluated_count=evaluated, processed_count=processed, success_count=succeeded, skipped_count=0, failed_count=failed, bytes_saved=saved_bytes_run)
+        _progress(candidates_found=len(cands), current_file="", files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=0, files_failed=failed, bytes_saved=saved_bytes_run)
 
         # Log top candidates by size (quick sanity)
         if cfg.top_candidates and cands:
@@ -271,7 +271,7 @@ def run(progress_callback=None) -> int:
 
             evaluated += 1
             logger.log(f"Processing: {src}")
-            _progress(current_file=str(src), evaluated_count=evaluated)
+            _progress(current_file=str(src), files_evaluated=evaluated)
 
             try:
                 before_bytes = src.stat().st_size
@@ -349,7 +349,7 @@ def run(progress_callback=None) -> int:
                     if not encode_attempted:
                         processed += 1
                         encode_attempted = True
-                        _progress(processed_count=processed, current_file=str(src))
+                        _progress(files_processed=processed, current_file=str(src))
                     encode_qsv(src, encoded, cfg, logger)
 
                     stage = "validate"
@@ -535,7 +535,7 @@ def run(progress_callback=None) -> int:
                     )
                     # Final failure: mark file as failed/quarantined
                     failed += 1
-                    _progress(failed_count=failed, current_file=str(src))
+                    _progress(files_failed=failed, current_file=str(src))
                     fail_marker = src.with_suffix(src.suffix + ".failed")
                     try:
                         msg = "\n".join(attempt_errors[-5:])
@@ -556,7 +556,7 @@ def run(progress_callback=None) -> int:
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
         prefiltered = skipped_marker + skipped_backup + skipped_recent
         skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_max_savings + skipped_dry_run
-        _progress(evaluated_count=evaluated, processed_count=processed, success_count=succeeded, skipped_count=skipped_policy, failed_count=failed, bytes_saved=saved_bytes_run)
+        _progress(files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=skipped_policy, files_failed=failed, bytes_saved=saved_bytes_run)
         logger.log(f"Candidates found:     {len(cands)}")
         logger.log(f"Pre-filtered:         {prefiltered}")
         logger.log(f"Evaluated:            {evaluated}")
