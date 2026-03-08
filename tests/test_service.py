@@ -1381,13 +1381,14 @@ def test_manual_run_records_requested_and_busy_activity(tmp_path, monkeypatch):
         hold.wait(timeout=1)
 
     monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
-    service.manual_run_payload("movies")
+    first_payload, first_status_code = service.manual_run_payload("movies")
     payload, status_code = service.manual_run_payload("movies")
     hold.set()
 
+    assert first_status_code == 202
+    assert first_payload == {"status": "queued", "library": "movies", "library_id": 1}
     assert status_code == 409
     assert payload == {"status": "busy", "library": "movies", "library_id": 1}
-    assert first_payload == {"status": "queued", "library": "movies", "library_id": 1}
     event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
     assert "manual_run_requested" in event_types
     assert "run_rejected_busy" in event_types
@@ -1457,6 +1458,19 @@ def test_run_start_and_completion_recorded(tmp_path, monkeypatch):
     assert "run_started" in event_types
     assert "run_completed" in event_types
 
+
+
+
+def test_service_initializes_worker_thread_without_attribute_error():
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    assert hasattr(service, "_worker_loop")
+    assert isinstance(service._worker_thread, threading.Thread)
+
+    with service._job_condition:
+        service._worker_shutdown = True
+        service._job_condition.notify_all()
+    service._worker_thread.join(timeout=1)
 
 def test_current_job_status_reflects_idle_queued_and_running(monkeypatch):
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
