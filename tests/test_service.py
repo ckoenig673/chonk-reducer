@@ -1615,18 +1615,19 @@ def test_activity_page_links_run_id_when_present(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    _seed_run(db_path, library="movies", ts_end="fd2b992c")
     service._record_activity(
         "run_completed",
         "Run completed: movies",
         library="movies",
-        run_id="fd2b992c",
+        run_id="movies-fd2b992c",
     )
 
     status_code, body, _ = _call_get(service, "/activity")
 
     assert status_code == 200
-    assert 'href="/runs/fd2b992c"' in body
-    assert '>fd2b992c</a>' in body
+    assert 'href="/runs/movies-fd2b992c"' in body
+    assert '>movies-fd2b992c</a>' in body
 
 
 def test_activity_page_run_id_plain_when_missing(tmp_path, monkeypatch):
@@ -1639,6 +1640,25 @@ def test_activity_page_run_id_plain_when_missing(tmp_path, monkeypatch):
 
     assert status_code == 200
     assert "<td>-</td>" in body
+
+
+def test_activity_page_run_id_not_linked_when_run_missing(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service._record_activity(
+        "run_completed",
+        "Run completed: movies",
+        library="movies",
+        run_id="legacy-missing-run",
+    )
+
+    status_code, body, _ = _call_get(service, "/activity")
+
+    assert status_code == 200
+    assert "legacy-missing-run" in body
+    assert "run unavailable" in body
+    assert 'href="/runs/legacy-missing-run"' not in body
 
 
 def test_activity_page_run_id_link_uses_existing_run_detail_route(tmp_path, monkeypatch):
