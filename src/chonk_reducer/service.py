@@ -204,16 +204,6 @@ class ChonkService:
         self.app = self._build_app()
         self._library_locks: Dict[str, threading.Lock] = {}
         self._job_state_lock = threading.Lock()
-        self._job_queue_condition = threading.Condition(self._job_state_lock)
-        self._job_queue: deque = deque()
-        self._queued_library_ids = set()
-        self._running_library_ids = set()
-        self._active_job: Optional[QueuedRunJob] = None
-        self._active_run_id: Optional[str] = None
-        self._active_started_at: Optional[str] = None
-        self._worker_shutdown = False
-        self._worker_thread = threading.Thread(target=self._job_worker_loop, daemon=True)
-        self._worker_thread.start()
         for library in self.enabled_runtime_libraries():
             self._library_locks[str(library.id)] = threading.Lock()
             self._library_locks[library.name.strip().lower()] = self._library_locks[str(library.id)]
@@ -381,7 +371,6 @@ class ChonkService:
   <h1>Dashboard</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
-  %s
   %s
   %s
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Lifetime Savings</h2>
@@ -557,22 +546,15 @@ class ChonkService:
         return self._render_shell_html("System", content)
 
     def current_job_status(self) -> Dict[str, str]:
-        with self._job_state_lock:
-            queue_depth = len(self._job_queue)
-            if self._active_job is not None:
-                status = "Running"
-            elif queue_depth > 0:
-                status = "Queued"
-            else:
-                status = "Idle"
-            return {
-                "status": status,
-                "current_library": self._active_job.library_name if self._active_job is not None else "",
-                "trigger": self._active_job.trigger if self._active_job is not None else "",
-                "queue_depth": str(queue_depth),
-                "run_id": self._active_run_id or "",
-                "started_at": self._active_started_at or "",
-            }
+        snapshot = self._runtime_status_snapshot()
+        return {
+            "status": snapshot["status"],
+            "current_library": snapshot["current_library"],
+            "trigger": snapshot["current_trigger"],
+            "queue_depth": snapshot["queue_depth"],
+            "run_id": snapshot["run_id"],
+            "started_at": snapshot["started_at"],
+        }
 
     def _runtime_job_status_html(self) -> str:
         status = self.current_job_status()
@@ -2042,6 +2024,11 @@ class ChonkService:
             library=library_record.name,
             run_id=run_id,
         )
+
+    def stop_background_worker(self) -> None:
+        worker_thread = self._worker_thread
+        if worker_thread.is_alive():
+            worker_thread.join(timeout=2)
 
     def run_forever(self) -> int:
         self._record_activity(event_type="service_start", message="Service startup complete")
