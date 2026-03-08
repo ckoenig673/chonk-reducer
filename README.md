@@ -281,9 +281,9 @@ open http://localhost:8080/dashboard
 
 The dashboard preserves existing operator controls and visibility:
 
-- **Run Movies** (`POST /run/movies`)
-- **Run TV** (`POST /run/tv`)
-- Last run status for Movies and TV
+- One manual run control per enabled library (`POST /libraries/{library_id}/run`)
+- Legacy compatibility run routes remain available for default Movies/TV libraries
+- Last run status is shown per enabled library
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
 
@@ -344,7 +344,7 @@ Bootstrap model for the new config foundation:
 2. Missing global settings keys are initialized from env/default values.
 3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized from current env/library values (including schedule bootstrap from legacy global schedule keys when present).
 
-Runtime note: scheduler/manual execution remains the existing fixed Movies/TV model in this release. Library schedule values are now owned in the Libraries section; runtime is not fully dynamic across arbitrary DB libraries yet.
+Runtime note: service scheduling and manual execution are now driven by enabled library rows in SQLite (`libraries`), not a fixed Movies/TV runtime model. Enabled libraries with blank schedules remain manual-run only until a schedule is configured.
 
 Activity page:
 
@@ -377,8 +377,8 @@ The System page provides lightweight operator visibility into the running servic
 
 - service/runtime information (version, host/port, service mode)
 - scheduler status
-- configured movie/tv schedules
-- next scheduled run times when available from scheduler metadata
+- configured schedules for enabled libraries
+- next scheduled run times per enabled library when available from scheduler metadata
 - SQLite database path and runtime/work path visibility
 
 It is intentionally minimal and is not a full diagnostics framework.
@@ -392,9 +392,12 @@ Settings precedence / bootstrap model:
 
 Scheduler notes:
 
-- Movie/TV schedules are owned by DB-backed library rows (`libraries.schedule`).
-- Global Settings no longer include schedule fields.
-- `MOVIE_SCHEDULE` / `TV_SCHEDULE` remain optional legacy/bootstrap env defaults, but are not required in `compose.yaml`.
+- Library schedules are owned by DB-backed library rows (`libraries.schedule`).
+- Global Settings do not include schedule fields.
+- Enabled libraries with schedules are auto-registered with the scheduler.
+- Enabled libraries with blank schedules are not auto-scheduled and are manual-run only.
+- Disabled libraries are excluded from runtime scheduling and manual-run controls.
+- `MOVIE_SCHEDULE` / `TV_SCHEDULE` remain optional legacy/bootstrap env defaults used only during first-time bootstrap.
 - If schedules are changed in Libraries, restart the service for new cron schedules to be applied.
 
 Service scheduler environment variables:

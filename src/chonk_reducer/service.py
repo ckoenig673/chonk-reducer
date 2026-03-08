@@ -79,6 +79,14 @@ class LibraryRecord:
 
 
 @dataclass(frozen=True)
+class RuntimeLibrary:
+    id: int
+    name: str
+    path: str
+    schedule: str
+
+
+@dataclass(frozen=True)
 class ServiceSettings:
     enabled: bool
     host: str
@@ -176,10 +184,10 @@ class ChonkService:
         )
         self.scheduler = self._build_scheduler()
         self.app = self._build_app()
-        self._library_locks = {
-            "movies": threading.Lock(),
-            "tv": threading.Lock(),
-        }
+        self._library_locks: Dict[str, threading.Lock] = {}
+        for library in self.enabled_runtime_libraries():
+            self._library_locks[str(library.id)] = threading.Lock()
+            self._library_locks[library.name.strip().lower()] = self._library_locks[str(library.id)]
         self._configure_routes()
 
     def _build_scheduler(self):
@@ -252,6 +260,13 @@ class ChonkService:
         def health() -> dict:
             return self.health_payload()
 
+        @self.app.post("/libraries/{library_id}/run")
+        def run_library(library_id: int):
+            payload, status_code = self.manual_run_payload_for_id(int(library_id))
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=status_code)
+            return payload
+
         @self.app.post("/run/movies")
         def run_movies():
             payload, status_code = self.manual_run_payload("movies")
@@ -279,30 +294,41 @@ class ChonkService:
         return values
 
     def home_page_html(self) -> str:
-        movies_status = self._latest_run_status("movies")
-        tv_status = self._latest_run_status("tv")
+        libraries = self.enabled_runtime_libraries()
         recent_runs = self._recent_runs(limit=10)
         lifetime_savings = self._lifetime_savings()
+        library_sections = []
+        for library in libraries:
+            status = self._latest_run_status(library.name)
+            library_sections.append(
+                """
+  <h2 style="margin-bottom: 0.5rem;">%s</h2>
+  <form method="post" action="/libraries/%d/run" style="margin-bottom: 0.5rem;">
+    <button type="submit">Run %s</button>
+  </form>
+  %s
+"""
+                % (
+                    _escape_html(library.name),
+                    library.id,
+                    _escape_html(library.name),
+                    self._status_block_html(status),
+                )
+            )
+
+        if not library_sections:
+            library_sections.append('<div style="padding: 0.5rem; border: 1px solid #ddd;">No enabled libraries configured.</div>')
+
         content = """
   <h1>Dashboard</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
-  <h2 style=\"margin-bottom: 0.5rem;\">Movies</h2>
-  <form method=\"post\" action=\"/run/movies\" style=\"margin-bottom: 0.5rem;\">
-    <button type=\"submit\">Run Movies</button>
-  </form>
   %s
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">TV</h2>
-  <form method=\"post\" action=\"/run/tv\" style=\"margin-bottom: 0.5rem;\">
-    <button type=\"submit\">Run TV</button>
-  </form>
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Lifetime Savings</h2>
   %s
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Lifetime Savings</h2>
-  %s
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Recent Runs</h2>
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Recent Runs</h2>
   %s
 """ % (
-            self._status_block_html(movies_status),
-            self._status_block_html(tv_status),
+            "".join(library_sections),
             self._lifetime_savings_html(lifetime_savings),
             self._recent_runs_html(recent_runs),
         )
@@ -387,75 +413,71 @@ class ChonkService:
         service_mode = "Enabled" if self.settings.enabled else "Disabled"
         scheduler_running = self._scheduler_running_label()
 
-        movie_schedule = self._library_schedule_for_runtime("Movies", self.settings.movie_schedule).strip() or "Not set"
-        tv_schedule = self._library_schedule_for_runtime("TV", self.settings.tv_schedule).strip() or "Not set"
-        movie_next_run = self._next_run_label("movies")
-        tv_next_run = self._next_run_label("tv")
+        enabled_libraries = self.enabled_runtime_libraries()
+        schedule_rows = []
+        for library in enabled_libraries:
+            schedule_rows.append(
+                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">%s Schedule</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;"><code>%s</code></td></tr>'
+                % (_escape_html(library.name), _escape_html(library.schedule.strip() or "Not set"))
+            )
+            schedule_rows.append(
+                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next %s Run</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>'
+                % (_escape_html(library.name), _escape_html(self._next_run_label(library)))
+            )
+        if not schedule_rows:
+            schedule_rows.append(
+                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Libraries</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">No enabled libraries</td></tr>'
+            )
 
         work_root = (_env("WORK_ROOT", "") or "").strip() or "Not set"
-        movie_root = (_env("MOVIE_MEDIA_ROOT", _library_values("movies").get("MEDIA_ROOT", "")) or "").strip() or "Not set"
-        tv_root = (_env("TV_MEDIA_ROOT", _library_values("tv").get("MEDIA_ROOT", "")) or "").strip() or "Not set"
         now_label = self._current_time_label()
 
         content = """
   <h1>System</h1>
   <p>Operator-facing service and scheduler status for this instance.</p>
 
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Service Information</h2>
-  <table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Service Information</h2>
+  <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Version</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Service Mode</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Service Host</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; padding: 0.35rem;\">Service Port</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Version</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Service Mode</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Service Host</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; padding: 0.35rem;">Service Port</th><td style="padding: 0.35rem;">%s</td></tr>
     </tbody>
   </table>
 
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Scheduler Information</h2>
-  <table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Scheduler Information</h2>
+  <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Scheduler Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Movie Schedule</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\"><code>%s</code></td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">TV Schedule</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\"><code>%s</code></td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Movie Run</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; padding: 0.35rem;\">Next TV Run</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Scheduler Status</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      %s
     </tbody>
   </table>
 
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Runtime / Storage Information</h2>
-  <table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Runtime / Storage Information</h2>
+  <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Stats Database Path</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Work / Log Path</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Movie Media Root</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">TV Media Root</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-      <tr><th style=\"text-align: left; padding: 0.35rem;\">Current Time</th><td style=\"padding: 0.35rem;\">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Stats Database Path</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Work / Log Path</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Enabled Library Roots</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; padding: 0.35rem;">Current Time</th><td style="padding: 0.35rem;">%s</td></tr>
     </tbody>
   </table>
 
-  <h2 style=\"margin-top: 1rem; margin-bottom: 0.5rem;\">Settings Source Information</h2>
-  <ul style=\"line-height: 1.5; margin-top: 0;\">
-    <li>Editable service settings are persisted in SQLite at <code>%s</code>.</li>
-    <li>Bootstrap defaults still come from environment/compose values on first startup.</li>
-  </ul>
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Settings Source Information</h2>
+  <p>Schedules and paths shown above are loaded from SQLite-backed settings and libraries, with environment/compose values used only for compatibility defaults.</p>
 """ % (
             _escape_html(__version__),
             _escape_html(service_mode),
             _escape_html(self.settings.host),
             _escape_html(str(self.settings.port)),
             _escape_html(scheduler_running),
-            _escape_html(movie_schedule),
-            _escape_html(tv_schedule),
-            _escape_html(movie_next_run),
-            _escape_html(tv_next_run),
-            _escape_html(self.settings.settings_db_path or "Not set"),
+            "".join(schedule_rows),
+            _escape_html(str(self._settings_db_path)),
             _escape_html(work_root),
-            _escape_html(movie_root),
-            _escape_html(tv_root),
+            _escape_html(self._enabled_library_roots_label(enabled_libraries)),
             _escape_html(now_label),
-            _escape_html(self.settings.settings_db_path or "Not set"),
         )
-
         return self._render_shell_html("System", content)
 
     def _scheduler_running_label(self) -> str:
@@ -466,11 +488,8 @@ class ChonkService:
             return "Stopped"
         return "Unknown"
 
-    def _next_run_label(self, library: str) -> str:
-        if library == "movies":
-            schedule = self._library_schedule_for_runtime("Movies", self.settings.movie_schedule).strip()
-        else:
-            schedule = self._library_schedule_for_runtime("TV", self.settings.tv_schedule).strip()
+    def _next_run_label(self, library: RuntimeLibrary) -> str:
+        schedule = library.schedule.strip()
         if not schedule:
             return "Not scheduled"
 
@@ -478,13 +497,13 @@ class ChonkService:
         get_job = getattr(self.scheduler, "get_job", None)
         if callable(get_job):
             try:
-                job = get_job("%s-schedule" % library)
+                job = get_job(self._schedule_job_id(library.id))
             except Exception:
                 job = None
         if job is None:
             jobs = getattr(self.scheduler, "get_jobs", lambda: [])() or []
             for candidate in jobs:
-                if getattr(candidate, "id", "") == "%s-schedule" % library:
+                if getattr(candidate, "id", "") == self._schedule_job_id(library.id):
                     job = candidate
                     break
         if job is None:
@@ -504,6 +523,11 @@ class ChonkService:
             return "%s (%s)" % (now.strftime("%Y-%m-%d %H:%M:%S"), tz_name)
         except Exception:
             return "%s (timezone: %s unavailable)" % (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), tz_name)
+
+    def _enabled_library_roots_label(self, libraries: List[RuntimeLibrary]) -> str:
+        if not libraries:
+            return "Not set"
+        return ", ".join(["%s: %s" % (library.name, library.path) for library in libraries])
 
     def _render_placeholder_page(self, title: str, message: str) -> str:
         content = "<h1>%s</h1><p>%s</p>" % (_escape_html(title), _escape_html(message))
@@ -856,101 +880,149 @@ class ChonkService:
 """
 
     def register_jobs(self) -> None:
-        self._register_library_job("movies", self._library_schedule_for_runtime("Movies", self.settings.movie_schedule))
-        self._register_library_job("tv", self._library_schedule_for_runtime("TV", self.settings.tv_schedule))
+        for library in self.enabled_runtime_libraries():
+            self._register_library_job(library)
 
-    def _library_schedule_for_runtime(self, name: str, fallback: str) -> str:
-        conn = _connect_settings_db(self._settings_db_path)
-        row = conn.execute("SELECT schedule FROM libraries WHERE lower(name) = lower(?)", (name,)).fetchone()
-        conn.close()
-        if row is not None:
-            return str(row["schedule"] or "")
-        return str(fallback or "")
-
-    def _register_library_job(self, library: str, schedule: str) -> None:
-        schedule = (schedule or "").strip()
+    def _register_library_job(self, library: RuntimeLibrary) -> None:
+        schedule = (library.schedule or "").strip()
         if not schedule:
-            LOGGER.info("No %s schedule configured; job disabled", library)
+            LOGGER.info("No schedule configured for %s; job disabled", library.name)
             return
 
         if CronTrigger is not None:
             try:
                 trigger = CronTrigger.from_crontab(schedule)
             except ValueError:
-                LOGGER.error("Invalid cron schedule for %s: %r", library, schedule)
+                LOGGER.error("Invalid cron schedule for %s: %r", library.name, schedule)
                 return
         else:
             if not _is_valid_crontab(schedule):
-                LOGGER.error("Invalid cron schedule for %s: %r", library, schedule)
+                LOGGER.error("Invalid cron schedule for %s: %r", library.name, schedule)
                 return
             trigger = schedule
 
         self.scheduler.add_job(
-            self.trigger_library,
+            self.trigger_library_by_id,
             trigger=trigger,
-            id="%s-schedule" % library,
-            args=[library],
+            id=self._schedule_job_id(library.id),
+            args=[library.id],
             coalesce=True,
             max_instances=1,
             replace_existing=True,
         )
-        LOGGER.info("Registered %s schedule: %s", library, schedule)
+        LOGGER.info("Registered %s schedule: %s", library.name, schedule)
         self._record_activity(
             event_type="schedule_registered",
-            message="Scheduler registered %s schedule" % library.title(),
-            library=library,
+            message="Scheduler registered %s schedule" % library.name,
+            library=library.name,
         )
 
+    def _schedule_job_id(self, library_id: int) -> str:
+        return "library-%d-schedule" % int(library_id)
+
+    def enabled_runtime_libraries(self) -> List[RuntimeLibrary]:
+        return [
+            RuntimeLibrary(id=library.id, name=library.name, path=library.path, schedule=library.schedule)
+            for library in self.list_libraries()
+            if library.enabled
+        ]
+
+    def _library_by_id(self, library_id: int) -> Optional[RuntimeLibrary]:
+        for library in self.enabled_runtime_libraries():
+            if library.id == int(library_id):
+                return library
+        return None
+
+    def _library_by_key(self, key: str) -> Optional[RuntimeLibrary]:
+        target = str(key or "").strip()
+        if target.isdigit():
+            return self._library_by_id(int(target))
+        lowered = target.lower()
+        for library in self.enabled_runtime_libraries():
+            if library.name.strip().lower() == lowered:
+                return library
+        return None
+
+    def trigger_library_by_id(self, library_id: int) -> bool:
+        library = self._library_by_id(library_id)
+        if library is None:
+            return False
+        return self.trigger_library(library.name)
+
     def trigger_library(self, library: str) -> bool:
+        library_record = self._library_by_key(library)
+        if library_record is None:
+            return False
+        library_name = library_record.name
         self._record_activity(
             event_type="scheduled_run_requested",
-            message="Scheduled run requested for %s" % library.title(),
-            library=library,
+            message="Scheduled run requested for %s" % library_name,
+            library=library_name,
         )
-        lock = self._library_locks[library]
+        lock = self._library_lock_for_id(library_record.id)
         if not lock.acquire(blocking=False):
-            LOGGER.info("%s run already in progress; skipping overlapping schedule", library)
+            LOGGER.info("%s run already in progress; skipping overlapping schedule", library_name)
             self._record_activity(
                 event_type="run_rejected_busy",
-                message="%s run skipped because library is already busy" % library.title(),
-                library=library,
+                message="%s run skipped because library is already busy" % library_name,
+                library=library_name,
                 level="warning",
             )
             return False
 
         try:
-            self._run_library_once(library, trigger="schedule")
+            self._run_library_once(library_record.name.lower(), trigger="schedule")
         finally:
             lock.release()
         return True
 
+    def _library_lock_for_id(self, library_id: int) -> threading.Lock:
+        key = str(int(library_id))
+        if key not in self._library_locks:
+            self._library_locks[key] = threading.Lock()
+        library_record = self._library_by_id(int(library_id))
+        if library_record is not None:
+            self._library_locks[library_record.name.strip().lower()] = self._library_locks[key]
+        return self._library_locks[key]
+
+    def manual_run_payload_for_id(self, library_id: int):
+        library_record = self._library_by_id(library_id)
+        if library_record is None:
+            return {"status": "not_found", "library_id": int(library_id)}, 404
+        return self.manual_run_payload(library_record.name)
+
     def manual_run_payload(self, library: str):
-        LOGGER.info("Manual %s run request received", library)
+        library_record = self._library_by_key(library)
+        if library_record is None:
+            return {"status": "not_found", "library": library}, 404
+        library_name = library_record.name
+        LOGGER.info("Manual %s run request received", library_name)
         self._record_activity(
             event_type="manual_run_requested",
-            message="Manual run requested for %s" % library.title(),
-            library=library,
+            message="Manual run requested for %s" % library_name,
+            library=library_name,
         )
-        started = self._start_manual_run(library)
+        started = self._start_manual_run(library_record)
         payload = {
             "status": "started" if started else "busy",
             "library": library,
+            "library_id": library_record.id,
         }
         if started:
-            LOGGER.info("Manual %s run accepted and started", library)
+            LOGGER.info("Manual %s run accepted and started", library_name)
             return payload, 202
 
-        LOGGER.info("Manual %s run rejected; run already in progress", library)
+        LOGGER.info("Manual %s run rejected; run already in progress", library_name)
         self._record_activity(
             event_type="run_rejected_busy",
-            message="%s run skipped because library is already busy" % library.title(),
-            library=library,
+            message="%s run skipped because library is already busy" % library_name,
+            library=library_name,
             level="warning",
         )
         return payload, 409
 
-    def _start_manual_run(self, library: str) -> bool:
-        lock = self._library_locks[library]
+    def _start_manual_run(self, library: RuntimeLibrary) -> bool:
+        lock = self._library_lock_for_id(library.id)
         if not lock.acquire(blocking=False):
             return False
 
@@ -958,9 +1030,9 @@ class ChonkService:
         thread.start()
         return True
 
-    def _run_manual_library_once(self, library: str, lock: threading.Lock) -> None:
+    def _run_manual_library_once(self, library: RuntimeLibrary, lock: threading.Lock) -> None:
         try:
-            self._run_library_once(library, trigger="manual")
+            self._run_library_once(library.name.lower(), trigger="manual")
         finally:
             lock.release()
 
@@ -976,7 +1048,7 @@ class ChonkService:
                 """
                 SELECT library, ts_end, ts_start, success_count, failed_count, skipped_count, duration_seconds
                 FROM runs
-                WHERE library = ?
+                WHERE lower(COALESCE(library, '')) = lower(?)
                 ORDER BY ts_end DESC
                 LIMIT 1
                 """,
@@ -1506,23 +1578,26 @@ class ChonkService:
         conn.close()
 
     def _run_library_once(self, library: str, trigger: str) -> None:
+        library_record = self._library_by_key(library)
+        if library_record is None:
+            return
         run_id = str(uuid.uuid4())
         self._record_activity(
             event_type="run_started",
-            message="%s run started" % library.title(),
-            library=library,
+            message="%s run started" % library_record.name,
+            library=library_record.name,
             run_id=run_id,
         )
 
         with editable_settings_environment(self._editable_settings):
-            with library_environment(library):
-                LOGGER.info("Starting %s %s run", trigger, library)
+            with library_runtime_environment(library_record):
+                LOGGER.info("Starting %s %s run", trigger, library_record.name)
                 rc = run()
-                LOGGER.info("Finished %s %s run with exit code %s", trigger, library, rc)
+                LOGGER.info("Finished %s %s run with exit code %s", trigger, library_record.name, rc)
         self._record_activity(
             event_type="run_completed",
-            message="%s run completed" % library.title(),
-            library=library,
+            message="%s run completed" % library_record.name,
+            library=library_record.name,
             run_id=run_id,
         )
 
@@ -1559,6 +1634,28 @@ class ChonkService:
             self.scheduler.shutdown(wait=False)
 
         return 0
+
+
+@contextmanager
+def library_runtime_environment(library: RuntimeLibrary) -> Iterator[None]:
+    values = {
+        "LIBRARY": library.name,
+        "LOG_PREFIX": _slugify_library_name(library.name),
+        "MEDIA_ROOT": library.path,
+        "MIN_SIZE_GB": _env("MIN_SIZE_GB", "0"),
+    }
+    original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
+
+    try:
+        for key, value in values.items():
+            os.environ[key] = value
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @contextmanager
@@ -1635,6 +1732,12 @@ def _library_values(library: str) -> Dict[str, str]:
     }
     return values
 
+
+
+def _slugify_library_name(name: str) -> str:
+    value = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(name))
+    value = value.strip("_")
+    return value or "library"
 
 def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1828,7 +1931,21 @@ def _run_simple_http_server(
             self.wfile.write(payload)
 
         def do_POST(self):  # noqa: N802
-            if self.path == "/run/movies":
+            if self.path.startswith("/libraries/") and self.path.endswith("/run"):
+                parts = [part for part in self.path.split("/") if part]
+                if len(parts) == 3 and parts[0] == "libraries" and parts[2] == "run":
+                    try:
+                        library_id = int(parts[1])
+                    except ValueError:
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    payload, status_code = manual_run_fn(str(library_id))
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+            elif self.path == "/run/movies":
                 payload, status_code = manual_run_fn("movies")
             elif self.path == "/run/tv":
                 payload, status_code = manual_run_fn("tv")
