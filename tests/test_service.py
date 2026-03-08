@@ -2418,6 +2418,10 @@ def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch)
     assert "Libraries" in body
     assert "<strong>Schedule</strong>" in body
     assert "name=\"schedule\"" in body
+    assert "<strong>Encoding Settings</strong>" in body
+    assert "name=\"qsv_quality\"" in body
+    assert "name=\"qsv_preset\"" in body
+    assert "name=\"min_savings_percent\"" in body
 
 
 def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
@@ -2427,12 +2431,17 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     monkeypatch.setenv("TV_MEDIA_ROOT", "/mnt/media/tv")
     monkeypatch.setenv("MOVIE_SCHEDULE", "0 3 * * *")
     monkeypatch.setenv("TV_SCHEDULE", "0 4 * * *")
+    monkeypatch.setenv("QSV_QUALITY", "22")
+    monkeypatch.setenv("QSV_PRESET", "5")
+    monkeypatch.setenv("MIN_SAVINGS_PERCENT", "13")
 
     ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT name, path, enabled, schedule FROM libraries ORDER BY id ASC").fetchall()
+    rows = conn.execute(
+        "SELECT name, path, enabled, schedule, qsv_quality, qsv_preset, min_savings_percent FROM libraries ORDER BY id ASC"
+    ).fetchall()
     conn.close()
 
     assert len(rows) == 2
@@ -2440,10 +2449,16 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert rows[0]["path"] == "/mnt/media/movies"
     assert int(rows[0]["enabled"]) == 1
     assert rows[0]["schedule"] == "0 3 * * *"
+    assert int(rows[0]["qsv_quality"]) == 22
+    assert int(rows[0]["qsv_preset"]) == 5
+    assert float(rows[0]["min_savings_percent"]) == 13.0
     assert rows[1]["name"] == "TV"
     assert rows[1]["path"] == "/mnt/media/tv"
     assert int(rows[1]["enabled"]) == 1
     assert rows[1]["schedule"] == "0 4 * * *"
+    assert int(rows[1]["qsv_quality"]) == 22
+    assert int(rows[1]["qsv_preset"]) == 5
+    assert float(rows[1]["min_savings_percent"]) == 13.0
 
 
 def test_libraries_bootstrap_schedule_from_legacy_settings_table(tmp_path, monkeypatch):
@@ -2492,6 +2507,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "min_size_gb": "0.5",
             "max_files": "3",
             "priority": "250",
+            "qsv_quality": "20",
+            "qsv_preset": "7",
+            "min_savings_percent": "12.5",
         },
     )
     assert create_status == 200
@@ -2500,7 +2518,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     anime = conn.execute(
-        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority FROM libraries WHERE name = 'Anime'"
+        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent FROM libraries WHERE name = 'Anime'"
     ).fetchone()
     assert anime is not None
     library_id = int(anime["id"])
@@ -2510,6 +2528,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert float(anime["min_size_gb"]) == 0.5
     assert int(anime["max_files"]) == 3
     assert int(anime["priority"]) == 250
+    assert int(anime["qsv_quality"]) == 20
+    assert int(anime["qsv_preset"]) == 7
+    assert float(anime["min_savings_percent"]) == 12.5
     conn.close()
 
     update_status, update_body = _call_post(
@@ -2524,6 +2545,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "min_size_gb": "1.25",
             "max_files": "2",
             "priority": "5",
+            "qsv_quality": "23",
+            "qsv_preset": "8",
+            "min_savings_percent": "10",
         },
     )
     assert update_status == 200
@@ -2532,7 +2556,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     updated = conn.execute(
-        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority FROM libraries WHERE id = ?",
+        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent FROM libraries WHERE id = ?",
         (library_id,),
     ).fetchone()
     assert updated is not None
@@ -2543,6 +2567,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert float(updated["min_size_gb"]) == 1.25
     assert int(updated["max_files"]) == 2
     assert int(updated["priority"]) == 5
+    assert int(updated["qsv_quality"]) == 23
+    assert int(updated["qsv_preset"]) == 8
+    assert float(updated["min_savings_percent"]) == 10.0
     conn.close()
 
     toggle_status, toggle_body = _call_post(
@@ -2767,6 +2794,9 @@ def test_library_validation_rejects_duplicates_and_blanks(tmp_path, monkeypatch)
 def test_library_columns_migrated_with_defaults(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("QSV_QUALITY", "24")
+    monkeypatch.setenv("QSV_PRESET", "6")
+    monkeypatch.setenv("MIN_SAVINGS_PERCENT", "11")
 
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -2792,12 +2822,18 @@ def test_library_columns_migrated_with_defaults(tmp_path, monkeypatch):
     ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
     conn = sqlite3.connect(str(db_path))
-    row = conn.execute("SELECT min_size_gb, max_files, priority FROM libraries WHERE name = ?", ("Legacy",)).fetchone()
+    row = conn.execute(
+        "SELECT min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent FROM libraries WHERE name = ?",
+        ("Legacy",),
+    ).fetchone()
     conn.close()
 
     assert float(row[0]) == 0.0
     assert int(row[1]) == 1
     assert int(row[2]) == 100
+    assert int(row[3]) == 24
+    assert int(row[4]) == 6
+    assert float(row[5]) == 11.0
 
 
 def test_library_validation_rejects_invalid_processing_inputs(tmp_path, monkeypatch):
@@ -2827,6 +2863,27 @@ def test_library_validation_rejects_invalid_processing_inputs(tmp_path, monkeypa
         }
     )
     assert "priority must be an integer" in message
+
+    message = service.create_library(
+        {"name": "Bad4", "path": "/data/bad4", "enabled": "1", "schedule": "", "qsv_quality": "fast"}
+    )
+    assert "QSV quality must be an integer" in message
+
+    message = service.create_library(
+        {"name": "Bad5", "path": "/data/bad5", "enabled": "1", "schedule": "", "qsv_preset": "-1"}
+    )
+    assert "QSV preset must be >= 0" in message
+
+    message = service.create_library(
+        {
+            "name": "Bad6",
+            "path": "/data/bad6",
+            "enabled": "1",
+            "schedule": "",
+            "min_savings_percent": "none",
+        }
+    )
+    assert "minimum savings percent must be a number" in message
 
 
 def test_queue_prefers_higher_priority_and_keeps_fifo_for_ties(tmp_path, monkeypatch):
@@ -3071,7 +3128,10 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
     service.update_editable_settings({"min_file_age_minutes": "7", "retry_count": "9"})
 
     conn = sqlite3.connect(str(db_path))
-    conn.execute("UPDATE libraries SET min_size_gb = ?, max_files = ? WHERE name = ?", (2.5, 4, "Movies"))
+    conn.execute(
+        "UPDATE libraries SET min_size_gb = ?, max_files = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ? WHERE name = ?",
+        (2.5, 4, 20, 8, 12.0, "Movies"),
+    )
     conn.commit()
     conn.close()
 
@@ -3082,6 +3142,9 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
         captured["min_size_gb"] = os.getenv("MIN_SIZE_GB")
         captured["min_file_age_minutes"] = os.getenv("MIN_FILE_AGE_MINUTES")
         captured["retry_count"] = os.getenv("RETRY_COUNT")
+        captured["qsv_quality"] = os.getenv("QSV_QUALITY")
+        captured["qsv_preset"] = os.getenv("QSV_PRESET")
+        captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
         return 0
 
     monkeypatch.setattr(service_module, "run", fake_run_once)
@@ -3092,6 +3155,45 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
     assert captured["min_size_gb"] == "2.5"
     assert captured["min_file_age_minutes"] == "7"
     assert captured["retry_count"] == "9"
+    assert captured["qsv_quality"] == "20"
+    assert captured["qsv_preset"] == "8"
+    assert captured["min_savings_percent"] == "12.0"
+
+
+def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("QSV_QUALITY", "26")
+    monkeypatch.setenv("QSV_PRESET", "4")
+    monkeypatch.setenv("MIN_SAVINGS_PERCENT", "9")
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE libraries SET qsv_quality = NULL, qsv_preset = NULL, min_savings_percent = NULL WHERE name = ?",
+        ("Movies",),
+    )
+    conn.commit()
+    conn.close()
+
+    captured = {}
+
+    def fake_run_once():
+        captured["qsv_quality"] = os.getenv("QSV_QUALITY")
+        captured["qsv_preset"] = os.getenv("QSV_PRESET")
+        captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
+        return 0
+
+    monkeypatch.setattr(service_module, "run", fake_run_once)
+
+    service._run_library_once("movies", "manual")
+
+    assert captured["qsv_quality"] == "26"
+    assert captured["qsv_preset"] == "4"
+    assert captured["min_savings_percent"] == "9.0"
 
 
 def test_settings_route_renders_notification_fields(tmp_path, monkeypatch):

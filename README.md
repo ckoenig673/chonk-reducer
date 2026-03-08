@@ -467,8 +467,8 @@ Settings precedence / bootstrap model:
 
 1. Environment/compose values are bootstrap defaults.
 2. On first startup, missing service settings rows are initialized from those environment values.
-3. On first startup, missing `libraries` rows are initialized from current Movie/TV media roots, with per-library processing defaults (`min_size_gb=0.0`, `max_files=1`) and legacy schedule bootstrap.
-4. After initialization, SQLite values are used by service-driven runs.
+3. On first startup, missing `libraries` rows are initialized from current Movie/TV media roots, with per-library processing defaults (`min_size_gb=0.0`, `max_files=1`) and per-library encoding defaults (`qsv_quality`, `qsv_preset`, `min_savings_percent`) bootstrapped from current env/compose values.
+4. After initialization, library rows in SQLite are the runtime source of truth for per-library processing and encoding behavior.
 
 Scheduler notes:
 
@@ -520,10 +520,19 @@ Per-library processing fields in the library create/edit forms:
 - **Minimum File Size (GB)** (`min_size_gb`): files smaller than this value are skipped for that library.
 - **Max Files Per Run** (`max_files`): a run for that library stops after this many files.
 
+Per-library encoding fields in the library create/edit forms (**Encoding Settings**):
+
+- **QSV Quality** (`qsv_quality`): integer quality value used for that library run.
+- **QSV Preset** (`qsv_preset`): integer preset value used for that library run.
+- **Minimum Savings Percent** (`min_savings_percent`): numeric threshold used for that library run.
+
 Defaults for existing and new libraries are:
 
 - `min_size_gb = 0.0`
 - `max_files = 1`
+- `qsv_quality = QSV_QUALITY` env default (fallback `21`)
+- `qsv_preset = QSV_PRESET` env default (fallback `7`)
+- `min_savings_percent = MIN_SAVINGS_PERCENT` env default (fallback `15`)
 
 ---
 

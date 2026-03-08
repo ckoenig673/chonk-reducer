@@ -105,6 +105,9 @@ class LibraryRecord:
     min_size_gb: float
     max_files: int
     priority: int
+    qsv_quality: Optional[int]
+    qsv_preset: Optional[int]
+    min_savings_percent: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,9 @@ class RuntimeLibrary:
     min_size_gb: float
     max_files: int
     priority: int
+    qsv_quality: Optional[int]
+    qsv_preset: Optional[int]
+    min_savings_percent: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -172,6 +178,14 @@ def _env_int(name: str, default: int) -> int:
     value = _env(name, str(default))
     try:
         return int(value)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = _env(name, str(default))
+    try:
+        return float(value)
     except ValueError:
         return default
 
@@ -1151,10 +1165,10 @@ class ChonkService:
             for name, path, enabled, schedule, min_size_gb, max_files, priority in defaults:
                 conn.execute(
                     """
-                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, priority, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, path, enabled, schedule, min_size_gb, max_files, priority, now, now),
+                    (name, path, enabled, schedule, min_size_gb, max_files, priority, _env_int("QSV_QUALITY", 21), _env_int("QSV_PRESET", 7), _env_float("MIN_SAVINGS_PERCENT", 15.0), now, now),
                 )
         conn.close()
 
@@ -1167,7 +1181,7 @@ class ChonkService:
     def list_libraries(self) -> List[LibraryRecord]:
         conn = _connect_settings_db(self._settings_db_path)
         rows = conn.execute(
-            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority FROM libraries ORDER BY id ASC"
+            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent FROM libraries ORDER BY id ASC"
         ).fetchall()
         conn.close()
         return [
@@ -1180,6 +1194,9 @@ class ChonkService:
                 min_size_gb=float(row["min_size_gb"]),
                 max_files=int(row["max_files"]),
                 priority=int(row["priority"]),
+                qsv_quality=int(row["qsv_quality"]) if row["qsv_quality"] is not None else None,
+                qsv_preset=int(row["qsv_preset"]) if row["qsv_preset"] is not None else None,
+                min_savings_percent=float(row["min_savings_percent"]) if row["min_savings_percent"] is not None else None,
             )
             for row in rows
         ]
@@ -1193,8 +1210,8 @@ class ChonkService:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, priority, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO libraries(name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         normalized["name"],
@@ -1204,6 +1221,9 @@ class ChonkService:
                         float(normalized["min_size_gb"]),
                         int(normalized["max_files"]),
                         int(normalized["priority"]),
+                        int(normalized["qsv_quality"]),
+                        int(normalized["qsv_preset"]),
+                        float(normalized["min_savings_percent"]),
                         _utc_timestamp(),
                         _utc_timestamp(),
                     ),
@@ -1227,7 +1247,7 @@ class ChonkService:
                 cursor = conn.execute(
                     """
                     UPDATE libraries
-                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, priority = ?, updated_at = ?
+                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, priority = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -1238,6 +1258,9 @@ class ChonkService:
                         float(normalized["min_size_gb"]),
                         int(normalized["max_files"]),
                         int(normalized["priority"]),
+                        int(normalized["qsv_quality"]),
+                        int(normalized["qsv_preset"]),
+                        float(normalized["min_savings_percent"]),
                         _utc_timestamp(),
                         int(library_id),
                     ),
@@ -1330,6 +1353,30 @@ class ChonkService:
         except ValueError:
             return {}, "Library validation failed: priority must be an integer."
 
+        qsv_quality_raw = str(values.get("qsv_quality", _env_bootstrap("QSV_QUALITY", "21"))).strip() or "0"
+        try:
+            qsv_quality = int(qsv_quality_raw)
+        except ValueError:
+            return {}, "Library validation failed: QSV quality must be an integer."
+        if qsv_quality < 0:
+            return {}, "Library validation failed: QSV quality must be >= 0."
+
+        qsv_preset_raw = str(values.get("qsv_preset", _env_bootstrap("QSV_PRESET", "7"))).strip() or "0"
+        try:
+            qsv_preset = int(qsv_preset_raw)
+        except ValueError:
+            return {}, "Library validation failed: QSV preset must be an integer."
+        if qsv_preset < 0:
+            return {}, "Library validation failed: QSV preset must be >= 0."
+
+        min_savings_raw = str(values.get("min_savings_percent", _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))).strip() or "0"
+        try:
+            min_savings_percent = float(min_savings_raw)
+        except ValueError:
+            return {}, "Library validation failed: minimum savings percent must be a number."
+        if min_savings_percent < 0:
+            return {}, "Library validation failed: minimum savings percent must be >= 0."
+
         if schedule_mode == "legacy":
             schedule = str(values.get("schedule", "")).strip()
         elif schedule_mode == "advanced":
@@ -1354,6 +1401,9 @@ class ChonkService:
             "min_size_gb": min_size_gb,
             "max_files": max_files,
             "priority": priority,
+            "qsv_quality": qsv_quality,
+            "qsv_preset": qsv_preset,
+            "min_savings_percent": min_savings_percent,
         }, ""
 
     def _library_integrity_error_message(self, exc: sqlite3.IntegrityError) -> str:
@@ -1403,6 +1453,15 @@ class ChonkService:
           <input name="priority" type="number" step="1" value="{priority}" style="width: 100%;" /><br />
           <small>Higher numbers run first when multiple libraries are queued.</small><br />
         </fieldset>
+        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
+          <legend><strong>Encoding Settings</strong></legend>
+          <label><strong>QSV Quality</strong></label><br />
+          <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality}" style="width: 100%;" /><br />
+          <label><strong>QSV Preset</strong></label><br />
+          <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset}" style="width: 100%;" /><br />
+          <label><strong>Minimum Savings Percent</strong></label><br />
+          <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent}" style="width: 100%;" /><br />
+        </fieldset>
         {schedule_fields}
         <label><strong>Enabled</strong></label>
         <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
@@ -1418,6 +1477,9 @@ class ChonkService:
                     min_size_gb=_escape_html("%s" % library.min_size_gb),
                     max_files=_escape_html(str(library.max_files)),
                     priority=_escape_html(str(library.priority)),
+                    qsv_quality=_escape_html(str(library.qsv_quality if library.qsv_quality is not None else _env_bootstrap("QSV_QUALITY", "21"))),
+                    qsv_preset=_escape_html(str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7"))),
+                    min_savings_percent=_escape_html(str(library.min_savings_percent if library.min_savings_percent is not None else _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))),
                     schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
                     library_id=library.id,
                     enabled_yes="selected" if library.enabled else "",
@@ -1471,12 +1533,26 @@ class ChonkService:
     <input name="priority" type="number" step="1" value="100" style="width: 100%;" /><br />
     <small>Higher numbers run first when multiple libraries are queued.</small><br />
   </fieldset>
+  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
+    <legend><strong>Encoding Settings</strong></legend>
+    <label><strong>QSV Quality</strong></label><br />
+    <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality_default}" style="width: 100%;" /><br />
+    <label><strong>QSV Preset</strong></label><br />
+    <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset_default}" style="width: 100%;" /><br />
+    <label><strong>Minimum Savings Percent</strong></label><br />
+    <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent_default}" style="width: 100%;" /><br />
+  </fieldset>
   {schedule_fields}
   <label><strong>Enabled</strong></label>
   <select name="enabled"><option value="1" selected>Yes</option><option value="0">No</option></select>
   <div style="margin-top: 0.5rem;"><button type="submit">Create Library</button></div>
 </form>
-""".format(schedule_fields=schedule_fields)
+""".format(
+    schedule_fields=schedule_fields,
+    qsv_quality_default=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
+    qsv_preset_default=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
+    min_savings_percent_default=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
+)
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
         form_token = "".join(ch if ch.isalnum() else "_" for ch in str(form_id))
@@ -1615,6 +1691,9 @@ class ChonkService:
                 min_size_gb=library.min_size_gb,
                 max_files=library.max_files,
                 priority=library.priority,
+                qsv_quality=library.qsv_quality,
+                qsv_preset=library.qsv_preset,
+                min_savings_percent=library.min_savings_percent,
             )
             for library in self.list_libraries()
             if library.enabled
@@ -2894,6 +2973,13 @@ def library_runtime_environment(library: RuntimeLibrary) -> Iterator[None]:
         "MEDIA_ROOT": library.path,
         "MIN_SIZE_GB": str(library.min_size_gb),
         "MAX_FILES": str(library.max_files),
+        "QSV_QUALITY": str(library.qsv_quality if library.qsv_quality is not None else _env_bootstrap("QSV_QUALITY", "21")),
+        "QSV_PRESET": str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7")),
+        "MIN_SAVINGS_PERCENT": str(
+            library.min_savings_percent
+            if library.min_savings_percent is not None
+            else _env_bootstrap("MIN_SAVINGS_PERCENT", "15")
+        ),
     }
     original: Dict[str, Optional[str]] = {key: os.environ.get(key) for key in values}
 
@@ -3030,6 +3116,9 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
             min_size_gb REAL NOT NULL DEFAULT 0.0,
             max_files INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 100,
+            qsv_quality INTEGER,
+            qsv_preset INTEGER,
+            min_savings_percent REAL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -3042,9 +3131,27 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE libraries ADD COLUMN max_files INTEGER NOT NULL DEFAULT 1")
     if "priority" not in library_columns:
         conn.execute("ALTER TABLE libraries ADD COLUMN priority INTEGER NOT NULL DEFAULT 100")
+    if "qsv_quality" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN qsv_quality INTEGER")
+    if "qsv_preset" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN qsv_preset INTEGER")
+    if "min_savings_percent" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN min_savings_percent REAL")
     conn.execute("UPDATE libraries SET min_size_gb = COALESCE(min_size_gb, 0.0)")
     conn.execute("UPDATE libraries SET max_files = CASE WHEN max_files IS NULL OR max_files < 1 THEN 1 ELSE max_files END")
     conn.execute("UPDATE libraries SET priority = COALESCE(priority, 100)")
+    conn.execute(
+        "UPDATE libraries SET qsv_quality = CASE WHEN qsv_quality IS NULL OR qsv_quality < 0 THEN ? ELSE qsv_quality END",
+        (_env_int("QSV_QUALITY", 21),),
+    )
+    conn.execute(
+        "UPDATE libraries SET qsv_preset = CASE WHEN qsv_preset IS NULL OR qsv_preset < 0 THEN ? ELSE qsv_preset END",
+        (_env_int("QSV_PRESET", 7),),
+    )
+    conn.execute(
+        "UPDATE libraries SET min_savings_percent = CASE WHEN min_savings_percent IS NULL OR min_savings_percent < 0 THEN ? ELSE min_savings_percent END",
+        (_env_float("MIN_SAVINGS_PERCENT", 15.0),),
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS activity_events (
