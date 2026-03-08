@@ -2296,6 +2296,57 @@ def test_replacing_secret_updates_encrypted_value(tmp_path, monkeypatch):
     assert secrets.decrypt_secret(second) == "https://discord.example/two"
 
 
+def test_secret_webhook_round_trip_preserves_exact_value_after_decrypt(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    entered = "  https://discord.com/api/webhooks/123/abcDEF-gh?wait=true&name=ops+alerts  \r\n"
+    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": entered})
+
+    assert status_code == 200
+    encrypted = service._editable_settings["discord_webhook_url"]
+    decrypted = secrets.decrypt_secret(encrypted)
+    assert decrypted == entered.strip().replace("\r", "").replace("\n", "")
+
+
+def test_secret_webhook_special_characters_survive_post_round_trip(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    webhook = "https://example.test/hook?token=a+b%2Fz&meta=%3Ctag%3E&x=1&y=2"
+    status_code, _ = _call_post(service, "/settings", data={"generic_webhook_url": webhook})
+
+    assert status_code == 200
+    assert secrets.decrypt_secret(service._editable_settings["generic_webhook_url"]) == webhook
+
+
+def test_masked_secret_placeholder_submission_preserves_existing_notification_secret(tmp_path, monkeypatch):
+    from chonk_reducer import secrets
+
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv(secrets.SECRET_ENV_VAR, "test-secret-key-123")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.update_editable_settings({"discord_webhook_url": "https://discord.example/hook"})
+
+    before = service._editable_settings["discord_webhook_url"]
+    status_code, _ = _call_post(service, "/settings", data={"discord_webhook_url": "Configured (hidden)", "max_files": "12"})
+
+    assert status_code == 200
+    assert service._editable_settings["discord_webhook_url"] == before
+
+
 def test_post_settings_persists_notification_fields_encrypted(tmp_path, monkeypatch):
     from chonk_reducer import secrets
 

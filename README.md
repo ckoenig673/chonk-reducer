@@ -21,7 +21,7 @@
                 Reduce the Chonk. Respect the Bits.
 ```
 
-**Current Version:** v1.30.2
+**Current Version:** v1.30.3
 
 Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
 
@@ -80,6 +80,7 @@ Notes:
 - If both webhook URLs are empty, notifications are effectively disabled.
 - Webhook URL values are encrypted before being written to SQLite (using `CHONK_SECRET_KEY`) and decrypted only at send time.
 - The Settings UI does not re-render plaintext secrets after save; it shows masked/hidden status and supports explicit clear + replace behavior.
+- Secret-backed webhook values are stored exactly as entered (after trimming leading/trailing whitespace and removing accidental CR/LF), without HTML/entity mutation.
 - The Settings page includes a `Send Test Notification` action for operator verification.
 - Notification delivery failures are non-fatal and only logged as warnings.
 - Notifications are sent once per run completion/failure event in service mode.
