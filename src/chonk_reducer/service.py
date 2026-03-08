@@ -1070,7 +1070,7 @@ class ChonkService:
         conn = _connect_settings_db(self._settings_db_path)
         rows = conn.execute(
             """
-            SELECT ts, library, event_type, message
+            SELECT ts, library, run_id, event_type, message
             FROM activity_events
             ORDER BY id DESC
             LIMIT ?
@@ -1083,6 +1083,7 @@ class ChonkService:
             {
                 "ts": str(row["ts"]),
                 "library": str(row["library"] or "-"),
+                "run_id": str(row["run_id"] or ""),
                 "event_type": str(row["event_type"]),
                 "message": str(row["message"]),
             }
@@ -1095,13 +1096,19 @@ class ChonkService:
 
         row_html = []
         for row in rows:
+            run_id = row["run_id"]
+            run_id_html = "-"
+            if run_id:
+                escaped_run_id = _escape_html(run_id)
+                run_id_html = '<a href="/runs/%s">%s</a>' % (escaped_run_id, escaped_run_id)
             row_html.append(
-                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
                     _escape_html(row["ts"]),
                     _escape_html(row["library"]),
                     _escape_html(row["event_type"]),
                     _escape_html(row["message"]),
+                    run_id_html,
                 )
             )
 
@@ -1112,6 +1119,7 @@ class ChonkService:
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Event Type</th>
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Message</th>
+      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Run ID</th>
     </tr>
   </thead>
   <tbody>

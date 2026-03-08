@@ -323,6 +323,8 @@ open http://localhost:8080/activity
 
 The Activity page is a lightweight operator-facing event feed stored in SQLite (`activity_events` table in `STATS_PATH`).
 
+Activity entries that include a `run_id` render that value as a link to Run Detail (`/runs/{run_id}`).
+
 It includes recent service events such as:
 
 - service startup
