@@ -1950,15 +1950,42 @@ class ChonkService:
 
     def _recent_activity(self, limit: int = 25) -> List[Dict[str, str]]:
         conn = _connect_settings_db(self._settings_db_path)
-        rows = conn.execute(
-            """
-            SELECT ts, library, run_id, event_type, message
-            FROM activity_events
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-        ).fetchall()
+        runs_table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'"
+        ).fetchone()
+        if runs_table_exists:
+            rows = conn.execute(
+                """
+                SELECT
+                    a.ts,
+                    a.library,
+                    a.run_id,
+                    a.event_type,
+                    a.message,
+                    CASE WHEN r.run_id IS NULL THEN 0 ELSE 1 END AS run_exists
+                FROM activity_events a
+                LEFT JOIN runs r ON r.run_id = a.run_id
+                ORDER BY a.id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT
+                    ts,
+                    library,
+                    run_id,
+                    event_type,
+                    message,
+                    0 AS run_exists
+                FROM activity_events
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
         conn.close()
 
         return [
@@ -1968,6 +1995,7 @@ class ChonkService:
                 "run_id": str(row["run_id"] or ""),
                 "event_type": str(row["event_type"]),
                 "message": str(row["message"]),
+                "run_exists": str(row["run_exists"] or 0),
             }
             for row in rows
         ]
@@ -1982,7 +2010,10 @@ class ChonkService:
             run_id_html = "-"
             if run_id:
                 escaped_run_id = _escape_html(run_id)
-                run_id_html = '<a href="/runs/%s">%s</a>' % (escaped_run_id, escaped_run_id)
+                if str(row.get("run_exists") or "0") == "1":
+                    run_id_html = '<a href="/runs/%s">%s</a>' % (escaped_run_id, escaped_run_id)
+                else:
+                    run_id_html = "%s <span style=\"color:#666;\">(run unavailable)</span>" % escaped_run_id
             row_html.append(
                 "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
