@@ -978,7 +978,7 @@ class ChonkService:
         encodes = self._encodes_for_run(run_id)
         content = "<h1>Run Detail</h1><p>Operator-facing summary for this run from SQLite.</p>"
         content += self._run_summary_html(run)
-        content += self._raw_log_path_html(run)
+        content += self._related_run_info_html(run)
         content += '<h2 style="margin-top: 1rem;">File-Level Entries</h2>'
         content += self._run_encodes_html(encodes)
         return self._render_shell_html("Runs", content), 200
@@ -1638,7 +1638,7 @@ class ChonkService:
       <form method=\"post\" action=\"/settings/libraries/update\" style=\"margin-top: 0.5rem;\">
         <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
         <label><strong>Name</strong></label><br />
-        <input name=\"name\" value=\"{name}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        <input name=\"name\" value=\"{name}\" style=\"width: 100%%; max-width: 420px;\" /><br />
         <label><strong>Path</strong></label><br />
         <input name="path" value="{path}" style="width: 100%; max-width: 420px;" /><br />
         <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
@@ -2561,6 +2561,7 @@ class ChonkService:
             "run_id",
             "ts_start",
             "ts_end",
+            "mode",
             "library",
             "candidates_found",
             "evaluated_count",
@@ -2584,6 +2585,7 @@ class ChonkService:
             "raw_log_path",
         ]
 
+        conn = None
         try:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
@@ -2597,22 +2599,55 @@ class ChonkService:
                 (run_id,),
             ).fetchone()
         except Exception:
-            conn.close()
+            if conn is not None:
+                conn.close()
             return None
 
         if row is None:
+            conn.close()
             return None
+
+        was_cancelled = False
+        try:
+            cancelled_row = conn.execute(
+                "SELECT 1 FROM encodes WHERE run_id = ? AND lower(COALESCE(skip_reason, '')) = 'cancelled' LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            was_cancelled = cancelled_row is not None
+        except Exception:
+            was_cancelled = False
+
+        trigger_type = ""
+        try:
+            trigger_row = conn.execute(
+                """
+                SELECT event_type
+                FROM activity_events
+                WHERE run_id = ? AND event_type IN ('manual_run_requested', 'manual_preview_requested', 'scheduled_run_requested')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if trigger_row is not None:
+                trigger_type = str(trigger_row["event_type"] or "")
+        except Exception:
+            trigger_type = ""
 
         result: Dict[str, str] = {
             "result": _derive_run_status(
                 success_count=int(row["success_count"] or 0),
                 failed_count=int(row["failed_count"] or 0),
                 skipped_count=int(row["skipped_count"] or 0),
-            )
+                was_cancelled=was_cancelled,
+            ),
+            "was_cancelled": "1" if was_cancelled else "0",
+            "trigger_type": trigger_type,
         }
         for key in requested_columns:
             if key in row.keys():
                 result[key] = row[key]
+        conn.close()
         return result
 
     def _encodes_for_run(self, run_id: str) -> List[Dict[str, str]]:
@@ -2743,20 +2778,31 @@ class ChonkService:
 </table>""" % "".join(row_html)
 
     def _run_summary_html(self, run: Dict[str, str]) -> str:
-        items = [
+        summary_rows = [
             ("Run ID", _escape_html(str(run.get("run_id") or "-"))),
-            ("Timestamp", _escape_html(str(run.get("ts_end") or run.get("ts_start") or "Unknown"))),
             ("Library", _escape_html(str(run.get("library") or "Unknown"))),
-            ("Result", _escape_html(str(run.get("result") or "completed"))),
+            ("Trigger Type", _escape_html(_display_run_trigger(str(run.get("trigger_type") or "")))),
+            ("Mode", _escape_html(_display_run_mode(str(run.get("mode") or "")))),
+            ("Started At", _escape_html(_format_readable_timestamp(run.get("ts_start")))),
+            ("Completed At", _escape_html(_format_readable_timestamp(run.get("ts_end")))),
             ("Duration", _escape_html(_format_duration_seconds(run.get("duration_seconds")))),
+        ]
+        outcome_rows = [
+            ("Result", _escape_html(str(run.get("result") or "completed"))),
+            ("Cancellation", "Cancelled" if str(run.get("was_cancelled") or "0") == "1" else "Not Cancelled"),
+            ("Retry Attempts", "Not recorded"),
+        ]
+        count_rows = [
             ("Candidates Found", _escape_html(str(run.get("candidates_found") or 0))),
             ("Evaluated", _escape_html(str(run.get("evaluated_count") or 0))),
             ("Processed", _escape_html(str(run.get("processed_count") or 0))),
             ("Success", _escape_html(str(run.get("success_count") or 0))),
             ("Skipped", _escape_html(str(run.get("skipped_count") or 0))),
             ("Failed", _escape_html(str(run.get("failed_count") or 0))),
-            ("Saved", _escape_html(_format_saved_bytes(run.get("saved_bytes")))),
         ]
+        savings_rows = [("Total Bytes Saved", _escape_html(_format_saved_bytes(run.get("saved_bytes"))))]
+
+        optional_rows = []
         optional_fields = [
             ("Prefiltered", "prefiltered_count"),
             ("Prefiltered Marker", "prefiltered_marker_count"),
@@ -2772,20 +2818,73 @@ class ChonkService:
         ]
         for label, key in optional_fields:
             if key in run:
-                items.append((label, _escape_html(str(run.get(key) or 0))))
+                optional_rows.append((label, _escape_html(str(run.get(key) or 0))))
 
-        lines = ["<li><strong>%s:</strong> %s</li>" % (label, value) for label, value in items]
-        return '<h2>Run Summary</h2><ul style="line-height:1.5;">%s</ul>' % "".join(lines)
+        return "".join(
+            [
+                '<h2 style="margin-top: 1rem;">Run Summary</h2>%s' % self._key_value_table_html(summary_rows),
+                '<h2 style="margin-top: 1rem;">Outcome</h2>%s' % self._key_value_table_html(outcome_rows),
+                '<h2 style="margin-top: 1rem;">Counts</h2>%s' % self._key_value_table_html(count_rows),
+                '<h2 style="margin-top: 1rem;">Savings</h2>%s' % self._key_value_table_html(savings_rows),
+                '<h2 style="margin-top: 1rem;">Related Information</h2>%s'
+                % self._key_value_table_html(optional_rows or [("Details", "No additional summary counters recorded.")]),
+            ]
+        )
+
+    def _key_value_table_html(self, rows: List[tuple]) -> str:
+        row_html = []
+        for label, value in rows:
+            row_html.append(
+                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">%s</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>'
+                % (label, value)
+            )
+        return '<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;"><tbody>%s</tbody></table>' % "".join(row_html)
+
+    def _related_run_info_html(self, run: Dict[str, str]) -> str:
+        raw_log_path = str(run.get("raw_log_path") or "").strip()
+        run_log_value = _escape_html(raw_log_path) if raw_log_path else "No raw log path recorded for this run."
+        mode_value = _escape_html(_display_run_mode(str(run.get("mode") or "")))
+        result_value = _escape_html(str(run.get("result") or "completed"))
+        if str(run.get("mode") or "").strip().lower() in ("preview", "dry_run", "dry-run"):
+            result_value = "Preview-only (no files encoded)"
+        rows = [
+            ("Run Log Path", run_log_value),
+            ("Preview vs Live", mode_value),
+            ("Preview vs Encode Result", result_value),
+        ]
+        return '<h2 style="margin-top: 1rem;">Run Logs and Distinctions</h2>%s' % self._key_value_table_html(rows)
 
     def _raw_log_path_html(self, run: Dict[str, str]) -> str:
-        raw_log_path = str(run.get("raw_log_path") or "").strip()
-        if raw_log_path:
-            return '<h2 style="margin-top: 1rem;">Raw Log Path</h2><pre style="padding: 0.5rem; border: 1px solid #ddd; background: #fafafa;">%s</pre>' % _escape_html(raw_log_path)
-        return '<h2 style="margin-top: 1rem;">Raw Log Path</h2><div style="padding: 0.5rem; border: 1px solid #ddd;">No raw log path recorded for this run.</div>'
+        return self._related_run_info_html(run)
+
+    def _run_file_summary_html(self, rows: List[Dict[str, str]]) -> str:
+        total = len(rows)
+        if total == 0:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No file-level entries recorded for this run.</div>'
+        skipped_reasons = sorted(
+            {
+                str(row.get("reason") or "-")
+                for row in rows
+                if str(row.get("status") or "").lower() == "skipped" and str(row.get("reason") or "-") != "-"
+            }
+        )
+        failure_reasons = sorted(
+            {
+                str(row.get("reason") or "-")
+                for row in rows
+                if str(row.get("status") or "").lower() == "failed" and str(row.get("reason") or "-") != "-"
+            }
+        )
+        rows_data = [
+            ("Total File Entries", _escape_html(str(total))),
+            ("Skip Reasons", _escape_html(", ".join(skipped_reasons) if skipped_reasons else "None recorded")),
+            ("Failure Reasons", _escape_html(", ".join(failure_reasons) if failure_reasons else "None recorded")),
+        ]
+        return '<h2 style="margin-top: 1rem;">File List Summary</h2>%s' % self._key_value_table_html(rows_data)
 
     def _run_encodes_html(self, rows: List[Dict[str, str]]) -> str:
         if not rows:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No file-level entries recorded for this run.</div>'
+            return self._run_file_summary_html(rows)
 
         body_rows = []
         for row in rows:
@@ -2802,16 +2901,16 @@ class ChonkService:
                 )
             )
 
-        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+        return self._run_file_summary_html(rows) + """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
   <thead>
     <tr>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Path</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Status</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Codec</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Before</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">After</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Reason / Detail</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Path</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Status</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Codec</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Before</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">After</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Saved</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Reason / Detail</th>
     </tr>
   </thead>
   <tbody>
@@ -3766,6 +3865,28 @@ def _display_trigger(trigger: str) -> str:
     if not value:
         return "-"
     return str(trigger)
+
+
+def _display_run_mode(mode: str) -> str:
+    value = str(mode or "").strip().lower()
+    if value in ("preview", "dry_run", "dry-run"):
+        return "Preview"
+    if value in ("live", "normal", "encode"):
+        return "Live"
+    if not value:
+        return "Live"
+    return str(mode)
+
+
+def _display_run_trigger(event_type: str) -> str:
+    value = str(event_type or "").strip().lower()
+    if value == "manual_preview_requested":
+        return "Manual Preview"
+    if value == "manual_run_requested":
+        return "Manual"
+    if value == "scheduled_run_requested":
+        return "Scheduled"
+    return "Unknown"
 
 
 def _format_scheduler_datetime(value) -> str:

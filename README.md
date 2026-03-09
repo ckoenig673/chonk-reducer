@@ -369,9 +369,9 @@ The Runs page is backed by the SQLite `runs` table and provides a recent run his
 
 Runs now include links to a Run Detail page for each `run_id`, which shows per-run summary data from `runs` plus file-level entries from `encodes`.
 
-Run Detail also surfaces the raw log file path when available, so operators can quickly jump from Activity → Run Detail → raw log file on disk.
+Run Detail now presents sectioned operator views (**Run Summary**, **Outcome**, **Counts**, **Savings**, **Related Information**) including run id, library, trigger type (when recorded), mode (live/preview), started/completed timestamps, duration, processed/success/skipped/failed counts, cancellation status, and total bytes saved.
 
-It is intentionally minimal and currently focuses on operator history visibility (status, counts, duration, saved space, and raw log path visibility).
+When available from existing SQLite data, Run Detail also surfaces a file list summary (including skip/failure reason rollups), preview-vs-live/result distinctions, and the raw log file path so operators can quickly jump from Activity → Run Detail → raw log file on disk.
 
 Detailed raw logs remain in log files and are unchanged (the UI is not a full log viewer).
 
