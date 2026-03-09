@@ -1850,7 +1850,7 @@ class ChonkService:
 
         if CronTrigger is not None:
             try:
-                trigger = CronTrigger.from_crontab(schedule)
+                trigger = CronTrigger.from_crontab(schedule, timezone=_cron_trigger_timezone())
             except ValueError:
                 LOGGER.error("Invalid cron schedule for %s: %r", library.name, schedule)
                 return
@@ -3731,13 +3731,7 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
     if not cron_expr:
         return None
 
-    tzinfo = None
-    if ZoneInfo is not None:
-        tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
-        try:
-            tzinfo = ZoneInfo(tz_name)
-        except Exception:
-            tzinfo = None
+    tzinfo = _resolved_timezone_info()
 
     reference = now
     if reference is None:
@@ -3784,13 +3778,30 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         return None
 
     try:
-        if tzinfo is not None:
-            trigger = CronTrigger.from_crontab(cron_expr, timezone=tzinfo)
-        else:
-            trigger = CronTrigger.from_crontab(cron_expr)
+        trigger = CronTrigger.from_crontab(cron_expr, timezone=_cron_trigger_timezone())
         return trigger.get_next_fire_time(None, reference)
     except Exception:
         return None
+
+
+def _configured_timezone_name() -> str:
+    return (_env("TZ", "UTC") or "UTC").strip() or "UTC"
+
+
+def _resolved_timezone_info():
+    if ZoneInfo is None:
+        return None
+    try:
+        return ZoneInfo(_configured_timezone_name())
+    except Exception:
+        return None
+
+
+def _cron_trigger_timezone():
+    tzinfo = _resolved_timezone_info()
+    if tzinfo is not None:
+        return tzinfo
+    return _configured_timezone_name()
 
 
 

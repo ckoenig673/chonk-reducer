@@ -439,8 +439,9 @@ def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monke
 
     class FakeCronTrigger(object):
         @staticmethod
-        def from_crontab(expr):
+        def from_crontab(expr, timezone=None):
             captured["expr"] = expr
+            captured["timezone"] = timezone
             return FakeTrigger()
 
     service = ChonkService(
@@ -472,6 +473,7 @@ def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monke
     )
 
     assert captured["expr"] == "0 2 * * sun"
+    assert str(captured["timezone"]) == "UTC"
     assert isinstance(added["trigger"], FakeTrigger)
     assert added["id"] == "library-99-schedule"
 
@@ -2357,6 +2359,32 @@ def test_schedule_registration_records_activity_entries(tmp_path, monkeypatch):
     assert [row["event_type"] for row in rows].count("schedule_registered") == 2
     assert any(row["library"] == "Movies" for row in rows)
     assert any(row["library"] == "TV" for row in rows)
+
+
+def test_scheduled_run_records_activity_and_run_detail_trigger(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    _seed_run(db_path, library="movies", ts_end="2026-03-09T02:00:00", success_count=1)
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    run_id = "movies-2026-03-09T02:00:00"
+    service._record_activity(
+        event_type="scheduled_run_requested",
+        message="Scheduled run requested for Movies",
+        library="Movies",
+        run_id=run_id,
+    )
+
+    history = service._run_history(limit=1)
+    assert len(history) == 1
+    assert history[0]["run_id"] == run_id
+    run_detail = service._run_detail(run_id)
+    assert run_detail is not None
+    assert run_detail["trigger_type"] == "scheduled_run_requested"
+
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "scheduled_run_requested" in event_types
 
 
 def test_manual_run_records_requested_and_busy_activity(tmp_path, monkeypatch):
@@ -4384,8 +4412,9 @@ def test_dashboard_next_run_matches_scheduler_for_legacy_weekend_crons(monkeypat
     assert service_module._format_scheduler_datetime(sunday_next) == "2026-03-15 02:00"
     assert service_module._format_scheduler_datetime(saturday_next) == "2026-03-14 20:15"
 
-    expected_sunday = service_module.CronTrigger.from_crontab(normalized_sun).get_next_fire_time(None, now)
-    expected_saturday = service_module.CronTrigger.from_crontab(normalized_sat).get_next_fire_time(None, now)
+    timezone = service_module._cron_trigger_timezone()
+    expected_sunday = service_module.CronTrigger.from_crontab(normalized_sun, timezone=timezone).get_next_fire_time(None, now)
+    expected_saturday = service_module.CronTrigger.from_crontab(normalized_sat, timezone=timezone).get_next_fire_time(None, now)
 
     assert service_module._format_scheduler_datetime(sunday_next) == service_module._format_scheduler_datetime(expected_sunday)
     assert service_module._format_scheduler_datetime(saturday_next) == service_module._format_scheduler_datetime(expected_saturday)

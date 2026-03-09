@@ -171,6 +171,7 @@ services:
       TV_MEDIA_ROOT: /tv_shows
       TV_MIN_SIZE_GB: "8"
 
+      # Schedules are DB-backed in service mode; do not set MOVIE_SCHEDULE/TV_SCHEDULE here.
       WORK_ROOT: /work
       STATS_PATH: /config/chonk.db
       TZ: America/Chicago
