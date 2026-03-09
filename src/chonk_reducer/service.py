@@ -3528,7 +3528,7 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         }
         days = [day_name_to_weekday[day] for day in list(parsed_simple["days"]) if day in day_name_to_weekday]
 
-        day_offsets = [0, 1, 2, 3, 4, 5, 6]
+        day_offsets = [0, 1, 2, 3, 4, 5, 6, 7]
         reference_base = reference.replace(second=0, microsecond=0)
         for offset in day_offsets:
             candidate_day = reference_base.date().toordinal() + offset
