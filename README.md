@@ -1,708 +1,291 @@
-
 ![License](https://img.shields.io/github/license/ckoenig673/chonk-reducer)
 ![Release](https://img.shields.io/github/v/release/ckoenig673/chonk-reducer)
 ![CI](https://github.com/ckoenig673/chonk-reducer/actions/workflows/ci.yml/badge.svg)
-![Issues](https://img.shields.io/github/issues/ckoenig673/chonk-reducer)
-![Last Commit](https://img.shields.io/github/last-commit/ckoenig673/chonk-reducer)
 
 # Chonk Reducer
 
-```
-        ▄████▄   ██░ ██  ▒█████   ███▄    █  ██ ▄█▀
-       ▒██▀ ▀█  ▓██░ ██▒▒██▒  ██▒ ██ ▀█   █  ██▄█▒
-       ▒▓█    ▄ ▒██▀▀██░▒██░  ██▒▓██  ▀█ ██▒▓███▄░
-       ▒▓▓▄ ▄██▒░▓█ ░██ ▒██   ██░▓██▒  ▐▌██▒▓██ █▄
-       ▒ ▓███▀ ░░▓█▒░██▓░ ████▓▒░▒██░   ▓██░▒██▒ █▄
-       ░ ░▒ ▒  ░ ▒ ░░▒░▒░ ▒░▒░▒░ ░ ▒░   ▒ ▒ ▒ ▒▒ ▓▒
-         ░  ▒    ▒ ░▒░ ░  ░ ▒ ▒░ ░ ░░   ░ ▒░░ ░▒ ▒░
-       ░         ░  ░░ ░░ ░ ░ ▒     ░   ░ ░ ░ ░░ ░
-       ░ ░       ░  ░  ░    ░ ░           ░ ░  ░
+**Current Version:** v1.39.2
 
-                Reduce the Chonk. Respect the Bits.
-```
+Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
-**Current Version:** v1.32.0
+It supports both:
 
-Chonk Reducer is a **policy‑driven NAS media optimization pipeline** designed for **Synology + Docker environments**.
-
-It safely re‑encodes oversized media files using **Intel QSV HEVC**, validates the results, atomically swaps files, and records operational statistics.
-
-The goal is simple:
-
-> **Reclaim disk space safely without breaking media libraries.**
+- **One-shot mode** (default CLI behavior)
+- **Long-running service mode** with built-in scheduler + web UI
 
 ---
 
-# Quick Start
-
-Clone the repo:
+## Quick Start
 
 ```bash
 git clone https://github.com/ckoenig673/chonk-reducer
 cd chonk-reducer
 ```
 
-Run a container job manually:
+Run a one-shot transcoding job:
 
 ```bash
-docker compose run --rm movie-transcoder
+docker compose run --rm chonk-service run
 ```
 
-Run health checks:
+Run healthcheck:
 
 ```bash
-docker compose run --rm tv-transcoder healthcheck
-docker compose run --rm movie-transcoder healthcheck
+docker compose run --rm chonk-service healthcheck
 ```
 
-Most deployments schedule the job using **Synology DSM Task Scheduler**.
-
----
-
-# Notifications
-
-Chonk Reducer can send webhook alerts when a run completes or fails.
-
-Supported notification targets:
-
-- Discord webhook
-- Generic HTTP webhook
-
-Configure notifications from the **Settings** page:
-
-- `Discord Webhook URL` (optional, encrypted at rest)
-- `Generic Webhook URL` (optional, encrypted at rest)
-- `Enable Run Complete Notifications`
-- `Enable Run Failure Notifications`
-
-Notes:
-
-- If both webhook URLs are empty, notifications are effectively disabled.
-- Webhook URL values are encrypted before being written to SQLite (using `CHONK_SECRET_KEY`) and decrypted only at send time.
-- The Settings UI does not re-render plaintext secrets after save; it shows masked/hidden status and supports explicit clear + replace behavior.
-- Secret-backed webhook values are stored exactly as entered (after trimming leading/trailing whitespace and removing accidental CR/LF), without HTML/entity mutation.
-- The Settings page includes a `Send Test Notification` action for operator verification.
-- Notification delivery failures are non-fatal and only logged as warnings.
-- Notifications are sent once per run completion/failure event in service mode.
-- If `CHONK_SECRET_KEY` is changed or lost, existing encrypted webhook values may need to be re-entered.
-- Discord webhook URLs are accepted for both `discord.com` and legacy `discordapp.com` hosts; legacy URLs are normalized to `discord.com` at send time.
-- Webhook requests send `Content-Type: application/json` and a fixed `User-Agent` (`ChonkReducer/1.x`) to keep transport behavior predictable.
-- Webhook delivery ignores ambient proxy environment variables by default; set `CHONK_WEBHOOK_USE_PROXY=1` to opt-in to urllib's proxy behavior.
-
----
-
-# Designed for Arr‑Based Media Environments
-
-Chonk Reducer is built for NAS media stacks that use the **Arr ecosystem**.
-
-Common automation tools:
-
-- Radarr
-- Sonarr
-- Lidarr
-
-These tools manage **downloading, importing, and organizing media libraries**.
-
-Chonk Reducer runs **alongside them** by optimizing large media files **after they are imported**.
-
-Typical workflow:
-
-```
-Downloader → Arr (Radarr/Sonarr/Lidarr) → Media Library
-                                   ↓
-                             Chonk Reducer
-                       (optimize large files)
-```
-
-Because Chonk operates directly on files and preserves filenames, it **does not interfere with Arr library management**.
-
-It simply reduces storage usage.
-
----
-
-# Roadmap
-
-Future improvements and planned features:
-
-https://github.com/ckoenig673/chonk-reducer/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap
-
----
-
-# What Chonk Does
-
-Chonk Reducer runs a controlled pipeline:
-
-• scans media folders  
-• identifies oversized files  
-• probes metadata with ffprobe  
-• encodes using Intel QSV HEVC  
-• validates output  
-• enforces savings thresholds  
-• atomically replaces the original file  
-• stores metrics and run statistics  
-
-Key behavior:
-
-- Scans for `*.mkv` candidates
-- Skips folders containing `.chonkignore`
-- Supports `.chonkpause` to halt jobs instantly
-- Encodes **in the same directory as the source file**
-- Validates output via decode testing
-- Requires minimum compression savings
-- Backs up originals with timestamped `.bak`
-- Writes `.optimized` marker to prevent reprocessing
-- Retries transient failures
-- Marks permanent failures with `.failed`
-- Records detailed metrics in SQLite
-
----
-
-# Run Summary Counters
-
-Each run records stage counters:
-
-- Candidates found
-- Pre‑filtered
-- Evaluated
-- Processed
-- Succeeded
-- Skipped
-- Failed
-
-These counters are stored in the **SQLite stats database** for later analysis.
-
----
-
-# High Level Architecture
-
-```
-DSM Task Scheduler
-    → scripts/chonkreducer_task.sh
-        → docker compose run --rm --no-deps <service>
-            → python -m chonk_reducer
-                → runner
-                    → cleanup
-                    → discovery
-                    → probe
-                    → encode
-                    → validate
-                    → swap
-                    → metrics
-```
-
-Each run can run in one of two modes:
-
-- **One-shot mode (existing):** stateless and isolated runs (DSM task friendly).
-- **Service mode (new):** a long-running container that schedules movie/TV runs internally and exposes a health endpoint.
-
----
-
-# Folder Markers
-
-### .chonkignore
-
-Exclude folders from processing.
-
-Example:
-
-```
-/tv/Sports/.chonkignore
-```
-
----
-
-### .chonkpause
-
-Immediately stop processing for a library.
-
-Example:
-
-```
-/tv/.chonkpause
-```
-
-Optional:
-
-```
-/tv/.chonkpause.reason
-```
-
----
-
-### .optimized
-
-Written after a successful encode swap.
-
-Prevents future reprocessing.
-
----
-
-### .failed
-
-Written when encoding fails after retries.
-
-Prevents repeated failures.
-
----
-
-
-# Encode History Page
-
-The service UI includes a **History** page at `/history`.
-
-It shows completed encode jobs from SQLite, including:
-
-- Library
-- File name
-- Original size
-- New size
-- Savings percent
-- Savings amount
-- Date/time
-
-This gives operators quick visibility into what Chonk processed and how much storage was reclaimed.
-
----
-
-# Docker Usage
-
-Health check:
-
-```bash
-docker compose run --rm tv-transcoder healthcheck
-docker compose run --rm movie-transcoder healthcheck
-```
-
-Manual run:
-
-```bash
-docker compose run --rm tv-transcoder
-docker compose run --rm movie-transcoder
-```
-
-Synology DSM task example:
-
-```bash
-/bin/sh scripts/chonkreducer_task.sh tv-transcoder
-/bin/sh scripts/chonkreducer_task.sh movie-transcoder
-```
-
----
-
----
-
-# Long-Running Service Mode (Arr-Style Foundation)
-
-Chonk Reducer supports an optional long-running service mode for internal scheduling and operator workflows.
-
-- Existing DSM Task Scheduler + one-shot container runs are still supported.
-- Service mode now uses an Arr-style shell with persistent left navigation.
-- Routes available in this foundation release:
-  - `/dashboard`
-  - `/runs`
-  - `/runs/{run_id}`
-  - `/history`
-  - `/activity`
-  - `/settings`
-  - `/system`
-  - `/favicon.ico` (returns `204 No Content` to prevent browser tab spinner hangs)
-- Fallback built-in HTTP mode now uses a threaded server so dashboard, favicon, and other small requests stay responsive while background jobs are actively running
-- Runtime environment mutation now uses short lock windows (set/restore only), so `/dashboard` and `/runs` remain refreshable while an active run is processing in the background.
-- `/` renders the dashboard in the new shell.
-
-Enable service mode:
+Start long-running service mode:
 
 ```bash
 docker compose up -d chonk-service
 ```
 
-Health endpoint:
+Service URLs:
 
-```bash
-curl http://localhost:8080/health
-```
-
-Returns:
-
-```json
-{"status":"ok"}
-```
-
-Dashboard:
-
-```bash
-open http://localhost:8080/dashboard
-```
-
-The dashboard preserves existing operator controls and visibility:
-
-- Library status cards stacked by enabled library
-- Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (local scheduled timestamp like `2026-03-14 02:00` when available, `Not Scheduled` when schedule is missing/invalid, or `Disabled` when the library is disabled), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
-- Next-run display uses the library row cron value as the source of truth and computes the upcoming timestamp even when scheduler job metadata is unavailable
-- **Run Now** and **Preview Run** controls per enabled library (dashboard forms post to `POST /dashboard/libraries/{library_id}/run` and `POST /dashboard/libraries/{library_id}/preview`, queue work, then redirect to `/dashboard`; JSON API remains available at `POST /libraries/{library_id}/run`)
-- Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
-- Single-worker in-memory queue prefers higher-priority libraries first when multiple jobs are queued (higher integer wins), while preserving FIFO behavior for equal priorities
-- Legacy compatibility run routes remain available for default Movies/TV libraries
-- Recent Runs table (from SQLite `runs`)
-- Lifetime savings summary
-- Current runtime status block (idle/queued/running, current library, trigger, scheduler status/started time, next global scheduled job/time, mode, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
-- Active runs now render a lightweight progress panel with an HTML progress bar. During active ffmpeg encode the panel now also shows encoding percent complete (`out_time_ms / duration_ms`), live speed (`speed`), and ETA, while still showing file counters and current file/library context
-- Dashboard runtime status now auto-refreshes every 3 seconds using `GET /api/status` so Current Job Status + Run Progress update live without full page refresh
-- Preview Run now submits through the dashboard preview endpoint and keeps the latest preview snapshot visible after completion, labeled with preview library and generated timestamp until the next preview run replaces it
-- Preview Results now include a **Clear Preview Results** action that calls `POST /api/preview/clear` so operators can reset stale preview snapshots without reloading the page
-- Scheduler Started now renders in a compact timestamp format (`YYYY-MM-DD HH:MM`) for improved readability
-- Active runs show a **Stop Run** button that calls `POST /api/run/cancel`; runtime status transitions through `Cancelling` and then `Cancelled` once the worker stops
-- Library cards show inline running progress (`Progress: processed / candidates files`) for the currently active library
-- Runtime progress snapshot clears after run completion so idle dashboards return to baseline
-
-- Preview runs (Dry Run mode): scan and candidate selection are unchanged; ffprobe still runs; estimated output size and estimated savings are calculated from current QSV quality/preset settings; decisions are reported as `Encode`, `Skip (below savings threshold)`, `Skip (unsupported codec)`, or `Skip (resolution rules)`
-- Preview mode never writes output files, never renames media, and never deletes files
-- Dashboard shows a **Preview Results** table (first 25 files) with preview library, generated timestamp, file path, original size, estimated size, estimated savings %, and decision
-
-Runs page:
-
-```bash
-open http://localhost:8080/runs
-```
-
-The Runs page is backed by the SQLite `runs` table and provides a recent run history view across libraries.
-
-Runs now include links to a Run Detail page for each `run_id`, which shows per-run summary data from `runs` plus file-level entries from `encodes`.
-
-Run Detail now presents sectioned operator views (**Run Summary**, **Outcome**, **Counts**, **Savings**, **Related Information**) including run id, library, trigger type (when recorded), mode (live/preview), started/completed timestamps, duration, processed/success/skipped/failed counts, cancellation status, and total bytes saved.
-
-When available from existing SQLite data, Run Detail also surfaces a file list summary (including skip/failure reason rollups), preview-vs-live/result distinctions, and the raw log file path so operators can quickly jump from Activity → Run Detail → raw log file on disk.
-
-Detailed raw logs remain in log files and are unchanged (the UI is not a full log viewer).
-
-Settings page:
-
-```bash
-open http://localhost:8080/settings
-```
-
-The settings page is backed by SQLite (`STATS_PATH`) and now has two sections:
-
-- **Global Settings** (DB-backed key/value settings)
-- **Libraries** (DB-backed library rows)
-
-Global Settings now manage app-wide operator defaults (DB-backed), including:
-
-- `min_file_age_minutes`
-- `min_savings_percent`
-- `max_savings_percent`
-- `min_media_free_gb`
-- `max_gb_per_run`
-- `fail_fast`
-- `log_skips`
-- `top_candidates`
-- `retry_count`
-- `retry_backoff_seconds`
-- `skip_codecs`
-- `skip_resolution_tags`
-- `skip_min_height`
-- `validate_seconds`
-- `log_retention_days`
-- `bak_retention_days`
-
-Saving settings writes values to SQLite immediately and applies them to service-driven runs.
-
-Libraries are now persisted in a `libraries` table and support simple operator CRUD:
-
-- create library
-- edit library
-- delete library
-- enable/disable library
-- per-library `priority` integer (higher runs first when multiple libraries are queued)
-
-Library schedule editing supports two operator modes:
-
-- **Simple schedule builder**: pick weekdays (`Su`, `M`, `T`, `W`, `Th`, `F`, `Sa`) and a time dropdown (15-minute increments), then Chonk generates the cron string for storage using named weekdays (`sun`..`sat`) for unambiguous APScheduler behavior.
-- **Advanced raw cron**: edit the raw cron expression directly for complex or custom schedules.
-
-Cron remains the internal scheduler storage format. If a saved cron expression matches the simple weekly pattern (single time + weekday list), the UI opens in simple mode and pre-populates day/time controls. Both legacy numeric weekday values (`0`-`7`) and named weekday values (`sun`..`sat`) are accepted for backward compatibility, and simple schedules are normalized safely at runtime. Unsupported or complex cron expressions automatically fall back to advanced mode and keep the raw cron value editable without rewriting.
-
-Bootstrap model for the new config foundation:
-
-1. `compose.yaml` is now deployment/runtime focused (container wiring, mounts, ports, runtime secrets, service host/port).
-2. Environment/compose values for Global Settings are bootstrap defaults only.
-3. Missing service settings keys are initialized from env/default values.
-4. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`, `priority=100`) and schedule bootstrap from legacy global schedule keys when present.
-
-Retry behavior is automatic for failed encodes: Chonk retries the same source file up to `retry_count`, waits `retry_backoff_seconds` between attempts, cleans up incomplete temp output between attempts, and marks the file failed when retries are exhausted.
-
-For retries, environment/compose values are now bootstrap-only compatibility input (`RETRY_COUNT`, `RETRY_BACKOFF_SECONDS`, legacy `RETRY_BACKOFF_SECS`). After bootstrap, SQLite Global Settings are the source of truth for runtime behavior.
-
-Runtime note: service scheduling and manual execution are now driven by enabled library rows in SQLite (`libraries`), not a fixed Movies/TV runtime model. Enabled libraries with blank schedules remain manual-run only until a schedule is configured.
-
-Activity page:
-
-```bash
-open http://localhost:8080/activity
-```
-
-The Activity page is a lightweight operator-facing event feed stored in SQLite (`activity_events` table in `STATS_PATH`).
-
-Activity entries that include a `run_id` render that value as a link to Run Detail (`/runs/{run_id}`).
-
-It includes recent service events such as:
-
-- service startup
-- scheduler start
-- schedule registration
-- job queued/job started
-- manual and scheduled run requests
-- queued job start/completion and queue rejections
-- run start/completion
-- duplicate queued/running rejections
-
-Raw detailed run logs are unchanged and still written to log files. The Activity page is intentionally a small recent-events view, not a full raw log replacement.
-
-System page:
-
-```bash
-open http://localhost:8080/system
-```
-
-The System page provides lightweight operator visibility into the running service, including:
-
-- service/runtime information (version, host/port, service mode)
-- scheduler status
-- current background job status (idle/queued/running with queue depth)
-- configured schedules for enabled libraries
-- next scheduled run times per enabled library and the global next scheduled job/time derived from configured enabled-library schedules
-- current queue/worker status (status, current library, trigger, queue depth, current run id, started-at)
-- SQLite database path and runtime/work path visibility
-
-It is intentionally minimal and is not a full diagnostics framework.
-
-Settings precedence / bootstrap model:
-
-1. Environment/compose values are bootstrap defaults.
-2. On first startup, missing service settings rows are initialized from those environment values.
-3. On first startup, missing `libraries` rows are initialized from current Movie/TV media roots, with per-library processing defaults (`min_size_gb=0.0`, `max_files=1`) and per-library encoding defaults (`qsv_quality`, `qsv_preset`, `min_savings_percent`) bootstrapped from current env/compose values.
-4. After initialization, library rows in SQLite are the runtime source of truth for per-library processing and encoding behavior.
-
-Scheduler notes:
-
-- Library schedules are owned by DB-backed library rows (`libraries.schedule`).
-- Global Settings do not include schedule fields.
-- Enabled libraries with schedules are auto-registered with the scheduler.
-- Both scheduler and manual run requests share the same queue-backed execution path.
-- Enabled libraries with blank schedules are not auto-scheduled and are manual-run only.
-- Disabled libraries are excluded from runtime scheduling and manual-run controls.
-- Queue model is intentionally minimal for now: single worker, in-memory queue, no cancellation/retries persistence/progress parsing.
-- `MOVIE_SCHEDULE` / `TV_SCHEDULE` remain optional legacy/bootstrap env defaults used only during first-time bootstrap.
-- If schedules are changed in Libraries, restart the service for new cron schedules to be applied.
-
-Service scheduler environment variables:
-
-- `SERVICE_MODE=true|false` (default: false)
-- `SERVICE_HOST` (default: `0.0.0.0`)
-- `SERVICE_PORT` (default: `8080`)
-Library-specific service overrides (optional):
-
-- `MOVIE_MEDIA_ROOT`, `MOVIE_LOG_PREFIX`, `MOVIE_LIBRARY`
-- `TV_MEDIA_ROOT`, `TV_LOG_PREFIX`, `TV_LIBRARY`
-
-If `SERVICE_MODE` is unset/false, Chonk keeps the existing one-shot behavior.
-
-Notification secret key:
-
-- `CHONK_SECRET_KEY` must be set when saving or using encrypted notification webhook settings.
-- Use a strong random passphrase value (for example, `openssl rand -base64 32`).
+- Dashboard: `http://localhost:8085/dashboard`
+- Health: `http://localhost:8085/health`
 
 ---
 
+## Current Architecture (Source of Truth)
 
-# Scheduling Model (Recommended)
+### Execution model
 
-Example balanced schedule:
+- Service mode uses a **single in-memory queue** plus **single worker thread**.
+- Manual runs, preview runs, and scheduled runs all enqueue jobs through the same path.
+- Queue selection is **priority-first** (higher integer wins), then FIFO for ties.
+- Duplicate queueing for a library already queued/running is rejected.
 
-| Library | Frequency |
-|-------|--------|
-| TV | 3 days per week |
-| Movies | 3 days per week |
+### Scheduler behavior
 
-Run on alternating days.
+- Schedules are owned by **library rows in SQLite** (`libraries.schedule`).
+- Only **enabled libraries** with a valid schedule are auto-registered.
+- A library with blank schedule is manual-run only.
+- Dashboard/System show:
+  - per-library next run
+  - next global scheduled library/time
 
-Set per-library **Max Files Per Run** in **Settings → Libraries → Edit Library** to control runtime for each library independently.
+### Runtime and status
 
-Per-library processing fields in the library create/edit forms:
+- Live runtime status is available via `GET /api/status` and auto-refreshes on Dashboard.
+- Status includes queue depth, current library/trigger, run id, counters, ffmpeg progress hints, scheduler status, and preview snapshot metadata.
+- Active runs can be cancelled via `POST /api/run/cancel`.
 
-- **Minimum File Size (GB)** (`min_size_gb`): files smaller than this value are skipped for that library.
-- **Max Files Per Run** (`max_files`): a run for that library stops after this many files.
+### Pipeline behavior
 
-Per-library encoding fields in the library create/edit forms (**Encoding Settings**):
+Core run pipeline:
 
-- **QSV Quality** (`qsv_quality`): integer quality value used for that library run.
-- **QSV Preset** (`qsv_preset`): integer preset value used for that library run.
-- **Minimum Savings Percent** (`min_savings_percent`): numeric threshold used for that library run.
-
-Defaults for existing and new libraries are:
-
-- `min_size_gb = 0.0`
-- `max_files = 1`
-- `qsv_quality = QSV_QUALITY` env default (fallback `21`)
-- `qsv_preset = QSV_PRESET` env default (fallback `7`)
-- `min_savings_percent = MIN_SAVINGS_PERCENT` env default (fallback `15`)
-
----
-
-# Testing
-
-The project uses **pytest**.
-
-Install dev dependencies:
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-Run tests:
-
-```bash
-pytest -q
-```
-
-Tests run **without real media files or FFmpeg**.
+1. candidate discovery (`*.mkv`, `.chonkignore`, `.chonkpause`, recency filters)
+2. probe and skip policy evaluation (codec/resolution/threshold guards)
+3. encode with retry/backoff
+4. validate
+5. atomic swap + markers (`.optimized`, `.failed`, `.bak`)
+6. SQLite metrics write (`runs`, `encodes`, `activity_events`, service `settings`, `libraries`)
 
 ---
 
-# Development Workflow
+## UI Surface (Current)
 
-Typical workflow:
+Service UI routes:
 
-```bash
-git checkout -b my-change
-pytest -q
-git add .
-git commit -m "Describe change"
-```
+- `/dashboard`
+- `/runs`
+- `/runs/{run_id}`
+- `/history`
+- `/activity`
+- `/settings`
+- `/system`
+
+### Dashboard
+
+- Per-library cards for enabled libraries
+- Run Now + Preview Run actions
+- Per-library next run + lifetime/recent savings summaries
+- Live runtime status/progress (auto refresh)
+- Stop Run action while active
+- Preview Results panel (latest snapshot) + **Clear Preview Results**
+
+### Runs
+
+- Recent run table backed by `runs`
+- Result/mode/duration/counts/savings
+- Links into Run Detail
+
+### Run Detail
+
+- Sectioned summary: Run Summary, Outcome, Counts, Savings, Related Information
+- Includes trigger type when available from `activity_events`
+- Includes file-level rows from `encodes`
+
+### History
+
+- Recent encode-centric view from `encodes`
+
+### Activity
+
+- Recent operator-facing service events from `activity_events`
+- Run-linked events hyperlink to Run Detail
+
+### Settings
+
+- Global Settings form (DB-backed)
+- Library CRUD (name/path/schedule/enabled + per-library processing/encoding fields)
+- Send Test Notification action
+
+### System
+
+- Service/runtime info, scheduler state, queue state
+- Configured schedules + next scheduled times
+- Paths (DB/work roots)
 
 ---
 
-# Stats and Metrics
+## Preview Mode (What it does / does not do)
 
-Chonk Reducer stores operational metrics in **SQLite**.
+Preview mode (`trigger=preview`):
 
-Database tables:
+- **Does** run candidate scan + ffprobe + policy evaluation.
+- **Does** estimate output size and estimated savings.
+- **Does** return per-file decisions (`Encode`, threshold skips, codec/resolution skips).
+- **Does not** run ffmpeg encode.
+- **Does not** rename, replace, or delete media files.
+- **Does not** write `.optimized`/`.failed` artifacts for media.
 
-```
-runs
-encodes
-```
+Preview snapshots are kept in service memory for Dashboard display until replaced or cleared.
 
-These store:
+---
 
-• run counters  
-• per‑file results  
-• compression statistics  
-• operational metrics  
+## Notifications
 
-Default database:
+Supported targets:
 
-```
+- Discord webhook
+- Generic webhook
+
+Current behavior:
+
+- URLs are stored in SQLite settings and encrypted at rest.
+- `CHONK_SECRET_KEY` is required to save/read encrypted webhook settings.
+- Discord accepts `discord.com` and legacy `discordapp.com` URLs (normalized at send time).
+- `Send Test Notification` is available from Settings.
+- Run complete/failure sends are gated by individual enable toggles.
+- Notification delivery failures are logged as warnings and do not fail the transcoding run.
+- Proxy env vars are ignored by default for webhooks; set `CHONK_WEBHOOK_USE_PROXY=1` to opt in.
+
+---
+
+## Configuration Model (Where settings live)
+
+### 1) Deployment / Environment (`compose.yaml` / env)
+
+Use env for bootstrap/runtime concerns (service bind, paths, timezone, secret key, DB path).
+
+### 2) Global Settings (SQLite `settings` table)
+
+App-wide operational defaults, editable from **Settings** page.
+
+### 3) Library Settings (SQLite `libraries` table)
+
+Per-library scheduling + processing + encoding behavior.
+
+> Bootstrap note: on first service startup, missing Global Settings and default Movies/TV library rows are initialized from env defaults. After bootstrap, SQLite is source of truth for service operations.
+
+---
+
+## Settings Inventory / Mapping
+
+Designed to be operator-friendly and reusable for future UI help/tooltips.
+
+### Global Settings (SQLite: `settings`)
+
+| Setting | Scope | Storage | Description | Default / Behavior |
+|---|---|---|---|---|
+| `min_file_age_minutes` | Global | SQLite `settings` | Skip very recent files newer than this age. | `10` minutes bootstrap default. |
+| `min_savings_percent` | Global | SQLite `settings` | Minimum required savings percent before swap. | `15` bootstrap default. |
+| `max_savings_percent` | Global | SQLite `settings` | Optional upper savings guard; above this can be skipped. | `0` means disabled. |
+| `min_media_free_gb` | Global | SQLite `settings` | Minimum free space safety threshold for media volume. | `0` (disabled unless set). |
+| `max_gb_per_run` | Global | SQLite `settings` | Optional cap on total GB processed per run. | `0` means no cap. |
+| `fail_fast` | Global | SQLite `settings` | Stop early on failure conditions instead of continuing. | `0` (off). |
+| `log_skips` | Global | SQLite `settings` | Emit skip reasons more verbosely in logs/stats. | `0` (off). |
+| `top_candidates` | Global | SQLite `settings` | Candidate ranking/display/selection helper limit. | `5`. |
+| `retry_count` | Global | SQLite `settings` | Number of retries after initial encode attempt. | `1` retry. |
+| `retry_backoff_seconds` | Global | SQLite `settings` | Delay between retry attempts. | `5` seconds. |
+| `skip_codecs` | Global | SQLite `settings` | Comma-separated codecs to skip before encode. | empty (none). |
+| `skip_resolution_tags` | Global | SQLite `settings` | Comma-separated resolution tags to skip. | empty (none). |
+| `skip_min_height` | Global | SQLite `settings` | Skip files below this video height threshold. | `0` (disabled). |
+| `validate_seconds` | Global | SQLite `settings` | Validation sample duration for post-encode checks. | `10`. |
+| `log_retention_days` | Global | SQLite `settings` | Log cleanup retention window. | `30` days. |
+| `bak_retention_days` | Global | SQLite `settings` | Backup file cleanup retention window. | `60` days. |
+| `discord_webhook_url` | Global | SQLite `settings` (encrypted) | Discord notification endpoint. | Empty = not configured. |
+| `generic_webhook_url` | Global | SQLite `settings` (encrypted) | Generic webhook endpoint. | Empty = not configured. |
+| `enable_run_complete_notifications` | Global | SQLite `settings` | Enable run-complete notifications. | `0` (off). |
+| `enable_run_failure_notifications` | Global | SQLite `settings` | Enable run-failure notifications. | `0` (off). |
+
+### Library Settings (SQLite: `libraries`)
+
+| Setting | Scope | Storage | Description | Default / Behavior |
+|---|---|---|---|---|
+| `name` | Per-library | SQLite `libraries` | Operator label for library. | Required, unique. |
+| `path` | Per-library | SQLite `libraries` | Media root path for scanning. | Required, unique. |
+| `enabled` | Per-library | SQLite `libraries` | Includes library in runtime controls/scheduling. | Enabled by default. |
+| `schedule` | Per-library | SQLite `libraries` | Cron expression for scheduler registration. | Blank = manual only. |
+| `min_size_gb` | Per-library | SQLite `libraries` | Skip files below this library-specific size floor. | `0.0`. |
+| `max_files` | Per-library | SQLite `libraries` | Max files processed in a run for this library. | `1`. |
+| `priority` | Per-library | SQLite `libraries` | Queue priority (higher runs first). | `100`. |
+| `qsv_quality` | Per-library | SQLite `libraries` | QSV quality for this library. | Bootstrapped from env (`QSV_QUALITY`, fallback `21`). |
+| `qsv_preset` | Per-library | SQLite `libraries` | QSV preset for this library. | Bootstrapped from env (`QSV_PRESET`, fallback `7`). |
+| `min_savings_percent` | Per-library | SQLite `libraries` | Library-specific minimum savings threshold. | Bootstrapped from env (`MIN_SAVINGS_PERCENT`, fallback `15`). |
+
+### Deployment / Environment Settings
+
+| Setting | Scope | Storage | Description |
+|---|---|---|---|
+| `SERVICE_MODE` | Runtime | env/compose | Enable long-running service when true. |
+| `SERVICE_HOST` | Runtime | env/compose | Bind host for HTTP service. |
+| `SERVICE_PORT` | Runtime | env/compose | Bind port for HTTP service. |
+| `STATS_PATH` | Runtime | env/compose | SQLite DB path (`runs`, `encodes`, service settings/libraries/activity). |
+| `WORK_ROOT` | Runtime | env/compose | Writable work/log/report location. |
+| `TZ` | Runtime | env/compose | Timezone used for scheduler/display. |
+| `CHONK_SECRET_KEY` | Runtime secret | env/compose | Required for encrypted webhook settings. |
+| `APP_VERSION` | Runtime metadata | env/compose | Optional runtime version override. |
+| `MOVIE_MEDIA_ROOT`, `TV_MEDIA_ROOT` | Bootstrap | env/compose | Used to seed default libraries on first startup. |
+| `MOVIE_SCHEDULE`, `TV_SCHEDULE` | Bootstrap | env/compose | Legacy schedule seed values for first startup only. |
+| `QSV_QUALITY`, `QSV_PRESET`, `MIN_SAVINGS_PERCENT` | Bootstrap | env/compose | Seed defaults for new/bootstrap library encoding fields. |
+
+---
+
+## Retry and Failure Behavior
+
+- Retries run per file according to `retry_count` and `retry_backoff_seconds`.
+- Final hard failures can mark media with `.failed` marker to avoid repeated failures.
+- Successful swaps mark `.optimized`.
+- Cancelled runs are recorded and surfaced as cancelled status in run summaries.
+
+---
+
+## Data Storage
+
+Default DB path:
+
+```text
 /config/chonk.db
 ```
 
-Future versions may support dashboards or reporting tools using this data.
+SQLite tables used by current service/app behavior:
+
+- `runs`
+- `encodes`
+- `activity_events`
+- `settings`
+- `libraries`
 
 ---
 
-# Environment Variables
-
-`compose.yaml` should now hold deployment/runtime infrastructure concerns only.
-
-### Keep in compose/env (deployment/runtime)
-
-| Variable | Default | Description |
-|---|---|---|
-CHONK_SECRET_KEY | | secret used for encrypted webhook settings |
-SERVICE_MODE | false | run long-lived service mode when true |
-SERVICE_HOST | 0.0.0.0 | service bind host |
-SERVICE_PORT | 8080 | service bind port |
-TZ | UTC | timezone for scheduler/log display |
-WORK_ROOT | /work | writable workspace directory |
-STATS_PATH | /config/chonk.db | SQLite DB path |
-APP_VERSION | package version | runtime version stamp (optional override) |
-
-### Bootstrap-only Global Settings env values
-
-These may still be provided in env for first-time bootstrap compatibility, but after bootstrap SQLite Global Settings are source of truth:
-
-- `MIN_FILE_AGE_MINUTES`
-- `MIN_SAVINGS_PERCENT`
-- `MAX_SAVINGS_PERCENT`
-- `MIN_MEDIA_FREE_GB`
-- `MAX_GB_PER_RUN`
-- `FAIL_FAST`
-- `LOG_SKIPS`
-- `TOP_CANDIDATES`
-- `RETRY_COUNT`
-- `RETRY_BACKOFF_SECONDS` (`RETRY_BACKOFF_SECS` legacy alias)
-- `SKIP_CODECS`
-- `SKIP_RESOLUTION_TAGS`
-- `SKIP_MIN_HEIGHT`
-- `VALIDATE_SECONDS`
-- `LOG_RETENTION_DAYS`
-- `BAK_RETENTION_DAYS`
-
-Per-library processing/encode controls should be configured in **Settings → Libraries**.
-
----
-
-# Outputs / Artifacts
-
-During processing the pipeline creates:
-
-```
-Episode.mkv.timestamp.encoded.mkv
-Episode.mkv.bak.timestamp
-Episode.mkv.optimized
-Episode.mkv.failed
-```
-
-Logs:
-
-```
-/work/logs/transcode_*.log
-```
-
-Reports:
-
-```
-/work/reports/chonk_weekly_*.txt
-```
-
----
-
-# Project Layout
-
-```
-src/chonk_reducer
-tests
-scripts
-work
-work/logs
-```
-
----
-
-# Troubleshooting
-
-If ffprobe is unavailable on the host:
+## Testing
 
 ```bash
-docker compose run --rm --entrypoint ffprobe chonk-service <args>
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
----
-
-# Keywords
-
-NAS media optimization  
-homelab media stack  
-Radarr Sonarr Lidarr  
-Intel QSV transcoding  
-Docker media automation  
+See `docs/TESTING.md` for environment-specific test notes.
