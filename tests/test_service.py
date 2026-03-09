@@ -2782,6 +2782,30 @@ def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch)
     assert "name=\"qsv_quality\"" in body
     assert "name=\"qsv_preset\"" in body
     assert "name=\"min_savings_percent\"" in body
+    assert "help-tooltip-trigger" in body
+    assert "Minimum File Age (Minutes)" in body
+
+
+def test_settings_tooltip_metadata_is_defined_for_global_and_library_fields():
+    for key, meta in service_module.EDITABLE_SETTINGS.items():
+        assert "label" in meta
+        assert str(meta["label"]).strip()
+        assert "description" in meta
+        assert str(meta["description"]).strip()
+
+    expected_library_fields = {
+        "name",
+        "path",
+        "min_size_gb",
+        "max_files",
+        "priority",
+        "qsv_quality",
+        "qsv_preset",
+        "min_savings_percent",
+        "schedule",
+        "enabled",
+    }
+    assert expected_library_fields.issubset(set(service_module.LIBRARY_SETTINGS_HELP.keys()))
 
 
 def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
