@@ -13,31 +13,32 @@ architecture.
 
 # Core Development Principles
 
-1.  **Never break existing functionality.**
-2.  **Prefer small, focused changes.**
-3.  **Do not modify unrelated files.**
-4.  **Preserve operator trust.**
-5.  **Explain changes with a short summary.**
+1.  Never break existing functionality.
+2.  Prefer small, focused changes.
+3.  Do not modify unrelated files.
+4.  Preserve operator trust.
+5.  Provide a short implementation summary describing changes.
 
 ------------------------------------------------------------------------
 
 # Testing Rules
 
-6.  All code changes must include or update tests.
+6.  All code changes must include or update tests when appropriate.
 7.  Tests must pass before completing work.
 
 Run: pytest -q
 
 8.  Never remove tests unless clearly invalid.
 9.  Changes affecting encoding, scanning, scheduling, candidate
-    selection, or settings must include tests.
+    selection, or settings behavior must include tests.
 10. Add regression tests when fixing bugs.
 
 ------------------------------------------------------------------------
 
 # Documentation Rules
 
-11. README.md must always reflect the current behavior of the project.
+11. README.md must reflect the **actual current behavior** of the
+    project.
 12. New features must include documentation covering:
 
 -   purpose
@@ -45,8 +46,8 @@ Run: pytest -q
 -   operator behavior
 -   examples if helpful
 
-13. Settings descriptions should be written so they can be reused for UI
-    tooltips.
+13. Settings descriptions should be written so they can later be reused
+    for UI tooltips/help text.
 
 ------------------------------------------------------------------------
 
@@ -54,7 +55,9 @@ Run: pytest -q
 
 14. Always increment the application version when code changes.
 
-Update: src/chonk_reducer/**init**.py compose.yaml (if applicable)
+Update: src/chonk_reducer/**init**.py
+
+compose.yaml may expose an APP_VERSION value used by the container.
 
 Semantic versioning:
 
@@ -62,22 +65,38 @@ patch -\> bug fixes\
 minor -\> new features\
 major -\> breaking changes
 
+Version strings should be consistent.\
+Preferred canonical format inside Python code:
+
+1.39.3
+
+Container display versions may include a `v` prefix if required for UI
+display.
+
 ------------------------------------------------------------------------
 
 # Dependency Rules
 
-15. If new dependencies are required update: requirements.txt\
-    requirements-dev.txt
+15. If new dependencies are required update:
+
+requirements.txt\
+requirements-dev.txt
 
 16. Development-only tools belong in requirements-dev.txt.
+
+Avoid unnecessary dependencies.
 
 ------------------------------------------------------------------------
 
 # Python Compatibility
 
-17. Runtime targets Python 3.11+ (tested on 3.11--3.12).
+17. Runtime targets **Python 3.11+**.
 
-Use standard timezone support:
+The codebase may contain compatibility fallbacks (for example
+backports.zoneinfo) but these should not be required for normal
+operation.
+
+Standard timezone usage:
 
 from zoneinfo import ZoneInfo
 
@@ -86,28 +105,29 @@ from zoneinfo import ZoneInfo
 # Performance & File Handling
 
 18. Never load large media files fully into memory.
-19. Prefer streaming/line‑by‑line processing for logs and large files.
-20. Long-running tasks must run in background workers, not the UI
-    thread.
+19. Prefer streaming / line-by-line processing for logs and large files.
+20. Long-running work must run in background workers rather than
+    blocking the web UI thread.
 
 ------------------------------------------------------------------------
 
 # Metrics and Database System
 
-21. SQLite is the system backend.
+21. SQLite is the primary backend for operational state and metrics.
 
 Database location:
 
 /config/chonk.db
 
-22. Database stores operational data including:
+22. Current operational tables include:
 
 -   runs
--   run_files
+-   encodes
 -   settings
 -   libraries
--   activity
--   job queue
+-   activity_events
+
+Additional tables may be introduced through migrations when needed.
 
 23. NDJSON metrics are deprecated.
 
@@ -117,26 +137,29 @@ Legacy file:
 
 exists only for migration purposes.
 
+Agents must not reintroduce NDJSON as a primary metrics system.
+
 ------------------------------------------------------------------------
 
 # Migration Rules
 
 24. Migrations must be safe and idempotent.
-25. After migration rename legacy files to:
+
+25. After migration legacy stats files must be renamed to:
 
 .chonkstats.ndjson.migrated
 
-26. Migrations must never create duplicate records.
+26. Migration must never import duplicate records.
 
 ------------------------------------------------------------------------
 
 # Configuration Architecture
 
-Chonk uses three configuration layers.
+Chonk uses a three-layer configuration model.
 
 ## Docker Compose (Deployment Layer)
 
-Compose should contain:
+Compose should contain deployment/runtime concerns only:
 
 -   container runtime configuration
 -   mounts
@@ -154,7 +177,7 @@ STATS_PATH\
 SERVICE_HOST\
 SERVICE_PORT
 
-Operational tuning settings must NOT live here.
+Operational tuning settings should not live in compose.
 
 ------------------------------------------------------------------------
 
@@ -162,19 +185,21 @@ Operational tuning settings must NOT live here.
 
 Stored in SQLite.
 
-Examples:
+Used for system-wide operational behavior such as:
 
 -   retry behavior
 -   skip rules
--   logging retention
 -   validation behavior
+-   log retention
 -   notification configuration
 
-Editable via the UI.
+These settings are editable through the UI.
 
 ------------------------------------------------------------------------
 
-## Library Settings (Per‑Library Overrides)
+## Library Settings (Per-Library Behavior)
+
+Each media library has its own configuration.
 
 Examples:
 
@@ -183,32 +208,39 @@ Examples:
 -   max files per run
 -   encode overrides
 
-Override global defaults when present.
+Library settings override global defaults.
 
 ------------------------------------------------------------------------
 
 # Scheduler Architecture
 
-27. Chonk runs as a long‑running service.
-28. Scheduler and dashboard must use the same timezone logic.
-29. Dashboard "Next Run" must match the actual scheduled trigger.
-30. Scheduler bugs are high severity.
+27. Chonk runs as a **long-running service**.
+
+28. Library schedules are interpreted using the same timezone logic used
+    by the dashboard.
+
+29. Dashboard "Next Run" must match actual scheduler behavior.
+
+30. Scheduler bugs are considered high severity.
 
 ------------------------------------------------------------------------
 
 # Queue and Worker Model
 
-31. Encoding work must run in a background queue.
-32. Web UI must never block during encoding.
-33. Dashboard must stay responsive while runs execute.
+31. The runtime uses an **in-memory job queue** with a background worker
+    thread to process encoding jobs.
+
+32. Queue state is not currently persisted in the database.
+
+33. The web UI must remain responsive while jobs run.
 
 ------------------------------------------------------------------------
 
 # Encoding and File Safety
 
-34. Never corrupt original media files.
+34. Original media files must never be corrupted.
 35. Failed encodes must not overwrite originals.
-36. Temporary files must be cleaned safely.
+36. Temporary files must be cleaned up safely.
 37. Successful encodes must preserve streams and metadata unless
     explicitly configured otherwise.
 
@@ -221,13 +253,14 @@ Override global defaults when present.
 -   Discord webhooks
 -   generic webhooks
 
-39. Secrets must be encrypted in the database.
+39. Secrets are stored encrypted in the database.
 
 Encryption requires:
 
 CHONK_SECRET_KEY
 
-40. Secrets must never be stored plaintext after encryption is enabled.
+40. Secrets must never be stored in plaintext once encryption is
+    enabled.
 
 ------------------------------------------------------------------------
 
@@ -235,8 +268,8 @@ CHONK_SECRET_KEY
 
 41. UI changes must not break operator workflows.
 42. Dashboard must remain responsive during runs.
-43. Settings pages should include tooltips or help text.
-44. Avoid heavy frontend frameworks.
+43. Settings pages should include help text or tooltips for clarity.
+44. Avoid introducing heavy frontend frameworks.
 
 ------------------------------------------------------------------------
 
@@ -249,7 +282,7 @@ pytest\
 docker compose build\
 docker compose up -d
 
-46. Config directory must persist:
+46. The config directory must persist:
 
 /config
 
@@ -270,7 +303,7 @@ docker compose up -d
 Before finishing work an agent must:
 
 1.  Ensure tests pass
-2.  Ensure README is accurate
+2.  Ensure README reflects current behavior
 3.  Ensure version numbers are updated
 4.  Provide a short implementation summary
 
