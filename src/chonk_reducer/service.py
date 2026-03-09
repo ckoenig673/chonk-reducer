@@ -60,14 +60,25 @@ _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
 _ENV_RUNTIME_DEPTH = 0
 
 WEEKDAY_CHOICES = [
-    ("Su", "0"),
-    ("M", "1"),
-    ("T", "2"),
-    ("W", "3"),
-    ("Th", "4"),
-    ("F", "5"),
-    ("Sa", "6"),
+    ("Su", "sun"),
+    ("M", "mon"),
+    ("T", "tue"),
+    ("W", "wed"),
+    ("Th", "thu"),
+    ("F", "fri"),
+    ("Sa", "sat"),
 ]
+
+LEGACY_CRON_WEEKDAY_MAP = {
+    "0": "sun",
+    "1": "mon",
+    "2": "tue",
+    "3": "wed",
+    "4": "thu",
+    "5": "fri",
+    "6": "sat",
+    "7": "sun",
+}
 
 
 EDITABLE_SETTINGS = {
@@ -1721,7 +1732,7 @@ class ChonkService:
             self._register_library_job(library)
 
     def _register_library_job(self, library: RuntimeLibrary) -> None:
-        schedule = (library.schedule or "").strip()
+        schedule = _normalize_schedule_for_scheduler(library.schedule)
         if not schedule:
             LOGGER.info("No schedule configured for %s; job disabled", library.name)
             return
@@ -3437,12 +3448,20 @@ def _parse_simple_cron(schedule: str) -> Optional[Dict[str, object]]:
 
 
 def _normalize_cron_day_of_week(day: str) -> Optional[str]:
-    value = str(day or "").strip()
-    if value == "7":
-        return "0"
-    if value in {"0", "1", "2", "3", "4", "5", "6"}:
+    value = str(day or "").strip().lower()
+    if value in LEGACY_CRON_WEEKDAY_MAP:
+        return LEGACY_CRON_WEEKDAY_MAP[value]
+    if value in {"sun", "mon", "tue", "wed", "thu", "fri", "sat"}:
         return value
     return None
+
+
+def _normalize_schedule_for_scheduler(schedule: str) -> str:
+    raw = str(schedule or "").strip()
+    parsed = _parse_simple_cron(raw)
+    if parsed is None:
+        return raw
+    return _build_simple_cron(str(parsed["time"]), list(parsed["days"]))
 
 
 def _schedule_form_state(schedule: str) -> Dict[str, object]:
@@ -3498,14 +3517,23 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         hour_text, minute_text = str(parsed_simple["time"]).split(":", 1)
         minute = int(minute_text)
         hour = int(hour_text)
-        days = [int(day) for day in list(parsed_simple["days"])]
+        day_name_to_weekday = {
+            "mon": 0,
+            "tue": 1,
+            "wed": 2,
+            "thu": 3,
+            "fri": 4,
+            "sat": 5,
+            "sun": 6,
+        }
+        days = [day_name_to_weekday[day] for day in list(parsed_simple["days"]) if day in day_name_to_weekday]
 
         day_offsets = [0, 1, 2, 3, 4, 5, 6]
         reference_base = reference.replace(second=0, microsecond=0)
         for offset in day_offsets:
             candidate_day = reference_base.date().toordinal() + offset
             candidate_date = datetime.fromordinal(candidate_day)
-            weekday_value = (candidate_date.weekday() + 1) % 7
+            weekday_value = candidate_date.weekday()
             if weekday_value not in days:
                 continue
             candidate = reference_base.replace(

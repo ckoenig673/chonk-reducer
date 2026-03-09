@@ -411,10 +411,10 @@ Libraries are now persisted in a `libraries` table and support simple operator C
 
 Library schedule editing supports two operator modes:
 
-- **Simple schedule builder**: pick weekdays (`Su`, `M`, `T`, `W`, `Th`, `F`, `Sa`) and a time dropdown (15-minute increments), then Chonk generates the cron string for storage.
+- **Simple schedule builder**: pick weekdays (`Su`, `M`, `T`, `W`, `Th`, `F`, `Sa`) and a time dropdown (15-minute increments), then Chonk generates the cron string for storage using named weekdays (`sun`..`sat`) for unambiguous APScheduler behavior.
 - **Advanced raw cron**: edit the raw cron expression directly for complex or custom schedules.
 
-Cron remains the internal scheduler storage format. If a saved cron expression matches the simple weekly pattern (single time + weekday list), the UI opens in simple mode and pre-populates day/time controls. Unsupported or complex cron expressions automatically fall back to advanced mode and keep the raw cron value editable without rewriting.
+Cron remains the internal scheduler storage format. If a saved cron expression matches the simple weekly pattern (single time + weekday list), the UI opens in simple mode and pre-populates day/time controls. Both legacy numeric weekday values (`0`-`7`) and named weekday values (`sun`..`sat`) are accepted for backward compatibility, and simple schedules are normalized safely at runtime. Unsupported or complex cron expressions automatically fall back to advanced mode and keep the raw cron value editable without rewriting.
 
 Bootstrap model for the new config foundation:
 
