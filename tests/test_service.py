@@ -230,6 +230,7 @@ def _seed_run(
     duration_seconds=0.0,
     saved_bytes=0,
     raw_log_path=None,
+    mode="normal",
 ):
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -279,7 +280,7 @@ def _seed_run(
             f"{library}-{ts_end}",
             ts_end,
             ts_end,
-            "normal",
+            mode,
             library,
             "test",
             "hevc_qsv",
@@ -2127,13 +2128,20 @@ def test_run_detail_page_renders_summary_and_file_rows(tmp_path, monkeypatch):
     assert status_code == 200
     assert "<h1>Run Detail</h1>" in body
     assert "Run Summary" in body
-    assert "<strong>Run ID:</strong> %s" % run_id in body
-    assert "<strong>Result:</strong> failed" in body
-    assert "<strong>Duration:</strong> 15.0s" in body
-    assert "<strong>Saved:</strong> 1.0 MB" in body
-    assert "Raw Log Path" in body
+    assert "Outcome" in body
+    assert "Counts" in body
+    assert "Savings" in body
+    assert "Related Information" in body
+    assert "Run ID</th><td" in body and run_id in body
+    assert "Trigger Type</th><td" in body and "Unknown" in body
+    assert "Mode</th><td" in body and "Live" in body
+    assert "Result</th><td" in body and "failed" in body
+    assert "Duration</th><td" in body and "15.0s" in body
+    assert "Total Bytes Saved</th><td" in body and "1.0 MB" in body
+    assert "Run Log Path" in body
     assert "No raw log path recorded for this run" in body
     assert "File-Level Entries" in body
+    assert "File List Summary" in body
     assert "/movies/A.mkv" in body
     assert "/movies/B.mkv" in body
     assert "/movies/C.mkv" in body
@@ -2158,7 +2166,7 @@ def test_run_detail_page_shows_raw_log_path_when_available(tmp_path, monkeypatch
     status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
 
     assert status_code == 200
-    assert "Raw Log Path" in body
+    assert "Run Log Path" in body
     assert "/work/logs/movie_transcode_20260307_154335.log" in body
 
 
@@ -2175,6 +2183,50 @@ def test_run_detail_page_shows_no_file_entries_message(tmp_path, monkeypatch):
 
     assert status_code == 200
     assert "No file-level entries recorded for this run" in body
+
+
+
+def test_run_detail_page_labels_preview_mode_and_manual_preview_trigger(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    run_id = "movies-2026-01-02T08:00:00"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00", mode="preview")
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    service._record_activity("manual_preview_requested", "Manual preview requested for movies", library="movies", run_id=run_id)
+
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "Trigger Type</th><td" in body and "Manual Preview" in body
+    assert "Mode</th><td" in body and "Preview" in body
+    assert "Preview vs Encode Result" in body and "Preview-only (no files encoded)" in body
+
+
+def test_run_detail_page_labels_cancelled_runs(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    run_id = "tv-2026-01-02T08:00:00"
+    _seed_run(db_path, library="tv", ts_end="2026-01-02T08:00:00", skipped_count=1)
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T08:00:01",
+        status="skipped",
+        path="/tv/A.mkv",
+        skip_reason="cancelled",
+    )
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "Result</th><td" in body and "cancelled" in body
+    assert "Cancellation</th><td" in body and "Cancelled" in body
 
 
 def test_run_detail_page_returns_404_for_unknown_run(tmp_path, monkeypatch):
