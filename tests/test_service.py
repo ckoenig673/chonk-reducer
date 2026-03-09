@@ -2712,6 +2712,16 @@ def test_simple_schedule_helper_build_and_parse_round_trip():
     assert parsed["days"] == ["1", "4"]
 
 
+def test_simple_schedule_parser_supports_sunday_zero_and_seven():
+    parsed_zero = service_module._parse_simple_cron("0 2 * * 0")
+    assert parsed_zero is not None
+    assert parsed_zero["days"] == ["0"]
+
+    parsed_seven = service_module._parse_simple_cron("0 2 * * 7")
+    assert parsed_seven is not None
+    assert parsed_seven["days"] == ["0"]
+
+
 def test_simple_schedule_ui_populates_for_supported_cron(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -3933,6 +3943,36 @@ def test_next_run_from_cron_computes_advanced_cron(monkeypatch):
 
     assert value is not None
     assert service_module._format_scheduler_datetime(value) == "2026-03-10 01:15"
+
+
+def test_next_run_from_cron_computes_saturday_schedule(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 9, 12, 0)
+
+    value = service_module._next_run_from_cron("15 20 * * 6", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-14 20:15"
+
+
+def test_next_run_from_cron_computes_sunday_schedule_with_zero(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 9, 12, 0)
+
+    value = service_module._next_run_from_cron("0 2 * * 0", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-15 02:00"
+
+
+def test_next_run_from_cron_computes_sunday_schedule_with_seven(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 9, 12, 0)
+
+    value = service_module._next_run_from_cron("0 2 * * 7", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-15 02:00"
 
 
 def test_dashboard_library_card_shows_disabled_for_disabled_library(monkeypatch):
