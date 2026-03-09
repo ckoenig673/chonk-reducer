@@ -1494,31 +1494,92 @@ def test_dashboard_current_job_status_shows_scheduler_running_and_start_time():
     assert "2026-03-08 20:27" in body
 
 
-def test_current_job_status_uses_scheduler_jobs_for_next_global_scheduled_run():
+def test_current_job_status_uses_earliest_enabled_library_next_run_for_global_schedule(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "0 4 * * *")
+    monkeypatch.setenv("TZ", "UTC")
+
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
 
-    class _Job:
-        def __init__(self, job_id, next_run_time):
-            self.id = job_id
-            self.next_run_time = next_run_time
+    def _fake_next_run(schedule, now=None):
+        del now
+        mapping = {
+            "0 2 * * *": datetime(2026, 3, 9, 2, 0, 0),
+            "0 4 * * *": datetime(2026, 3, 9, 4, 0, 0),
+        }
+        return mapping.get(schedule)
+
+    monkeypatch.setattr(service_module, "_next_run_from_cron", _fake_next_run)
 
     class _Scheduler:
-        running = True
-
         def get_jobs(self):
-            return [
-                _Job("library-2-schedule", datetime(2026, 3, 9, 3, 0)),
-                _Job("library-1-schedule", datetime(2026, 3, 9, 2, 0)),
-            ]
+            return []
 
     service.scheduler = _Scheduler()
+    service._scheduler_started_at = "2026-03-09T00:59:00"
 
     snapshot = service.current_job_status()
 
+    assert snapshot["scheduler_status"] == "Running"
     assert snapshot["next_scheduled_job"] == "Movies"
     assert snapshot["next_scheduled_time"] == "2026-03-09 02:00"
+
+
+def test_current_job_status_uses_dash_when_no_enabled_libraries_have_schedules(monkeypatch):
+    monkeypatch.delenv("MOVIE_SCHEDULE", raising=False)
+    monkeypatch.delenv("TV_SCHEDULE", raising=False)
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    movies, tv = service.list_libraries()
+    movies_no_schedule = service_module.LibraryRecord(
+        id=movies.id,
+        name=movies.name,
+        path=movies.path,
+        enabled=True,
+        schedule="",
+        min_size_gb=movies.min_size_gb,
+        max_files=movies.max_files,
+        priority=movies.priority,
+        qsv_quality=movies.qsv_quality,
+        qsv_preset=movies.qsv_preset,
+        min_savings_percent=movies.min_savings_percent,
+    )
+    disabled_tv = service_module.LibraryRecord(
+        id=tv.id,
+        name=tv.name,
+        path=tv.path,
+        enabled=False,
+        schedule="0 5 * * *",
+        min_size_gb=tv.min_size_gb,
+        max_files=tv.max_files,
+        priority=tv.priority,
+        qsv_quality=tv.qsv_quality,
+        qsv_preset=tv.qsv_preset,
+        min_savings_percent=tv.min_savings_percent,
+    )
+    monkeypatch.setattr(service, "list_libraries", lambda: [movies_no_schedule, disabled_tv])
+
+    snapshot = service.current_job_status()
+
+    assert snapshot["next_scheduled_job"] == "-"
+    assert snapshot["next_scheduled_time"] == "-"
+
+
+def test_scheduler_status_reports_stopped_after_explicit_shutdown_state():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    service._scheduler_started_at = "2026-03-08 20:27"
+    service._scheduler_stopped = True
+
+    snapshot = service.current_job_status()
+
+    assert snapshot["scheduler_status"] == "Stopped"
 
 
 def test_dashboard_renders_scheduler_placeholders_when_no_scheduled_jobs():
@@ -1911,6 +1972,7 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
             return list(self._jobs.values())
 
     service.scheduler = FakeScheduler()
+    service._scheduler_started_at = "2026-01-08T00:00:00"
 
     status_code, body, _ = _call_get(service, "/system")
 
@@ -1924,8 +1986,8 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
     assert "Scheduler Status</th><td" in body and "Running" in body
     assert "Movies Schedule" in body and "<code>0 2 * * *</code>" in body
     assert "TV Schedule" in body and "<code>0 4 * * *</code>" in body
-    assert "2026-01-08 02:00:00+00:00" in body
-    assert "2026-01-08 04:00:00+00:00" in body
+    assert "2026-01-08 02:00" in body
+    assert "2026-01-08 04:00" in body
     assert str(db_path) in body
     assert "/work" in body
     assert "Movies: /data/movies" in body

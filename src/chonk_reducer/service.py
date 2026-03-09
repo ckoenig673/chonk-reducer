@@ -287,6 +287,7 @@ class ChonkService:
         self._last_run_was_cancelled = False
         self._current_run_snapshot: Dict[str, str] = {}
         self._scheduler_started_at = ""
+        self._scheduler_stopped = False
         self._last_preview_results: List[Dict[str, object]] = []
         self._last_preview_snapshots_by_library: Dict[int, Dict[str, object]] = {}
         self._latest_preview_library_id: Optional[int] = None
@@ -1091,21 +1092,18 @@ class ChonkService:
         }
 
     def _next_global_scheduled_job(self) -> Tuple[str, str]:
-        jobs = getattr(self.scheduler, "get_jobs", lambda: [])() or []
         earliest = None
-        for job in jobs:
-            next_run_time = getattr(job, "next_run_time", None)
-            if next_run_time is None or not isinstance(next_run_time, datetime):
+        for library in self.enabled_runtime_libraries():
+            next_run_time = self._library_next_run_datetime(library)
+            if next_run_time is None:
                 continue
             if earliest is None or next_run_time < earliest[1]:
-                earliest = (job, next_run_time)
+                earliest = (library.name, next_run_time)
 
         if earliest is None:
             return "-", "-"
 
-        selected_job = earliest[0]
-        job_name = self._scheduled_job_display_name(getattr(selected_job, "id", ""))
-        return job_name, _format_scheduler_datetime(earliest[1])
+        return earliest[0], _format_scheduler_datetime(earliest[1])
 
     def _scheduled_job_display_name(self, job_id: str) -> str:
         value = str(job_id or "").strip()
@@ -1122,20 +1120,19 @@ class ChonkService:
         return value
 
     def _scheduler_running_label(self) -> str:
-        running = getattr(self.scheduler, "running", None)
-        if running is True:
-            return "Running"
-        if running is False:
+        if self._scheduler_stopped:
             return "Stopped"
-        return "Unknown"
+        if self._scheduler_started_at:
+            return "Running"
+        return "Stopped"
 
-    def _next_run_label(self, library: LibraryRecord, manual_label: str = "Not Scheduled") -> str:
+    def _library_next_run_datetime(self, library: LibraryRecord) -> Optional[datetime]:
         if not bool(getattr(library, "enabled", True)):
-            return "Disabled"
+            return None
 
         schedule = str(getattr(library, "schedule", "")).strip()
         if not schedule:
-            return manual_label
+            return None
 
         job = None
         get_job = getattr(self.scheduler, "get_job", None)
@@ -1153,9 +1150,21 @@ class ChonkService:
         if job is not None:
             next_run_time = getattr(job, "next_run_time", None)
             if next_run_time is not None:
-                return _format_scheduler_datetime(next_run_time)
+                parsed = _coerce_scheduler_datetime(next_run_time)
+                if parsed is not None:
+                    return parsed
 
-        computed_next = _next_run_from_cron(schedule)
+        return _next_run_from_cron(schedule)
+
+    def _next_run_label(self, library: LibraryRecord, manual_label: str = "Not Scheduled") -> str:
+        if not bool(getattr(library, "enabled", True)):
+            return "Disabled"
+
+        schedule = str(getattr(library, "schedule", "")).strip()
+        if not schedule:
+            return manual_label
+
+        computed_next = self._library_next_run_datetime(library)
         if computed_next is None:
             return manual_label
         return _format_scheduler_datetime(computed_next)
@@ -3208,6 +3217,7 @@ class ChonkService:
     def run_forever(self) -> int:
         self._record_activity(event_type="service_start", message="Service startup complete")
         self.register_jobs()
+        self._scheduler_stopped = False
         self.scheduler.start()
         self._scheduler_started_at = _utc_timestamp()
         LOGGER.info("Service scheduler started")
@@ -3243,6 +3253,7 @@ class ChonkService:
             with self._job_condition:
                 self._worker_shutdown = True
                 self._job_condition.notify_all()
+            self._scheduler_stopped = True
             self.scheduler.shutdown(wait=False)
             self.stop_background_worker()
 
@@ -3723,6 +3734,23 @@ def _format_scheduler_datetime(value) -> str:
                 pass
         return value.strftime("%Y-%m-%d %H:%M")
     return str(value)
+
+
+def _coerce_scheduler_datetime(value) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        normalized = text
+        if normalized.endswith(" UTC"):
+            normalized = normalized[:-4] + "+00:00"
+        try:
+            return datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+    return None
 
 
 def _format_savings_pct(size_before, size_after) -> str:

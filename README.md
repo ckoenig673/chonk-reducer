@@ -463,7 +463,7 @@ The System page provides lightweight operator visibility into the running servic
 - scheduler status
 - current background job status (idle/queued/running with queue depth)
 - configured schedules for enabled libraries
-- next scheduled run times per enabled library when available from scheduler metadata
+- next scheduled run times per enabled library and the global next scheduled job/time derived from configured enabled-library schedules
 - current queue/worker status (status, current library, trigger, queue depth, current run id, started-at)
 - SQLite database path and runtime/work path visibility
 
