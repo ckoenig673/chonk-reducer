@@ -317,3 +317,15 @@ These rules ensure:
 -   predictable transcoding behavior
 -   reliable metrics
 -   maintainable architecture
+
+
+# Configuration Consistency Rule
+
+Any change to settings must keep the following synchronized:
+
+- Settings UI
+- README settings documentation
+- Settings metadata/help text
+- Default values used by the application
+
+Agents must not introduce a setting in only one location.
