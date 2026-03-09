@@ -430,6 +430,51 @@ def test_blank_schedule_disables_job_registration():
     assert service.scheduler.get_jobs() == []
 
 
+def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monkeypatch):
+    captured = {}
+
+    class FakeTrigger(object):
+        pass
+
+    class FakeCronTrigger(object):
+        @staticmethod
+        def from_crontab(expr):
+            captured["expr"] = expr
+            return FakeTrigger()
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    monkeypatch.setattr(service_module, "CronTrigger", FakeCronTrigger)
+
+    added = {}
+
+    def fake_add_job(func, trigger, id, args, coalesce, max_instances, replace_existing):
+        added["trigger"] = trigger
+        added["id"] = id
+
+    monkeypatch.setattr(service.scheduler, "add_job", fake_add_job)
+
+    service._register_library_job(
+        service_module.RuntimeLibrary(
+            id=99,
+            name="Movies",
+            path="/movies",
+            schedule="0 2 * * 0",
+            min_size_gb=0.0,
+            max_files=1,
+            priority=1,
+            qsv_quality=None,
+            qsv_preset=None,
+            min_savings_percent=None,
+        )
+    )
+
+    assert captured["expr"] == "0 2 * * sun"
+    assert isinstance(added["trigger"], FakeTrigger)
+    assert added["id"] == "library-99-schedule"
+
+
 def test_home_page_route_returns_minimal_operator_page():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
@@ -1470,7 +1515,7 @@ def test_simple_schedule_builder_values_reflected_in_next_run_display(tmp_path, 
             "enabled": "1",
             "schedule_mode": "simple",
             "schedule_time": "02:00",
-            "schedule_day_6": "1",
+            "schedule_day_sat": "1",
             "min_size_gb": "0",
             "max_files": "1",
             "priority": "100",
@@ -2703,23 +2748,33 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
 
 
 def test_simple_schedule_helper_build_and_parse_round_trip():
-    cron = service_module._build_simple_cron("13:45", ["1", "4"])
-    assert cron == "45 13 * * 1,4"
+    cron = service_module._build_simple_cron("13:45", ["mon", "thu"])
+    assert cron == "45 13 * * mon,thu"
 
-    parsed = service_module._parse_simple_cron("45 13 * * 1,4")
+    parsed = service_module._parse_simple_cron("45 13 * * mon,thu")
     assert parsed is not None
     assert parsed["time"] == "13:45"
-    assert parsed["days"] == ["1", "4"]
+    assert parsed["days"] == ["mon", "thu"]
 
 
 def test_simple_schedule_parser_supports_sunday_zero_and_seven():
     parsed_zero = service_module._parse_simple_cron("0 2 * * 0")
     assert parsed_zero is not None
-    assert parsed_zero["days"] == ["0"]
+    assert parsed_zero["days"] == ["sun"]
 
     parsed_seven = service_module._parse_simple_cron("0 2 * * 7")
     assert parsed_seven is not None
-    assert parsed_seven["days"] == ["0"]
+    assert parsed_seven["days"] == ["sun"]
+
+
+def test_simple_schedule_parser_supports_legacy_numeric_saturday_and_monday():
+    parsed_saturday = service_module._parse_simple_cron("15 20 * * 6")
+    assert parsed_saturday is not None
+    assert parsed_saturday["days"] == ["sat"]
+
+    parsed_monday = service_module._parse_simple_cron("0 6 * * 1")
+    assert parsed_monday is not None
+    assert parsed_monday["days"] == ["mon"]
 
 
 def test_simple_schedule_ui_populates_for_supported_cron(tmp_path, monkeypatch):
@@ -2728,7 +2783,7 @@ def test_simple_schedule_ui_populates_for_supported_cron(tmp_path, monkeypatch):
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
     conn = sqlite3.connect(str(db_path))
-    conn.execute("UPDATE libraries SET schedule = ? WHERE name = ?", ("30 6 * * 1,3,5", "Movies"))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE name = ?", ("30 6 * * 1,wed,5", "Movies"))
     conn.commit()
     conn.close()
 
@@ -2736,9 +2791,9 @@ def test_simple_schedule_ui_populates_for_supported_cron(tmp_path, monkeypatch):
 
     assert status_code == 200
     assert 'value="06:30" selected' in body
-    assert 'name="schedule_day_1" value="1" checked' in body
-    assert 'name="schedule_day_3" value="1" checked' in body
-    assert 'name="schedule_day_5" value="1" checked' in body
+    assert 'name="schedule_day_mon" value="1" checked' in body
+    assert 'name="schedule_day_wed" value="1" checked' in body
+    assert 'name="schedule_day_fri" value="1" checked' in body
 
 
 def test_unsupported_cron_falls_back_to_advanced_mode(tmp_path, monkeypatch):
@@ -2772,8 +2827,8 @@ def test_simple_mode_create_generates_expected_cron(tmp_path, monkeypatch):
             "enabled": "1",
             "schedule_mode": "simple",
             "schedule_time": "09:15",
-            "schedule_day_0": "1",
-            "schedule_day_6": "1",
+            "schedule_day_sun": "1",
+            "schedule_day_sat": "1",
         },
     )
     assert status_code == 200
@@ -2782,7 +2837,7 @@ def test_simple_mode_create_generates_expected_cron(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     row = conn.execute("SELECT schedule FROM libraries WHERE name = ?", ("Kids",)).fetchone()
     conn.close()
-    assert row[0] == "15 9 * * 0,6"
+    assert row[0] == "15 9 * * sun,sat"
 
 
 def test_schedule_validation_in_simple_and_advanced_modes(tmp_path, monkeypatch):
@@ -2812,7 +2867,7 @@ def test_schedule_validation_in_simple_and_advanced_modes(tmp_path, monkeypatch)
             "path": "/data/two",
             "enabled": "1",
             "schedule_mode": "simple",
-            "schedule_day_1": "1",
+            "schedule_day_mon": "1",
         },
     )
     assert status_code == 200
@@ -3973,6 +4028,48 @@ def test_next_run_from_cron_computes_sunday_schedule_with_seven(monkeypatch):
 
     assert value is not None
     assert service_module._format_scheduler_datetime(value) == "2026-03-15 02:00"
+
+
+def test_next_run_from_cron_computes_named_sunday_and_saturday_schedule(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 9, 12, 0)
+
+    value = service_module._next_run_from_cron("30 20 * * sun,sat", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-14 20:30"
+
+
+def test_next_run_from_cron_computes_named_monday_schedule(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 9, 1, 0)
+
+    value = service_module._next_run_from_cron("0 2 * * mon", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-09 02:00"
+
+
+def test_dashboard_next_run_matches_scheduler_for_legacy_weekend_crons(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 9, 12, 0)
+
+    normalized_sun = service_module._normalize_schedule_for_scheduler("0 2 * * 0")
+    normalized_sat = service_module._normalize_schedule_for_scheduler("15 20 * * 6")
+
+    sunday_next = service_module._next_run_from_cron("0 2 * * 0", now=now)
+    saturday_next = service_module._next_run_from_cron("15 20 * * 6", now=now)
+
+    assert sunday_next is not None
+    assert saturday_next is not None
+    assert service_module._format_scheduler_datetime(sunday_next) == "2026-03-15 02:00"
+    assert service_module._format_scheduler_datetime(saturday_next) == "2026-03-14 20:15"
+
+    expected_sunday = service_module.CronTrigger.from_crontab(normalized_sun).get_next_fire_time(None, now)
+    expected_saturday = service_module.CronTrigger.from_crontab(normalized_sat).get_next_fire_time(None, now)
+
+    assert service_module._format_scheduler_datetime(sunday_next) == service_module._format_scheduler_datetime(expected_sunday)
+    assert service_module._format_scheduler_datetime(saturday_next) == service_module._format_scheduler_datetime(expected_saturday)
 
 
 def test_dashboard_library_card_shows_disabled_for_disabled_library(monkeypatch):
