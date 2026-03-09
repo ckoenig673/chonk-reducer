@@ -337,7 +337,7 @@ open http://localhost:8080/dashboard
 The dashboard preserves existing operator controls and visibility:
 
 - Library status cards stacked by enabled library
-- Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (scheduled timestamp when available, `Manual Only` when no schedule, or `Unknown` when unavailable), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
+- Each card shows library name, path, current runtime status (`Idle`, `Queued`, or `Running`), last run, next run (local scheduled timestamp like `2026-03-14 02:00` when available, `Not Scheduled` when schedule is missing/invalid, or `Disabled` when the library is disabled), lifetime totals (`Files Optimized`, `Total Saved`) from SQLite `encodes`, and recent savings from the latest SQLite `runs` entry
 - **Run Now** and **Preview Run** controls per enabled library (dashboard forms post to `POST /dashboard/libraries/{library_id}/run` and `POST /dashboard/libraries/{library_id}/preview`, queue work, then redirect to `/dashboard`; JSON API remains available at `POST /libraries/{library_id}/run`)
 - Manual Run Now and scheduled triggers now enqueue background jobs instead of running inline
 - Single-worker in-memory queue prefers higher-priority libraries first when multiple jobs are queued (higher integer wins), while preserving FIFO behavior for equal priorities

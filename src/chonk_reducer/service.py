@@ -453,15 +453,30 @@ class ChonkService:
         return values
 
     def home_page_html(self) -> str:
-        libraries = self.enabled_runtime_libraries()
+        libraries = self.list_libraries()
         recent_runs = self._recent_runs(limit=10)
         lifetime_savings = self._lifetime_savings()
         library_totals = self._library_lifetime_totals()
         library_sections = []
         for library in libraries:
             status = self._latest_run_status(library.name)
-            runtime_status = self._library_runtime_status(library)
-            runtime_summary = self._library_runtime_summary(library)
+            runtime_library = RuntimeLibrary(
+                id=library.id,
+                name=library.name,
+                path=library.path,
+                schedule=library.schedule,
+                min_size_gb=library.min_size_gb,
+                max_files=library.max_files,
+                priority=library.priority,
+                qsv_quality=library.qsv_quality,
+                qsv_preset=library.qsv_preset,
+                min_savings_percent=library.min_savings_percent,
+            )
+            runtime_status = "Disabled"
+            runtime_summary = ""
+            if library.enabled:
+                runtime_status = self._library_runtime_status(runtime_library)
+                runtime_summary = self._library_runtime_summary(runtime_library)
             last_run_label = "Never"
             processed_label = "0"
             savings_label = "0 B"
@@ -495,7 +510,7 @@ class ChonkService:
                     _escape_html(runtime_status),
                     _escape_html(str(library.priority)),
                     _escape_html(last_run_label),
-                    _escape_html(self._next_run_label(library, manual_label="Manual Only")),
+                    _escape_html(self._next_run_label(library)),
                     _escape_html(str(totals["files_optimized"])),
                     _escape_html(_format_saved_bytes(totals["total_saved"])),
                     _escape_html(savings_label),
@@ -1045,8 +1060,11 @@ class ChonkService:
             return "Stopped"
         return "Unknown"
 
-    def _next_run_label(self, library: RuntimeLibrary, manual_label: str = "Not scheduled") -> str:
-        schedule = library.schedule.strip()
+    def _next_run_label(self, library: LibraryRecord, manual_label: str = "Not Scheduled") -> str:
+        if not bool(getattr(library, "enabled", True)):
+            return "Disabled"
+
+        schedule = str(getattr(library, "schedule", "")).strip()
         if not schedule:
             return manual_label
 
@@ -1063,13 +1081,15 @@ class ChonkService:
                 if getattr(candidate, "id", "") == self._schedule_job_id(library.id):
                     job = candidate
                     break
-        if job is None:
-            return "Unknown"
+        if job is not None:
+            next_run_time = getattr(job, "next_run_time", None)
+            if next_run_time is not None:
+                return _format_scheduler_datetime(next_run_time)
 
-        next_run_time = getattr(job, "next_run_time", None)
-        if next_run_time is None:
-            return "Unknown"
-        return _format_scheduler_datetime(next_run_time)
+        computed_next = _next_run_from_cron(schedule)
+        if computed_next is None:
+            return manual_label
+        return _format_scheduler_datetime(computed_next)
 
     def _current_time_label(self) -> str:
         tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
@@ -3445,6 +3465,40 @@ def _is_valid_crontab(expr: str) -> bool:
     return all(bool(part.strip()) for part in parts)
 
 
+def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Optional[datetime]:
+    cron_expr = str(schedule or "").strip()
+    if not cron_expr or CronTrigger is None:
+        return None
+
+    tzinfo = None
+    if ZoneInfo is not None:
+        tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
+        try:
+            tzinfo = ZoneInfo(tz_name)
+        except Exception:
+            tzinfo = None
+
+    reference = now
+    if reference is None:
+        if tzinfo is not None:
+            reference = datetime.now(tzinfo)
+        else:
+            reference = datetime.utcnow()
+
+    try:
+        if tzinfo is not None:
+            trigger = CronTrigger.from_crontab(cron_expr, timezone=tzinfo)
+        else:
+            trigger = CronTrigger.from_crontab(cron_expr)
+    except Exception:
+        return None
+
+    try:
+        return trigger.get_next_fire_time(None, reference)
+    except Exception:
+        return None
+
+
 def _derive_run_status(success_count: int, failed_count: int, skipped_count: int, was_cancelled: bool = False) -> str:
     """Map run counters to a compact status label for the operator page."""
     if was_cancelled:
@@ -3522,7 +3576,19 @@ def _format_scheduler_datetime(value) -> str:
     if value is None:
         return "Unknown"
     if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+        tzinfo = None
+        if ZoneInfo is not None:
+            tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
+            try:
+                tzinfo = ZoneInfo(tz_name)
+            except Exception:
+                tzinfo = None
+        if tzinfo is not None and value.tzinfo is not None:
+            try:
+                value = value.astimezone(tzinfo)
+            except Exception:
+                pass
+        return value.strftime("%Y-%m-%d %H:%M")
     return str(value)
 
 

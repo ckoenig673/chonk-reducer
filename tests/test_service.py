@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import os
 import socket
 import sqlite3
@@ -1384,13 +1385,13 @@ def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert body.count("Next Run:</strong> Manual Only") == 2
+    assert body.count("Next Run:</strong> Not Scheduled") == 2
     assert "Current Job Status" in body
     assert "Status</th><td" in body and "Idle" in body
 
 
-def test_dashboard_library_card_shows_unknown_when_next_run_missing(monkeypatch):
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+def test_dashboard_library_card_shows_not_scheduled_for_invalid_schedule(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "invalid schedule")
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
@@ -1404,7 +1405,7 @@ def test_dashboard_library_card_shows_unknown_when_next_run_missing(monkeypatch)
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert "Next Run:</strong> Unknown" in body
+    assert "Next Run:</strong> Not Scheduled" in body
 
 
 def test_dashboard_library_card_shows_scheduler_next_run_time(monkeypatch):
@@ -1422,7 +1423,7 @@ def test_dashboard_library_card_shows_scheduler_next_run_time(monkeypatch):
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert "Next Run:</strong> 2026-01-08 01:00:00 UTC" in body
+    assert "Next Run:</strong> 2026-01-08 01:00" in body
 
 
 def test_dashboard_runtime_status_shows_current_file_and_live_snapshot():
@@ -1775,7 +1776,7 @@ def test_system_page_shows_placeholders_for_missing_schedule_data(monkeypatch, t
     assert "<code>Not set</code>" in body
     assert "Movies Schedule" in body
     assert "TV Schedule" in body
-    assert "Not scheduled" in body
+    assert "Not Scheduled" in body
     assert "Work / Log Path</th><td" in body and "Not set" in body
 
 
@@ -3840,3 +3841,54 @@ def test_runtime_snapshot_includes_preview_mode_and_results():
     assert status_code == 200
     assert payload["mode"] == "Preview"
     assert payload["preview_results"][0]["decision"] == "Encode"
+
+
+def test_next_run_from_cron_computes_simple_schedule(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 10, 1, 0)
+
+    value = service_module._next_run_from_cron("0 2 * * *", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-10 02:00"
+
+
+def test_next_run_from_cron_computes_advanced_cron(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 10, 1, 5)
+
+    value = service_module._next_run_from_cron("*/15 1-2 * * *", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-10 01:15"
+
+
+def test_dashboard_library_card_shows_disabled_for_disabled_library(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    movies, tv = service.list_libraries()
+    disabled_movies = service_module.LibraryRecord(
+        id=movies.id,
+        name=movies.name,
+        path=movies.path,
+        enabled=False,
+        schedule=movies.schedule,
+        min_size_gb=movies.min_size_gb,
+        max_files=movies.max_files,
+        priority=movies.priority,
+        qsv_quality=movies.qsv_quality,
+        qsv_preset=movies.qsv_preset,
+        min_savings_percent=movies.min_savings_percent,
+    )
+    monkeypatch.setattr(service, "list_libraries", lambda: [disabled_movies, tv])
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Status:</strong> Disabled" in body
+    assert "Next Run:</strong> Disabled" in body
+
+
+def test_next_run_from_cron_returns_none_for_invalid_expression():
+    assert service_module._next_run_from_cron("invalid schedule") is None
