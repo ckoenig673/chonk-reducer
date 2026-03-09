@@ -286,6 +286,7 @@ class ChonkService:
         self._cancel_requested = False
         self._last_run_was_cancelled = False
         self._current_run_snapshot: Dict[str, str] = {}
+        self._scheduler_started_at = ""
         self._last_preview_results: List[Dict[str, object]] = []
         self._last_preview_snapshots_by_library: Dict[int, Dict[str, object]] = {}
         self._latest_preview_library_id: Optional[int] = None
@@ -667,6 +668,10 @@ class ChonkService:
         setText("runtime-mode", snapshot.mode, "-");
         setText("runtime-library", snapshot.current_library, "-");
         setText("runtime-trigger", triggerLabel(snapshot.trigger), "-");
+        setText("runtime-scheduler-status", snapshot.scheduler_status, "-");
+        setText("runtime-scheduler-started", snapshot.scheduler_started_at, "-");
+        setText("runtime-next-scheduled-job", snapshot.next_scheduled_job, "-");
+        setText("runtime-next-scheduled-time", snapshot.next_scheduled_time, "-");
         setText("runtime-queue-depth", snapshot.queue_depth, "0");
         setText("runtime-run-id", snapshot.run_id, "-");
         setText("runtime-started-at", snapshot.started_at, "-");
@@ -1014,6 +1019,7 @@ class ChonkService:
 
     def current_job_status(self) -> Dict[str, str]:
         snapshot = self._runtime_status_snapshot()
+        scheduler_snapshot = self._scheduler_status_snapshot()
         return {
             "status": snapshot["status"],
             "mode": snapshot.get("mode", "Live"),
@@ -1041,6 +1047,10 @@ class ChonkService:
             "skipped_count": snapshot["files_skipped"],
             "failed_count": snapshot["files_failed"],
             "cancel_requested": snapshot.get("cancel_requested", "0"),
+            "scheduler_status": scheduler_snapshot["status"],
+            "scheduler_started_at": scheduler_snapshot["started_at"],
+            "next_scheduled_job": scheduler_snapshot["next_job"],
+            "next_scheduled_time": scheduler_snapshot["next_time"],
         }
 
     def _runtime_job_status_html(self) -> str:
@@ -1050,6 +1060,10 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Scheduler Status</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Scheduler Started</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Scheduled Job</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Scheduled Time</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; padding: 0.35rem;\">Started At</th><td style=\"padding: 0.35rem;\">%s</td></tr>
@@ -1058,10 +1072,54 @@ class ChonkService:
             _escape_html(status["status"]),
             _escape_html(status["current_library"] or "-"),
             _escape_html(_display_trigger(status["trigger"] or "-")),
+            _escape_html(status["scheduler_status"] or "-"),
+            _escape_html(status["scheduler_started_at"] or "-"),
+            _escape_html(status["next_scheduled_job"] or "-"),
+            _escape_html(status["next_scheduled_time"] or "-"),
             _escape_html(status["queue_depth"]),
             _escape_html(status["run_id"] or "-"),
             _escape_html(status["started_at"] or "-"),
         )
+
+    def _scheduler_status_snapshot(self) -> Dict[str, str]:
+        next_job, next_time = self._next_global_scheduled_job()
+        return {
+            "status": self._scheduler_running_label(),
+            "started_at": self._scheduler_started_at or "-",
+            "next_job": next_job,
+            "next_time": next_time,
+        }
+
+    def _next_global_scheduled_job(self) -> Tuple[str, str]:
+        jobs = getattr(self.scheduler, "get_jobs", lambda: [])() or []
+        earliest = None
+        for job in jobs:
+            next_run_time = getattr(job, "next_run_time", None)
+            if next_run_time is None or not isinstance(next_run_time, datetime):
+                continue
+            if earliest is None or next_run_time < earliest[1]:
+                earliest = (job, next_run_time)
+
+        if earliest is None:
+            return "-", "-"
+
+        selected_job = earliest[0]
+        job_name = self._scheduled_job_display_name(getattr(selected_job, "id", ""))
+        return job_name, _format_scheduler_datetime(earliest[1])
+
+    def _scheduled_job_display_name(self, job_id: str) -> str:
+        value = str(job_id or "").strip()
+        if not value:
+            return "-"
+        prefix = "library-"
+        suffix = "-schedule"
+        if value.startswith(prefix) and value.endswith(suffix):
+            library_id = value[len(prefix) : -len(suffix)]
+            if library_id.isdigit():
+                for library in self.list_libraries():
+                    if int(library.id) == int(library_id):
+                        return library.name
+        return value
 
     def _scheduler_running_label(self) -> str:
         running = getattr(self.scheduler, "running", None)
@@ -2001,6 +2059,7 @@ class ChonkService:
         return selected_job
 
     def _runtime_status_snapshot(self) -> Dict[str, str]:
+        scheduler_snapshot = self._scheduler_status_snapshot()
         with self._job_condition:
             queue_depth = len(self._job_queue)
             current_job = self._current_job
@@ -2059,6 +2118,10 @@ class ChonkService:
             "preview_library": preview_library,
             "preview_generated_at": preview_generated_at,
             "cancel_requested": "1" if cancel_requested else "0",
+            "scheduler_status": scheduler_snapshot["status"],
+            "scheduler_started_at": scheduler_snapshot["started_at"],
+            "next_scheduled_job": scheduler_snapshot["next_job"],
+            "next_scheduled_time": scheduler_snapshot["next_time"],
         }
 
     def _latest_preview_snapshot(self) -> Optional[Dict[str, object]]:
@@ -2083,6 +2146,10 @@ class ChonkService:
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td id=\"runtime-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td id=\"runtime-library\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td id=\"runtime-trigger\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Scheduler Status</th><td id=\"runtime-scheduler-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Scheduler Started</th><td id=\"runtime-scheduler-started\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Scheduled Job</th><td id=\"runtime-next-scheduled-job\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Scheduled Time</th><td id=\"runtime-next-scheduled-time\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Mode</th><td id=\"runtime-mode\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td id=\"runtime-queue-depth\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td id=\"runtime-run-id\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
@@ -2099,6 +2166,10 @@ class ChonkService:
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
+            _escape_html(snapshot.get("scheduler_status") or "-"),
+            _escape_html(snapshot.get("scheduler_started_at") or "-"),
+            _escape_html(snapshot.get("next_scheduled_job") or "-"),
+            _escape_html(snapshot.get("next_scheduled_time") or "-"),
             _escape_html(snapshot.get("mode", "Live") or "Live"),
             _escape_html(snapshot["queue_depth"]),
             _escape_html(run_id),
@@ -3138,6 +3209,7 @@ class ChonkService:
         self._record_activity(event_type="service_start", message="Service startup complete")
         self.register_jobs()
         self.scheduler.start()
+        self._scheduler_started_at = _utc_timestamp()
         LOGGER.info("Service scheduler started")
         self._record_activity(event_type="scheduler_start", message="Scheduler started")
 

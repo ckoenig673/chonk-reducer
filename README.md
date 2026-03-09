@@ -345,7 +345,7 @@ The dashboard preserves existing operator controls and visibility:
 - Legacy compatibility run routes remain available for default Movies/TV libraries
 - Recent Runs table (from SQLite `runs`)
 - Lifetime savings summary
-- Current runtime status block (idle/queued/running, current library, trigger, mode, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
+- Current runtime status block (idle/queued/running, current library, trigger, scheduler status/started time, next global scheduled job/time, mode, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
 - Active runs now render a lightweight progress panel with an HTML progress bar. During active ffmpeg encode the panel now also shows encoding percent complete (`out_time_ms / duration_ms`), live speed (`speed`), and ETA, while still showing file counters and current file/library context
 - Dashboard runtime status now auto-refreshes every 3 seconds using `GET /api/status` so Current Job Status + Run Progress update live without full page refresh
 - Preview Run now submits through the dashboard preview endpoint and keeps the latest preview snapshot visible after completion, labeled with preview library and generated timestamp until the next preview run replaces it
