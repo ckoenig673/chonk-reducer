@@ -4050,6 +4050,46 @@ def test_next_run_from_cron_computes_named_monday_schedule(monkeypatch):
     assert service_module._format_scheduler_datetime(value) == "2026-03-09 02:00"
 
 
+def test_next_run_from_cron_computes_sunday_before_scheduled_time_same_day(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 15, 1, 58)
+
+    value = service_module._next_run_from_cron("0 2 * * sun", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-15 02:00"
+
+
+def test_next_run_from_cron_computes_sunday_after_scheduled_time_next_week(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 15, 19, 58)
+
+    value = service_module._next_run_from_cron("0 2 * * sun", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-22 02:00"
+
+
+def test_next_run_from_cron_computes_saturday_after_scheduled_time_next_week(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 14, 21, 0)
+
+    value = service_module._next_run_from_cron("15 20 * * sat", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-21 20:15"
+
+
+def test_next_run_from_cron_computes_weekday_after_scheduled_time_next_week(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    now = datetime(2026, 3, 11, 3, 0)
+
+    value = service_module._next_run_from_cron("0 2 * * wed", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-18 02:00"
+
+
 def test_dashboard_next_run_matches_scheduler_for_legacy_weekend_crons(monkeypatch):
     monkeypatch.setenv("TZ", "UTC")
     now = datetime(2026, 3, 9, 12, 0)
