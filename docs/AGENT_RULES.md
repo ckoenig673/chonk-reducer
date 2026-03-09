@@ -1,207 +1,286 @@
-# Chonk Reducer -- Agent Rules
+# Chonk Reducer --- Agent Rules
 
 This document defines the rules that AI coding agents (Codex, Copilot,
-etc.) must follow when working on this repository.
+ChatGPT, etc.) must follow when working on this repository.
 
 Agents must read and follow these rules **before making any changes**.
 
+The purpose of these rules is to protect production NAS environments,
+ensure stable transcoding behavior, and maintain consistent
+architecture.
+
 ------------------------------------------------------------------------
 
-# General Development Rules
+# Core Development Principles
 
-1.  **Never break existing functionality.** If unsure, preserve current
-    behavior.
-
-2.  **Prefer small, clear changes** rather than large refactors.
-
+1.  **Never break existing functionality.**
+2.  **Prefer small, focused changes.**
 3.  **Do not modify unrelated files.**
-
-4.  **Explain the changes in a short summary** at the end of any
-    implementation.
+4.  **Preserve operator trust.**
+5.  **Explain changes with a short summary.**
 
 ------------------------------------------------------------------------
 
 # Testing Rules
 
-5.  **Always update or add unit tests** for any new feature or code
-    change.
+6.  All code changes must include or update tests.
+7.  Tests must pass before completing work.
 
-6.  **Ensure the project passes tests before finishing.**
+Run: pytest -q
 
-Run:
-
-pytest -q
-
-7.  **Never remove existing tests unless they are clearly invalid.**
-
-8.  Any change to **encoding, scanning, or candidate logic** must
-    include tests validating the behavior.
+8.  Never remove tests unless clearly invalid.
+9.  Changes affecting encoding, scanning, scheduling, candidate
+    selection, or settings must include tests.
+10. Add regression tests when fixing bugs.
 
 ------------------------------------------------------------------------
 
 # Documentation Rules
 
-9.  **Always update `README.md` if behavior changes.**
+11. README.md must always reflect the current behavior of the project.
+12. New features must include documentation covering:
 
-This includes:
-
+-   purpose
 -   configuration
--   CLI usage
--   workflows
--   new features
--   environment variables
+-   operator behavior
+-   examples if helpful
 
-10. If a new feature is added, document:
-
--   usage
--   configuration options
--   example commands
+13. Settings descriptions should be written so they can be reused for UI
+    tooltips.
 
 ------------------------------------------------------------------------
 
 # Versioning Rules
 
-11. **Always increment the application version when code changes.**
+14. Always increment the application version when code changes.
 
-Update:
+Update: src/chonk_reducer/**init**.py compose.yaml (if applicable)
 
-src/chonk_reducer/**init**.py compose.yaml
+Semantic versioning:
 
-Follow **semantic versioning**:
-
-patch -\> bug fixes minor -\> new features major -\> breaking changes
+patch -\> bug fixes\
+minor -\> new features\
+major -\> breaking changes
 
 ------------------------------------------------------------------------
 
 # Dependency Rules
 
-12. If new dependencies are required:
+15. If new dependencies are required update: requirements.txt\
+    requirements-dev.txt
 
-Update:
-
-requirements.txt requirements-dev.txt
-
-Dev tools (pytest plugins, etc.) belong in **requirements-dev.txt**.
+16. Development-only tools belong in requirements-dev.txt.
 
 ------------------------------------------------------------------------
 
 # Python Compatibility
 
-13. **Maintain compatibility with Python 3.8.**
+17. Runtime targets Python 3.11+ (tested on 3.11--3.12).
 
-The NAS runtime environment uses Python 3.8.
+Use standard timezone support:
 
-Avoid features introduced after Python 3.8.
-
-If timezone support is needed, use fallback logic:
-
-try: from zoneinfo import ZoneInfo except ImportError: from
-backports.zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 
 ------------------------------------------------------------------------
 
 # Performance & File Handling
 
-14. **Avoid loading large files fully into memory.**
-
-Log files and NDJSON files must be processed **line-by-line
-(streaming)**.
-
-Example:
-
-for line in file: process(line)
+18. Never load large media files fully into memory.
+19. Prefer streaming/line‑by‑line processing for logs and large files.
+20. Long-running tasks must run in background workers, not the UI
+    thread.
 
 ------------------------------------------------------------------------
 
-# Metrics and Statistics System
+# Metrics and Database System
 
-15. **SQLite is the metrics backend.**
+21. SQLite is the system backend.
 
-The legacy `.chonkstats.ndjson` format is deprecated.
-
-All metrics must be stored in:
+Database location:
 
 /config/chonk.db
 
-Tables:
+22. Database stores operational data including:
 
-runs encodes
+-   runs
+-   run_files
+-   settings
+-   libraries
+-   activity
+-   job queue
 
-16. **Do not reintroduce NDJSON as a primary metrics system.**
+23. NDJSON metrics are deprecated.
 
-NDJSON exists only for **legacy migration**.
+Legacy file:
+
+.chonkstats.ndjson
+
+exists only for migration purposes.
 
 ------------------------------------------------------------------------
 
 # Migration Rules
 
-17. Migration must be **safe and idempotent**.
-
-Legacy stats files:
-
-.chonkstats.ndjson
-
-After migration they must be renamed to:
+24. Migrations must be safe and idempotent.
+25. After migration rename legacy files to:
 
 .chonkstats.ndjson.migrated
 
-18. Migration must **not import duplicate records**.
+26. Migrations must never create duplicate records.
 
 ------------------------------------------------------------------------
 
-# Container & Runtime Architecture
+# Configuration Architecture
 
-19. Chonk runs inside Docker containers scheduled by NAS tasks.
+Chonk uses three configuration layers.
 
-Typical runtime flow:
+## Docker Compose (Deployment Layer)
 
-git pull pytest docker compose build docker compose run
+Compose should contain:
 
-Changes must not break this workflow.
+-   container runtime configuration
+-   mounts
+-   hardware devices
+-   ports
+-   environment bootstrap
+-   secret keys
 
-20. The container config directory must persist via Docker volume:
+Examples:
+
+CHONK_SECRET_KEY\
+TZ\
+WORK_ROOT\
+STATS_PATH\
+SERVICE_HOST\
+SERVICE_PORT
+
+Operational tuning settings must NOT live here.
+
+------------------------------------------------------------------------
+
+## Global Settings (Application Defaults)
+
+Stored in SQLite.
+
+Examples:
+
+-   retry behavior
+-   skip rules
+-   logging retention
+-   validation behavior
+-   notification configuration
+
+Editable via the UI.
+
+------------------------------------------------------------------------
+
+## Library Settings (Per‑Library Overrides)
+
+Examples:
+
+-   schedule
+-   min size
+-   max files per run
+-   encode overrides
+
+Override global defaults when present.
+
+------------------------------------------------------------------------
+
+# Scheduler Architecture
+
+27. Chonk runs as a long‑running service.
+28. Scheduler and dashboard must use the same timezone logic.
+29. Dashboard "Next Run" must match the actual scheduled trigger.
+30. Scheduler bugs are high severity.
+
+------------------------------------------------------------------------
+
+# Queue and Worker Model
+
+31. Encoding work must run in a background queue.
+32. Web UI must never block during encoding.
+33. Dashboard must stay responsive while runs execute.
+
+------------------------------------------------------------------------
+
+# Encoding and File Safety
+
+34. Never corrupt original media files.
+35. Failed encodes must not overwrite originals.
+36. Temporary files must be cleaned safely.
+37. Successful encodes must preserve streams and metadata unless
+    explicitly configured otherwise.
+
+------------------------------------------------------------------------
+
+# Notifications
+
+38. Supported notifications may include:
+
+-   Discord webhooks
+-   generic webhooks
+
+39. Secrets must be encrypted in the database.
+
+Encryption requires:
+
+CHONK_SECRET_KEY
+
+40. Secrets must never be stored plaintext after encryption is enabled.
+
+------------------------------------------------------------------------
+
+# UI / Dashboard Rules
+
+41. UI changes must not break operator workflows.
+42. Dashboard must remain responsive during runs.
+43. Settings pages should include tooltips or help text.
+44. Avoid heavy frontend frameworks.
+
+------------------------------------------------------------------------
+
+# Container Runtime
+
+45. Typical deployment workflow:
+
+git pull\
+pytest\
+docker compose build\
+docker compose up -d
+
+46. Config directory must persist:
 
 /config
 
-Example mapping:
-
-/volume1/docker/projects/nas-transcoder:/config
-
-SQLite metrics must persist between runs.
+47. Database and logs must survive container restarts.
 
 ------------------------------------------------------------------------
 
 # Data Integrity Rules
 
-21. Successful encodes are critical historical records and must always
-    be preserved.
-
-22. Skip events may be stored for operational visibility.
-
-Skip pruning or aggregation may be added in future versions.
+48. Historical run records must never be lost.
+49. Encode statistics must remain historically accurate.
+50. Activity logs must remain reliable.
 
 ------------------------------------------------------------------------
 
 # Final Implementation Requirements
 
-Before finishing any task:
+Before finishing work an agent must:
 
-1.  Ensure tests pass.
-2.  Ensure documentation is updated.
-3.  Ensure version numbers are updated.
-4.  Provide a **short implementation summary** describing the changes.
+1.  Ensure tests pass
+2.  Ensure README is accurate
+3.  Ensure version numbers are updated
+4.  Provide a short implementation summary
 
 ------------------------------------------------------------------------
 
-# Purpose of These Rules
+# Purpose
 
-These rules ensure that:
+These rules ensure:
 
--   production NAS workflows remain stable
--   metrics remain reliable
--   historical data is preserved
--   changes remain testable and maintainable
-
-Agents must follow these rules to maintain the integrity of the Chonk
-Reducer project.
-
+-   stable NAS deployments
+-   predictable transcoding behavior
+-   reliable metrics
+-   maintainable architecture
