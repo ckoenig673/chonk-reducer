@@ -3467,7 +3467,7 @@ def _is_valid_crontab(expr: str) -> bool:
 
 def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Optional[datetime]:
     cron_expr = str(schedule or "").strip()
-    if not cron_expr or CronTrigger is None:
+    if not cron_expr:
         return None
 
     tzinfo = None
@@ -3485,18 +3485,43 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         else:
             reference = datetime.utcnow()
 
+    parsed_simple = _parse_simple_cron(cron_expr)
+    if parsed_simple is not None:
+        hour_text, minute_text = str(parsed_simple["time"]).split(":", 1)
+        minute = int(minute_text)
+        hour = int(hour_text)
+        days = [int(day) for day in list(parsed_simple["days"])]
+
+        day_offsets = [0, 1, 2, 3, 4, 5, 6]
+        reference_base = reference.replace(second=0, microsecond=0)
+        for offset in day_offsets:
+            candidate_day = reference_base.date().toordinal() + offset
+            candidate_date = datetime.fromordinal(candidate_day)
+            weekday_value = (candidate_date.weekday() + 1) % 7
+            if weekday_value not in days:
+                continue
+            candidate = reference_base.replace(
+                year=candidate_date.year,
+                month=candidate_date.month,
+                day=candidate_date.day,
+                hour=hour,
+                minute=minute,
+            )
+            if candidate > reference_base:
+                return candidate
+
+    if CronTrigger is None:
+        return None
+
     try:
         if tzinfo is not None:
             trigger = CronTrigger.from_crontab(cron_expr, timezone=tzinfo)
         else:
             trigger = CronTrigger.from_crontab(cron_expr)
-    except Exception:
-        return None
-
-    try:
         return trigger.get_next_fire_time(None, reference)
     except Exception:
         return None
+
 
 
 def _derive_run_status(success_count: int, failed_count: int, skipped_count: int, was_cancelled: bool = False) -> str:

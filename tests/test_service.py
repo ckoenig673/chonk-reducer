@@ -1426,6 +1426,78 @@ def test_dashboard_library_card_shows_scheduler_next_run_time(monkeypatch):
     assert "Next Run:</strong> 2026-01-08 01:00" in body
 
 
+
+
+def test_dashboard_library_card_shows_computed_next_run_for_valid_schedule(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("TZ", "UTC")
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * 6")
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    monkeypatch.setattr(service.scheduler, "get_job", lambda _job_id: None)
+
+    fixed_now = datetime(2026, 3, 9, 1, 0)
+    original_next = service_module._next_run_from_cron
+
+    def _patched_next(schedule: str, now=None):
+        return original_next(schedule, now=fixed_now)
+
+    monkeypatch.setattr(service_module, "_next_run_from_cron", _patched_next)
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Movies" in body
+    assert "Next Run:</strong> 2026-03-14 02:00" in body
+
+
+def test_simple_schedule_builder_values_reflected_in_next_run_display(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("TZ", "UTC")
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/update",
+        data={
+            "library_id": "1",
+            "name": "Movies",
+            "path": "/movies",
+            "enabled": "1",
+            "schedule_mode": "simple",
+            "schedule_time": "02:00",
+            "schedule_day_6": "1",
+            "min_size_gb": "0",
+            "max_files": "1",
+            "priority": "100",
+            "qsv_quality": "21",
+            "qsv_preset": "7",
+            "min_savings_percent": "15",
+        },
+    )
+    assert status_code == 200
+    assert "Library updated." in body
+
+    monkeypatch.setattr(service.scheduler, "get_job", lambda _job_id: None)
+
+    fixed_now = datetime(2026, 3, 9, 1, 0)
+    original_next = service_module._next_run_from_cron
+
+    def _patched_next(schedule: str, now=None):
+        return original_next(schedule, now=fixed_now)
+
+    monkeypatch.setattr(service_module, "_next_run_from_cron", _patched_next)
+
+    status_code, dashboard_body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Next Run:</strong> 2026-03-14 02:00" in dashboard_body
+
+
 def test_dashboard_runtime_status_shows_current_file_and_live_snapshot():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
