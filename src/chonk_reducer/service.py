@@ -2718,7 +2718,7 @@ class ChonkService:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT run_id, ts_end, ts_start, library, success_count, failed_count, skipped_count,
+                SELECT run_id, ts_end, ts_start, mode, library, success_count, failed_count, skipped_count,
                        duration_seconds, saved_bytes
                 FROM runs
                 ORDER BY ts_end DESC
@@ -2735,21 +2735,23 @@ class ChonkService:
             success_count = int(row["success_count"] or 0)
             failed_count = int(row["failed_count"] or 0)
             skipped_count = int(row["skipped_count"] or 0)
+            saved_bytes = self._run_total_saved_bytes(str(row["run_id"] or ""), int(row["saved_bytes"] or 0))
+            duration_seconds = _duration_seconds_from_run(row["ts_start"], row["ts_end"], row["duration_seconds"])
             result.append(
                 {
                     "time": str(row["ts_end"] or row["ts_start"] or "Unknown"),
                     "library": str(row["library"] or "Unknown"),
+                    "mode": _display_run_mode(str(row["mode"] or "")),
                     "result": _derive_run_status(
                         success_count=success_count,
                         failed_count=failed_count,
                         skipped_count=skipped_count,
                     ),
-                    "duration": _format_duration_seconds(row["duration_seconds"]),
+                    "duration": _format_duration_seconds(duration_seconds),
                     "processed": str(success_count + failed_count + skipped_count),
-                    "success": str(success_count),
                     "skipped": str(skipped_count),
                     "failed": str(failed_count),
-                    "saved": _format_saved_bytes(row["saved_bytes"]),
+                    "saved": _run_saved_mb_gb_label(saved_bytes),
                     "run_id": str(row["run_id"] or "-"),
                 }
             )
@@ -2853,6 +2855,46 @@ class ChonkService:
         conn.close()
         return result
 
+    def _run_total_saved_bytes(self, run_id: str, fallback_saved_bytes: int = 0) -> int:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists() or not run_id:
+            return int(fallback_saved_bytes or 0)
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(CASE
+                    WHEN size_before_bytes IS NOT NULL AND size_after_bytes IS NOT NULL AND size_before_bytes >= size_after_bytes
+                    THEN size_before_bytes - size_after_bytes
+                    ELSE COALESCE(saved_bytes, 0)
+                END), 0) AS total_saved
+                FROM encodes
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            conn.close()
+            return int(row["total_saved"] or 0) if row is not None else int(fallback_saved_bytes or 0)
+        except Exception:
+            return int(fallback_saved_bytes or 0)
+
+    def _run_successful_encode_count(self, run_id: str, fallback_success_count: int = 0) -> int:
+        db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
+        if not db_path.exists() or not run_id:
+            return int(fallback_success_count or 0)
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT COUNT(*) AS success_count FROM encodes WHERE run_id = ? AND lower(COALESCE(status, '')) = 'success'",
+                (run_id,),
+            ).fetchone()
+            conn.close()
+            return int(row["success_count"] or 0) if row is not None else int(fallback_success_count or 0)
+        except Exception:
+            return int(fallback_success_count or 0)
+
     def _encodes_for_run(self, run_id: str) -> List[Dict[str, str]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
         if not db_path.exists():
@@ -2864,7 +2906,7 @@ class ChonkService:
             rows = conn.execute(
                 """
                 SELECT ts, path, filename, status, codec_from, codec_to,
-                       size_before_bytes, size_after_bytes, saved_bytes,
+                       size_before_bytes, size_after_bytes, saved_bytes, duration_seconds,
                        skip_reason, skip_detail, fail_stage, error_type, error_msg
                 FROM encodes
                 WHERE run_id = ?
@@ -2906,6 +2948,7 @@ class ChonkService:
                     "before": _format_saved_bytes(row["size_before_bytes"]),
                     "after": _format_saved_bytes(row["size_after_bytes"]),
                     "saved": _format_saved_bytes(row["saved_bytes"]),
+                    "encode_duration": _format_duration_seconds(row["duration_seconds"]) if row["duration_seconds"] is not None else "-",
                     "reason": reason or "-",
                 }
             )
@@ -2949,13 +2992,13 @@ class ChonkService:
                 % (
                     _escape_html(row["time"]),
                     _escape_html(row["library"]),
+                    _escape_html(row["mode"]),
                     _escape_html(row["result"]),
-                    _escape_html(row["duration"]),
                     _escape_html(row["processed"]),
-                    _escape_html(row["success"]),
                     _escape_html(row["skipped"]),
                     _escape_html(row["failed"]),
                     _escape_html(row["saved"]),
+                    _escape_html(row["duration"]),
                     '<a href="/runs/%s">%s</a>' % (run_id, run_id),
                 )
             )
@@ -2963,15 +3006,15 @@ class ChonkService:
         return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
   <thead>
     <tr>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Time</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Result</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Duration</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Processed</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Success</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Skipped</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Failed</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Time</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Library</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Mode</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Result</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Processed</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Skipped</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Failed</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Saved</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Duration</th>
       <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Run ID</th>
     </tr>
   </thead>
@@ -2988,7 +3031,7 @@ class ChonkService:
             ("Mode", _escape_html(_display_run_mode(str(run.get("mode") or "")))),
             ("Started At", _escape_html(_format_readable_timestamp(run.get("ts_start")))),
             ("Completed At", _escape_html(_format_readable_timestamp(run.get("ts_end")))),
-            ("Duration", _escape_html(_format_duration_seconds(run.get("duration_seconds")))),
+            ("Duration", _escape_html(_format_duration_seconds(_duration_seconds_from_run(run.get("ts_start"), run.get("ts_end"), run.get("duration_seconds"))))),
         ]
         outcome_rows = [
             ("Result", _escape_html(str(run.get("result") or "completed"))),
@@ -3003,7 +3046,10 @@ class ChonkService:
             ("Skipped", _escape_html(str(run.get("skipped_count") or 0))),
             ("Failed", _escape_html(str(run.get("failed_count") or 0))),
         ]
-        savings_rows = [("Total Bytes Saved", _escape_html(_format_saved_bytes(run.get("saved_bytes"))))]
+        total_saved_bytes = self._run_total_saved_bytes(str(run.get("run_id") or ""), int(run.get("saved_bytes") or 0))
+        successful_encodes = self._run_successful_encode_count(str(run.get("run_id") or ""), int(run.get("success_count") or 0))
+        average_saved_bytes = int(total_saved_bytes / successful_encodes) if successful_encodes > 0 else 0
+        savings_rows = [("Total Saved", _escape_html(_run_saved_mb_gb_label(total_saved_bytes))), ("Avg Saved / File", _escape_html(_run_saved_mb_gb_label(average_saved_bytes) if successful_encodes > 0 else "0.0 MB"))]
 
         optional_rows = []
         optional_fields = [
@@ -3092,7 +3138,7 @@ class ChonkService:
         body_rows = []
         for row in rows:
             body_rows.append(
-                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
                     _escape_html(row["path"]),
                     _escape_html(row["status"]),
@@ -3100,6 +3146,7 @@ class ChonkService:
                     _escape_html(row["before"]),
                     _escape_html(row["after"]),
                     _escape_html(row["saved"]),
+                    _escape_html(row["encode_duration"]),
                     _escape_html(row["reason"]),
                 )
             )
@@ -3113,6 +3160,7 @@ class ChonkService:
       <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Before</th>
       <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">After</th>
       <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Saved</th>
+      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Encode Time</th>
       <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Reason / Detail</th>
     </tr>
   </thead>
@@ -4028,12 +4076,55 @@ def _derive_run_status(success_count: int, failed_count: int, skipped_count: int
 
 def _format_duration_seconds(value) -> str:
     try:
-        seconds = float(value)
+        seconds = int(round(float(value)))
     except Exception:
         return "Unknown"
     if seconds < 0:
         return "Unknown"
-    return "%.1fs" % seconds
+    if seconds < 60:
+        return "%ss" % seconds
+    if seconds < 3600:
+        minutes = seconds // 60
+        remainder = seconds % 60
+        return "%sm %ss" % (minutes, remainder)
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    return "%sh %02dm" % (hours, minutes)
+
+
+def _duration_seconds_from_run(ts_start, ts_end, fallback_seconds) -> Optional[float]:
+    start_text = str(ts_start or "").strip()
+    end_text = str(ts_end or "").strip()
+    if start_text and end_text:
+        try:
+            start_dt = datetime.fromisoformat(start_text)
+            end_dt = datetime.fromisoformat(end_text)
+            delta_seconds = (end_dt - start_dt).total_seconds()
+            if delta_seconds > 0:
+                return float(delta_seconds)
+        except Exception:
+            pass
+    try:
+        fallback = float(fallback_seconds)
+    except Exception:
+        return None
+    if fallback < 0:
+        return None
+    return fallback
+
+
+def _run_saved_mb_gb_label(saved_bytes) -> str:
+    try:
+        value = int(saved_bytes)
+    except Exception:
+        return "Unknown"
+    if value < 0:
+        return "Unknown"
+    gib = float(1024 ** 3)
+    mib = float(1024 ** 2)
+    if value >= 1024 ** 3:
+        return "%.1f GB" % (value / gib)
+    return "%.1f MB" % (value / mib)
 
 
 def _format_saved_bytes(value) -> str:
