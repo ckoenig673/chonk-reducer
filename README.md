@@ -389,9 +389,13 @@ The settings page is backed by SQLite (`STATS_PATH`) and now has two sections:
 Global Settings now manage app-wide operator defaults (DB-backed), including:
 
 - `min_file_age_minutes`
-- `max_files`
 - `min_savings_percent`
 - `max_savings_percent`
+- `min_media_free_gb`
+- `max_gb_per_run`
+- `fail_fast`
+- `log_skips`
+- `top_candidates`
 - `retry_count`
 - `retry_backoff_seconds`
 - `skip_codecs`
@@ -420,9 +424,10 @@ Cron remains the internal scheduler storage format. If a saved cron expression m
 
 Bootstrap model for the new config foundation:
 
-1. Environment/compose values remain bootstrap defaults.
-2. Missing service settings keys are initialized from env/default values.
-3. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`, `priority=100`) and schedule bootstrap from legacy global schedule keys when present.
+1. `compose.yaml` is now deployment/runtime focused (container wiring, mounts, ports, runtime secrets, service host/port).
+2. Environment/compose values for Global Settings are bootstrap defaults only.
+3. Missing service settings keys are initialized from env/default values.
+4. If no `libraries` rows exist, default `Movies` and `TV` rows are initialized with safe processing defaults (`min_size_gb=0.0`, `max_files=1`, `priority=100`) and schedule bootstrap from legacy global schedule keys when present.
 
 Retry behavior is automatic for failed encodes: Chonk retries the same source file up to `retry_count`, waits `retry_backoff_seconds` between attempts, cleans up incomplete temp output between attempts, and marks the file failed when retries are exhausted.
 
@@ -607,25 +612,43 @@ Future versions may support dashboards or reporting tools using this data.
 
 # Environment Variables
 
-These are configured via `compose.yaml`.
+`compose.yaml` should now hold deployment/runtime infrastructure concerns only.
+
+### Keep in compose/env (deployment/runtime)
 
 | Variable | Default | Description |
 |---|---|---|
-LIBRARY_NAME | | logical library name |
-MEDIA_ROOT | /movies | root scan path |
-WORK_ROOT | /work | workspace directory |
-MIN_FILE_AGE_MINUTES | 0 | skip recently modified files |
-MIN_SAVINGS_PERCENT | 15 | minimum savings |
-MAX_SAVINGS_PERCENT | 0 | optional savings cap |
-ENCODER | hevc_qsv | encoder profile |
-QSV_QUALITY | 21 | encoding quality |
-QSV_PRESET | 7 | speed preset |
-PROBE_TIMEOUT_SECS | 60 | ffprobe timeout |
-RETRY_COUNT | 1 | bootstrap default for DB-backed retry count |
-RETRY_BACKOFF_SECONDS | 5 | bootstrap default for DB-backed retry delay (seconds) |
-PREVIEW | false | dry run preview mode: analyze/probe/estimate only, never transcode |
+CHONK_SECRET_KEY | | secret used for encrypted webhook settings |
+SERVICE_MODE | false | run long-lived service mode when true |
+SERVICE_HOST | 0.0.0.0 | service bind host |
+SERVICE_PORT | 8080 | service bind port |
+TZ | UTC | timezone for scheduler/log display |
+WORK_ROOT | /work | writable workspace directory |
+STATS_PATH | /config/chonk.db | SQLite DB path |
+APP_VERSION | package version | runtime version stamp (optional override) |
 
-Additional settings control validation, logging, stats, and retention.
+### Bootstrap-only Global Settings env values
+
+These may still be provided in env for first-time bootstrap compatibility, but after bootstrap SQLite Global Settings are source of truth:
+
+- `MIN_FILE_AGE_MINUTES`
+- `MIN_SAVINGS_PERCENT`
+- `MAX_SAVINGS_PERCENT`
+- `MIN_MEDIA_FREE_GB`
+- `MAX_GB_PER_RUN`
+- `FAIL_FAST`
+- `LOG_SKIPS`
+- `TOP_CANDIDATES`
+- `RETRY_COUNT`
+- `RETRY_BACKOFF_SECONDS` (`RETRY_BACKOFF_SECS` legacy alias)
+- `SKIP_CODECS`
+- `SKIP_RESOLUTION_TAGS`
+- `SKIP_MIN_HEIGHT`
+- `VALIDATE_SECONDS`
+- `LOG_RETENTION_DAYS`
+- `BAK_RETENTION_DAYS`
+
+Per-library processing/encode controls should be configured in **Settings → Libraries**.
 
 ---
 
@@ -671,7 +694,7 @@ work/logs
 If ffprobe is unavailable on the host:
 
 ```bash
-docker compose run --rm --entrypoint ffprobe tv-transcoder <args>
+docker compose run --rm --entrypoint ffprobe chonk-service <args>
 ```
 
 ---

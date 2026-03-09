@@ -3364,6 +3364,11 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "22")
     monkeypatch.setenv("MIN_SAVINGS_PERCENT", "18")
     monkeypatch.setenv("MAX_SAVINGS_PERCENT", "45")
+    monkeypatch.setenv("MIN_MEDIA_FREE_GB", "80")
+    monkeypatch.setenv("MAX_GB_PER_RUN", "55")
+    monkeypatch.setenv("FAIL_FAST", "true")
+    monkeypatch.setenv("LOG_SKIPS", "true")
+    monkeypatch.setenv("TOP_CANDIDATES", "9")
     monkeypatch.setenv("RETRY_COUNT", "4")
     monkeypatch.setenv("RETRY_BACKOFF_SECONDS", "8")
     monkeypatch.setenv("SKIP_CODECS", "mpeg2")
@@ -3384,6 +3389,11 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
         "min_file_age_minutes",
         "min_savings_percent",
         "max_savings_percent",
+        "min_media_free_gb",
+        "max_gb_per_run",
+        "fail_fast",
+        "log_skips",
+        "top_candidates",
         "retry_count",
         "retry_backoff_seconds",
         "skip_codecs",
@@ -3401,6 +3411,11 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     assert values["min_file_age_minutes"] == "22"
     assert values["min_savings_percent"] == "18"
     assert values["max_savings_percent"] == "45"
+    assert values["min_media_free_gb"] == "80"
+    assert values["max_gb_per_run"] == "55"
+    assert values["fail_fast"] == "true"
+    assert values["log_skips"] == "true"
+    assert values["top_candidates"] == "9"
     assert values["retry_count"] == "4"
     assert values["retry_backoff_seconds"] == "8"
     assert values["skip_codecs"] == "mpeg2"
@@ -3426,6 +3441,11 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
             "min_file_age_minutes": "40",
             "min_savings_percent": "25",
             "max_savings_percent": "35",
+            "min_media_free_gb": "44",
+            "max_gb_per_run": "12",
+            "top_candidates": "8",
+            "fail_fast": "1",
+            "log_skips": "1",
             "retry_count": "3",
             "retry_backoff_seconds": "11",
             "skip_codecs": "h264,mpeg2",
@@ -3451,6 +3471,11 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
     assert values["min_file_age_minutes"] == "40"
     assert values["min_savings_percent"] == "25"
     assert values["max_savings_percent"] == "35"
+    assert values["min_media_free_gb"] == "44"
+    assert values["max_gb_per_run"] == "12"
+    assert values["top_candidates"] == "8"
+    assert values["fail_fast"] == "1"
+    assert values["log_skips"] == "1"
     assert values["retry_count"] == "3"
     assert values["retry_backoff_seconds"] == "11"
     assert values["skip_codecs"] == "h264,mpeg2"
@@ -3505,7 +3530,7 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
-    service.update_editable_settings({"min_file_age_minutes": "7", "retry_count": "9"})
+    service.update_editable_settings({"min_file_age_minutes": "7", "retry_count": "9", "fail_fast": "1", "top_candidates": "6"})
 
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -3522,6 +3547,8 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
         captured["min_size_gb"] = os.getenv("MIN_SIZE_GB")
         captured["min_file_age_minutes"] = os.getenv("MIN_FILE_AGE_MINUTES")
         captured["retry_count"] = os.getenv("RETRY_COUNT")
+        captured["fail_fast"] = os.getenv("FAIL_FAST")
+        captured["top_candidates"] = os.getenv("TOP_CANDIDATES")
         captured["qsv_quality"] = os.getenv("QSV_QUALITY")
         captured["qsv_preset"] = os.getenv("QSV_PRESET")
         captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
@@ -3535,10 +3562,40 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
     assert captured["min_size_gb"] == "2.5"
     assert captured["min_file_age_minutes"] == "7"
     assert captured["retry_count"] == "9"
+    assert captured["fail_fast"] == "1"
+    assert captured["top_candidates"] == "6"
     assert captured["qsv_quality"] == "20"
     assert captured["qsv_preset"] == "8"
     assert captured["min_savings_percent"] == "12.0"
 
+
+
+
+def test_db_global_settings_override_environment_after_bootstrap(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("TOP_CANDIDATES", "11")
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    monkeypatch.setenv("TOP_CANDIDATES", "2")
+
+    captured = {}
+
+    def fake_run_once():
+        captured["top_candidates"] = os.getenv("TOP_CANDIDATES")
+        return 0
+
+    monkeypatch.setattr(service_module, "run", fake_run_once)
+
+    service._run_library_once("movies", "manual")
+    assert captured["top_candidates"] == "11"
+
+    service.update_editable_settings({"top_candidates": "4"})
+    service._run_library_once("movies", "manual")
+    assert captured["top_candidates"] == "4"
 
 def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
