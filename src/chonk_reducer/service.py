@@ -394,6 +394,13 @@ class ChonkService:
                 return JSONResponse(content=payload, status_code=200)
             return payload
 
+        @self.app.post("/api/preview/clear")
+        def api_clear_preview():
+            payload = self.clear_preview_results()
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=200)
+            return payload
+
         @self.app.post("/libraries/{library_id}/run")
         def run_library(library_id: int):
             payload, status_code = self.manual_run_payload_for_id(int(library_id))
@@ -582,6 +589,23 @@ class ChonkService:
         return scaled.toFixed(1) + " " + units[index];
       }
 
+      function schedulerTimestampLabel(rawValue) {
+        var text = String(rawValue || "").trim();
+        if (!text || text === "-") {
+          return "-";
+        }
+        if (text.indexOf("T") !== -1) {
+          text = text.replace("T", " ");
+        }
+        if (text.endsWith("Z")) {
+          text = text.slice(0, -1);
+        }
+        if (text.length >= 16) {
+          return text.slice(0, 16);
+        }
+        return text;
+      }
+
       function triggerLabel(trigger) {
         var value = String(trigger || "").trim().toLowerCase();
         if (value === "manual") {
@@ -670,7 +694,7 @@ class ChonkService:
         setText("runtime-library", snapshot.current_library, "-");
         setText("runtime-trigger", triggerLabel(snapshot.trigger), "-");
         setText("runtime-scheduler-status", snapshot.scheduler_status, "-");
-        setText("runtime-scheduler-started", snapshot.scheduler_started_at, "-");
+        setText("runtime-scheduler-started", schedulerTimestampLabel(snapshot.scheduler_started_at), "-");
         setText("runtime-next-scheduled-job", snapshot.next_scheduled_job, "-");
         setText("runtime-next-scheduled-time", snapshot.next_scheduled_time, "-");
         setText("runtime-queue-depth", snapshot.queue_depth, "0");
@@ -721,6 +745,19 @@ class ChonkService:
         return fetch("/api/run/cancel", { method: "POST" }).catch(function () { return null; });
       }
 
+      function requestClearPreviewResults() {
+        return fetch("/api/preview/clear", { method: "POST" })
+          .then(function (response) {
+            if (!response.ok) {
+              throw new Error("preview clear failed");
+            }
+            return response.json();
+          })
+          .catch(function () {
+            return null;
+          });
+      }
+
       function updateStopButton(snapshot) {
         var button = document.getElementById("runtime-stop-button");
         if (!button) {
@@ -749,6 +786,13 @@ class ChonkService:
       if (stopButton) {
         stopButton.addEventListener("click", function () {
           requestStopRun().then(fetchStatus);
+        });
+      }
+
+      var clearPreviewButton = document.getElementById("runtime-clear-preview-button");
+      if (clearPreviewButton) {
+        clearPreviewButton.addEventListener("click", function () {
+          requestClearPreviewResults().then(fetchStatus);
         });
       }
 
@@ -1074,7 +1118,7 @@ class ChonkService:
             _escape_html(status["current_library"] or "-"),
             _escape_html(_display_trigger(status["trigger"] or "-")),
             _escape_html(status["scheduler_status"] or "-"),
-            _escape_html(status["scheduler_started_at"] or "-"),
+            _escape_html(_format_readable_timestamp(status["scheduler_started_at"] or "-")),
             _escape_html(status["next_scheduled_job"] or "-"),
             _escape_html(status["next_scheduled_time"] or "-"),
             _escape_html(status["queue_depth"]),
@@ -2176,7 +2220,7 @@ class ChonkService:
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
             _escape_html(snapshot.get("scheduler_status") or "-"),
-            _escape_html(snapshot.get("scheduler_started_at") or "-"),
+            _escape_html(_format_readable_timestamp(snapshot.get("scheduler_started_at") or "-")),
             _escape_html(snapshot.get("next_scheduled_job") or "-"),
             _escape_html(snapshot.get("next_scheduled_time") or "-"),
             _escape_html(snapshot.get("mode", "Live") or "Live"),
@@ -2218,7 +2262,14 @@ class ChonkService:
             )
         if not body_rows:
             body_rows.append('<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>')
-        return """<div id="runtime-preview-results" style="margin-top:0.8rem;"><div style="font-weight:600; margin-bottom:0.35rem;">Preview Results</div>%s<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;"><thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Estimated Size</th><th style="text-align:left; padding:0.35rem;">Savings %%</th><th style="text-align:left; padding:0.35rem;">Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div>""" % (details, "".join(body_rows))
+        return """<div id="runtime-preview-results" style="margin-top:0.8rem;"><div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.35rem;"><div style="font-weight:600;">Preview Results</div><button id="runtime-clear-preview-button" type="button" style="font-size:0.85rem;">Clear Preview Results</button></div><div style="border:1px solid #d7e2f4; background:#f8fbff; padding:0.45rem; margin-bottom:0.5rem;">%s</div><table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;"><thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Estimated Size</th><th style="text-align:left; padding:0.35rem;">Savings %%</th><th style="text-align:left; padding:0.35rem;">Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div>""" % (details, "".join(body_rows))
+
+    def clear_preview_results(self) -> Dict[str, str]:
+        with self._job_state_lock:
+            self._last_preview_results = []
+            self._last_preview_snapshots_by_library = {}
+            self._latest_preview_library_id = None
+        return {"status": "cleared"}
 
     def _runtime_progress_overview_html(self, snapshot: Dict[str, str]) -> str:
         if snapshot.get("status") != "Running":
@@ -3248,6 +3299,7 @@ class ChonkService:
                     self.toggle_library,
                     self.manual_run_payload,
                     self.request_cancel_active_run,
+                    self.clear_preview_results,
                 )
         finally:
             with self._job_condition:
@@ -3736,6 +3788,19 @@ def _format_scheduler_datetime(value) -> str:
     return str(value)
 
 
+def _format_readable_timestamp(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or text == "-":
+        return "-"
+    if "T" in text:
+        text = text.replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    if len(text) >= 16:
+        return text[:16]
+    return text
+
+
 def _coerce_scheduler_datetime(value) -> Optional[datetime]:
     if isinstance(value, datetime):
         return value
@@ -3806,6 +3871,7 @@ def _run_simple_http_server(
     toggle_library_fn: Callable[[Dict[str, str]], str],
     manual_run_fn: Callable[[str, bool], tuple],
     cancel_run_fn: Optional[Callable[[], Dict[str, str]]] = None,
+    clear_preview_fn: Optional[Callable[[], Dict[str, str]]] = None,
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -3949,6 +4015,9 @@ def _run_simple_http_server(
                 payload, status_code = manual_run_fn("tv", False)
             elif self.path == "/api/run/cancel":
                 payload = cancel_run_fn() if callable(cancel_run_fn) else {"status": "idle"}
+                status_code = 200
+            elif self.path == "/api/preview/clear":
+                payload = clear_preview_fn() if callable(clear_preview_fn) else {"status": "cleared"}
                 status_code = 200
             elif self.path == "/settings":
                 content_length = int(self.headers.get("Content-Length", "0") or "0")

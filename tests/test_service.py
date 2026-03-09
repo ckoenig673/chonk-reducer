@@ -3836,6 +3836,7 @@ def test_dashboard_shows_preview_run_button():
     assert status_code == 200
     assert "Preview Run" in body
     assert "formaction=\"/dashboard/libraries/1/preview\"" in body
+    assert "Clear Preview Results" in body
 
 
 
@@ -4024,6 +4025,98 @@ def test_preview_endpoint_exists_and_returns_json_payload():
     assert status_code == 202
     assert payload["status"] == "queued"
     assert payload["library_id"] == 1
+
+
+def test_preview_clear_endpoint_clears_snapshot_and_returns_json_payload():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    service._last_preview_results = [
+        {
+            "file": "/movies/a.mkv",
+            "original_size": 1000,
+            "estimated_size": 700,
+            "estimated_savings_pct": 30.0,
+            "decision": "Encode",
+        }
+    ]
+    service._last_preview_snapshots_by_library = {
+        1: {
+            "library_id": 1,
+            "library_name": "Movies",
+            "generated_at": "2026-03-08T22:48:17Z",
+            "results": list(service._last_preview_results),
+        }
+    }
+    service._latest_preview_library_id = 1
+
+    try:
+        status_code, payload = _call_post(service, "/api/preview/clear")
+    finally:
+        service.stop_background_worker()
+
+    assert status_code == 200
+    assert payload == {"status": "cleared"}
+    snapshot = service.current_job_status()
+    assert snapshot["preview_results"] == []
+    assert snapshot["preview_library"] == ""
+    assert snapshot["preview_generated_at"] == ""
+
+
+def test_dashboard_returns_to_empty_preview_state_after_preview_clear():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    service._last_preview_snapshots_by_library = {
+        1: {
+            "library_id": 1,
+            "library_name": "Movies",
+            "generated_at": "2026-03-08T22:48:17Z",
+            "results": [
+                {
+                    "file": "/movies/a.mkv",
+                    "original_size": 1000,
+                    "estimated_size": 700,
+                    "estimated_savings_pct": 30.0,
+                    "decision": "Encode",
+                }
+            ],
+        }
+    }
+    service._latest_preview_library_id = 1
+
+    try:
+        before_code, before_body, _ = _call_get(service, "/dashboard")
+        clear_code, clear_payload = _call_post(service, "/api/preview/clear")
+        after_code, after_body, _ = _call_get(service, "/dashboard")
+    finally:
+        service.stop_background_worker()
+
+    assert before_code == 200
+    assert "/movies/a.mkv" in before_body
+    assert clear_code == 200
+    assert clear_payload == {"status": "cleared"}
+    assert after_code == 200
+    assert "Library:</strong> <span id=\"runtime-preview-library\">-" in after_body
+    assert "Generated At:</strong> <span id=\"runtime-preview-generated-at\">-" in after_body
+    assert "No preview results yet." in after_body
+
+
+def test_dashboard_formats_scheduler_started_timestamp_for_readability():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    service._scheduler_started_at = "2026-03-08T22:48:17Z"
+
+    try:
+        status_code, body, _ = _call_get(service, "/dashboard")
+    finally:
+        service.stop_background_worker()
+
+    assert status_code == 200
+    assert "2026-03-08 22:48" in body
+    assert "2026-03-08T22:48:17Z" not in body
 
 
 def test_manual_preview_payload_queues_preview_trigger(monkeypatch):
