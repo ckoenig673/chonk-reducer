@@ -1471,6 +1471,78 @@ def test_dashboard_library_card_shows_scheduler_next_run_time(monkeypatch):
     assert "Next Run:</strong> 2026-01-08 01:00" in body
 
 
+def test_dashboard_current_job_status_shows_scheduler_running_and_start_time():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    class _Scheduler:
+        running = True
+
+        def get_jobs(self):
+            return []
+
+    service.scheduler = _Scheduler()
+    service._scheduler_started_at = "2026-03-08 20:27"
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Scheduler Status</th><td id=\"runtime-scheduler-status\"" in body
+    assert "Running" in body
+    assert "Scheduler Started</th><td id=\"runtime-scheduler-started\"" in body
+    assert "2026-03-08 20:27" in body
+
+
+def test_current_job_status_uses_scheduler_jobs_for_next_global_scheduled_run():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    class _Job:
+        def __init__(self, job_id, next_run_time):
+            self.id = job_id
+            self.next_run_time = next_run_time
+
+    class _Scheduler:
+        running = True
+
+        def get_jobs(self):
+            return [
+                _Job("library-2-schedule", datetime(2026, 3, 9, 3, 0)),
+                _Job("library-1-schedule", datetime(2026, 3, 9, 2, 0)),
+            ]
+
+    service.scheduler = _Scheduler()
+
+    snapshot = service.current_job_status()
+
+    assert snapshot["next_scheduled_job"] == "Movies"
+    assert snapshot["next_scheduled_time"] == "2026-03-09 02:00"
+
+
+def test_dashboard_renders_scheduler_placeholders_when_no_scheduled_jobs():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    class _Scheduler:
+        running = False
+
+        def get_jobs(self):
+            return []
+
+    service.scheduler = _Scheduler()
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Scheduler Status" in body
+    assert "Stopped" in body
+    assert "Next Scheduled Job" in body
+    assert "Next Scheduled Time" in body
+
+
 
 
 def test_dashboard_library_card_shows_computed_next_run_for_valid_schedule(tmp_path, monkeypatch):
