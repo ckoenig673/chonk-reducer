@@ -3658,11 +3658,84 @@ def test_preview_results_persist_on_dashboard_after_preview_completes(monkeypatc
     assert snapshot["status"] == "Idle"
     assert snapshot["preview_results"]
     assert snapshot["preview_results"][0]["decision"] == "Encode"
+    assert snapshot["preview_library"] == "Movies"
+    assert snapshot["preview_generated_at"]
 
     status_code, body, _ = _call_get(service, "/dashboard")
     assert status_code == 200
+    assert "Library:</strong>" in body
+    assert "Generated At:</strong>" in body
+    assert "Movies" in body
     assert "/movies/a.mkv" in body
     assert "Encode" in body
+
+    service.stop_background_worker()
+
+def test_preview_result_replacement_is_scoped_per_library(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    def fake_run_once(library, trigger):
+        assert trigger == "preview"
+        row_file = "/movies/new.mkv" if library.lower() == "movies" else "/tv/new.mkv"
+        with service._job_condition:
+            service._current_run_snapshot["preview_generated_at"] = "2026-01-01T00:00:00Z" if library.lower() == "movies" else "2026-01-02T00:00:00Z"
+            service._current_run_snapshot["preview_results_json"] = json.dumps(
+                [
+                    {
+                        "file": row_file,
+                        "original_size": 1000,
+                        "estimated_size": 700,
+                        "estimated_savings_pct": 30.0,
+                        "decision": "Encode",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(service, "_run_library_once", fake_run_once)
+
+    status_code, payload = _call_post(service, "/libraries/1/preview")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+
+    for _ in range(40):
+        if service.current_job_status()["status"] == "Idle":
+            break
+        time.sleep(0.01)
+
+    movie_snapshot = service.current_job_status()
+    assert movie_snapshot["preview_library"] == "Movies"
+    assert movie_snapshot["preview_results"][0]["file"] == "/movies/new.mkv"
+
+    status_code, payload = _call_post(service, "/libraries/1/preview")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    for _ in range(40):
+        if service.current_job_status()["status"] == "Idle":
+            break
+        time.sleep(0.01)
+
+    replaced_snapshot = service.current_job_status()
+    assert replaced_snapshot["preview_library"] == "Movies"
+    assert replaced_snapshot["preview_results"][0]["file"] == "/movies/new.mkv"
+
+    status_code, payload = _call_post(service, "/libraries/2/preview")
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    for _ in range(40):
+        if service.current_job_status()["status"] == "Idle":
+            break
+        time.sleep(0.01)
+
+    tv_snapshot = service.current_job_status()
+    assert tv_snapshot["preview_library"] == "TV"
+    assert tv_snapshot["preview_results"][0]["file"] == "/tv/new.mkv"
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+    assert status_code == 200
+    assert "Library:</strong> <span id=\"runtime-preview-library\">TV" in body
+    assert "Generated At:</strong> <span id=\"runtime-preview-generated-at\">2026-01-02T00:00:00Z" in body
 
     service.stop_background_worker()
 
