@@ -847,7 +847,7 @@ def test_simple_http_server_handles_another_request_while_dashboard_request_is_b
             lambda values: "updated",
             lambda values: "deleted",
             lambda values: "toggled",
-            lambda library: ({"status": "queued", "library": library, "library_id": 1}, 202),
+            lambda library, preview=False: ({"status": "queued", "library": library, "library_id": 1}, 202),
         ),
         daemon=True,
     )
@@ -915,7 +915,7 @@ def test_simple_http_server_uses_threading_http_server(monkeypatch):
         lambda values: "updated",
         lambda values: "deleted",
         lambda values: "toggled",
-        lambda library: ({"status": "queued", "library": library, "library_id": 1}, 202),
+        lambda library, preview=False: ({"status": "queued", "library": library, "library_id": 1}, 202),
     )
 
     assert captured["server_address"] == ("127.0.0.1", 18080)
@@ -3563,7 +3563,108 @@ def test_dashboard_shows_preview_run_button():
 
     assert status_code == 200
     assert "Preview Run" in body
-    assert "formaction=\"/libraries/1/preview\"" in body
+    assert "formaction=\"/dashboard/libraries/1/preview\"" in body
+
+
+
+
+def test_dashboard_preview_library_redirects_immediately_after_queueing(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    release = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        assert trigger == "preview"
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+
+    start = time.monotonic()
+    status_code, response = _call_post(service, "/dashboard/libraries/1/preview", follow_redirects=False)
+    elapsed = time.monotonic() - start
+
+    assert status_code == 303
+    assert response.headers["location"] == "/dashboard?manual_run=queued&library_id=1"
+    assert elapsed < 0.5
+    release.set()
+    service.stop_background_worker()
+
+
+def test_preview_run_sets_runtime_mode_to_preview_while_active(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    running = threading.Event()
+    release = threading.Event()
+
+    def blocking_run_once(library, trigger):
+        assert trigger == "preview"
+        running.set()
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(service, "_run_library_once", blocking_run_once)
+    status_code, payload = _call_post(service, "/libraries/1/preview")
+
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert running.wait(timeout=1)
+
+    snapshot = service.current_job_status()
+    assert snapshot["status"] == "Running"
+    assert snapshot["mode"] == "Preview"
+    assert snapshot["current_library"] == "Movies"
+
+    release.set()
+    service.stop_background_worker()
+
+
+def test_preview_results_persist_on_dashboard_after_preview_completes(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    done = threading.Event()
+
+    def fake_run_once(_library, trigger):
+        assert trigger == "preview"
+        with service._job_condition:
+            service._current_run_snapshot["preview_results_json"] = json.dumps(
+                [
+                    {
+                        "file": "/movies/a.mkv",
+                        "original_size": 1000,
+                        "estimated_size": 700,
+                        "estimated_savings_pct": 30.0,
+                        "decision": "Encode",
+                    }
+                ]
+            )
+        done.set()
+
+    monkeypatch.setattr(service, "_run_library_once", fake_run_once)
+    status_code, payload = _call_post(service, "/libraries/1/preview")
+
+    assert status_code == 202
+    assert payload["status"] == "queued"
+    assert done.wait(timeout=1)
+
+    for _ in range(20):
+        snapshot = service.current_job_status()
+        if snapshot["status"] == "Idle":
+            break
+        time.sleep(0.01)
+
+    snapshot = service.current_job_status()
+    assert snapshot["status"] == "Idle"
+    assert snapshot["preview_results"]
+    assert snapshot["preview_results"][0]["decision"] == "Encode"
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+    assert status_code == 200
+    assert "/movies/a.mkv" in body
+    assert "Encode" in body
+
+    service.stop_background_worker()
 
 
 def test_preview_endpoint_exists_and_returns_json_payload():

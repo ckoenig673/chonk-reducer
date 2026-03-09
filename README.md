@@ -347,6 +347,7 @@ The dashboard preserves existing operator controls and visibility:
 - Current runtime status block (idle/queued/running, current library, trigger, mode, queue depth, run id, started timestamp, current file, and lightweight live run snapshot counters)
 - Active runs now render a lightweight progress panel with an HTML progress bar. During active ffmpeg encode the panel now also shows encoding percent complete (`out_time_ms / duration_ms`), live speed (`speed`), and ETA, while still showing file counters and current file/library context
 - Dashboard runtime status now auto-refreshes every 3 seconds using `GET /api/status` so Current Job Status + Run Progress update live without full page refresh
+- Preview Run now submits through the dashboard preview endpoint and keeps latest preview rows visible after completion until the next preview run starts
 - Active runs show a **Stop Run** button that calls `POST /api/run/cancel`; runtime status transitions through `Cancelling` and then `Cancelled` once the worker stops
 - Library cards show inline running progress (`Progress: processed / candidates files`) for the currently active library
 - Runtime progress snapshot clears after run completion so idle dashboards return to baseline
