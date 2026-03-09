@@ -275,6 +275,7 @@ class ChonkService:
         self._cancel_requested = False
         self._last_run_was_cancelled = False
         self._current_run_snapshot: Dict[str, str] = {}
+        self._last_preview_results: List[Dict[str, object]] = []
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()
         self._configure_routes()
@@ -482,7 +483,7 @@ class ChonkService:
     %s
     <form method="post" action="/dashboard/libraries/%d/run" style="margin-top: 0.75rem;">
       <button type="submit">Run Now</button>
-      <button type="submit" formaction="/libraries/%d/preview" style="margin-left: 0.45rem;">Preview Run</button>
+      <button type="submit" formaction="/dashboard/libraries/%d/preview" style="margin-left: 0.45rem;">Preview Run</button>
     </form>
   </section>
 """
@@ -1924,6 +1925,8 @@ class ChonkService:
                     lock.release()
                 with self._job_condition:
                     self._queued_or_running_library_ids.discard(job.library_id)
+                    if job.trigger == "preview":
+                        self._last_preview_results = self._extract_preview_results(self._current_run_snapshot)
                     self._current_job = None
                     self._current_job_started_at = ""
                     self._current_job_run_id = ""
@@ -1968,14 +1971,10 @@ class ChonkService:
         else:
             status = "Idle"
         preview_results = []
-        preview_results_json = str(run_snapshot.get("preview_results_json", "") or "").strip()
-        if preview_results_json:
-            try:
-                parsed = json.loads(preview_results_json)
-                if isinstance(parsed, list):
-                    preview_results = parsed
-            except Exception:
-                preview_results = []
+        if current_job is not None:
+            preview_results = self._extract_preview_results(run_snapshot)
+        else:
+            preview_results = list(self._last_preview_results)
 
         return {
             "status": status,
@@ -1997,7 +1996,7 @@ class ChonkService:
             "encode_out_time": str(run_snapshot.get("encode_out_time", "")),
             "retry_attempt": str(run_snapshot.get("retry_attempt", "")),
             "retry_max": str(run_snapshot.get("retry_max", "")),
-            "mode": str(run_snapshot.get("mode", "Live") or "Live"),
+            "mode": str(run_snapshot.get("mode", "Preview" if (current_job is not None and current_job.trigger == "preview") else "Live") or "Live"),
             "preview_results": preview_results,
             "cancel_requested": "1" if cancel_requested else "0",
         }
@@ -2173,6 +2172,22 @@ class ChonkService:
                 alias_key = aliases.get(key_text)
                 if alias_key:
                     self._current_run_snapshot[alias_key] = value_text
+
+    def _extract_preview_results(self, run_snapshot: Dict[str, object]) -> List[Dict[str, object]]:
+        preview_results: List[Dict[str, object]] = []
+        preview_results_json = str(run_snapshot.get("preview_results_json", "") or "").strip()
+        if not preview_results_json:
+            return preview_results
+        try:
+            parsed = json.loads(preview_results_json)
+        except Exception:
+            return preview_results
+        if not isinstance(parsed, list):
+            return preview_results
+        for row in parsed[:25]:
+            if isinstance(row, dict):
+                preview_results.append(row)
+        return preview_results
 
     def _latest_run_status(self, library: str) -> Optional[Dict[str, str]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
@@ -2923,7 +2938,12 @@ class ChonkService:
         run_id = str(uuid.uuid4())
         with self._job_condition:
             self._current_job_run_id = run_id
-            self._current_run_snapshot = {"current_library": library_record.name}
+            self._current_run_snapshot = {
+                "current_library": library_record.name,
+                "mode": "Preview" if str(trigger).strip().lower() == "preview" else "Live",
+            }
+            if str(trigger).strip().lower() == "preview":
+                self._last_preview_results = []
         self._record_activity(
             event_type="run_started",
             message="%s run started" % library_record.name,
@@ -3511,7 +3531,7 @@ def _run_simple_http_server(
     update_library_fn: Callable[[Dict[str, str]], str],
     delete_library_fn: Callable[[Dict[str, str]], str],
     toggle_library_fn: Callable[[Dict[str, str]], str],
-    manual_run_fn: Callable[[str], tuple],
+    manual_run_fn: Callable[[str, bool], tuple],
     cancel_run_fn: Optional[Callable[[], Dict[str, str]]] = None,
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
@@ -3611,16 +3631,16 @@ def _run_simple_http_server(
             self.wfile.write(payload)
 
         def do_POST(self):  # noqa: N802
-            if self.path.startswith("/dashboard/libraries/") and self.path.endswith("/run"):
+            if self.path.startswith("/dashboard/libraries/") and (self.path.endswith("/run") or self.path.endswith("/preview")):
                 parts = [part for part in self.path.split("/") if part]
-                if len(parts) == 4 and parts[0] == "dashboard" and parts[1] == "libraries" and parts[3] == "run":
+                if len(parts) == 4 and parts[0] == "dashboard" and parts[1] == "libraries" and parts[3] in ("run", "preview"):
                     try:
                         library_id = int(parts[2])
                     except ValueError:
                         self.send_response(400)
                         self.end_headers()
                         return
-                    payload, _ = manual_run_fn(str(library_id))
+                    payload, _ = manual_run_fn(str(library_id), parts[3] == "preview")
                     location = "/dashboard"
                     if payload.get("status") in ("queued", "busy"):
                         location = "/dashboard?manual_run=%s&library_id=%s" % (
@@ -3645,15 +3665,15 @@ def _run_simple_http_server(
                         self.send_response(400)
                         self.end_headers()
                         return
-                    payload, status_code = manual_run_fn(str(library_id))
+                    payload, status_code = manual_run_fn(str(library_id), False)
                 else:
                     self.send_response(404)
                     self.end_headers()
                     return
             elif self.path == "/run/movies":
-                payload, status_code = manual_run_fn("movies")
+                payload, status_code = manual_run_fn("movies", False)
             elif self.path == "/run/tv":
-                payload, status_code = manual_run_fn("tv")
+                payload, status_code = manual_run_fn("tv", False)
             elif self.path == "/api/run/cancel":
                 payload = cancel_run_fn() if callable(cancel_run_fn) else {"status": "idle"}
                 status_code = 200
