@@ -1,181 +1,26 @@
 name: nas-transcoder
 
-# ============================================================
-# Common Environment (shared by movie + tv)
-# ============================================================
-x-common-env: &common-env
+x-runtime-env: &runtime-env
   CHONK_SECRET_KEY: ${CHONK_SECRET_KEY}
-  # ---- Python / container hygiene ----
-  PYTHONPATH: /project/src                 # lets `python -m chonk_reducer` import project code
-  PYTHONPYCACHEPREFIX: /work/pycache       # keep __pycache__ out of the read-only /project mount
-  PYTHONDONTWRITEBYTECODE: 1               # avoid writing .pyc files entirely
-
-  # ---- Run modes ----
-  DRY_RUN: "false"                          # if true, do everything except encode/swap (safe testing)
-  PREVIEW: "false"                         # if true, log “top candidates” only and exit (no per-file work)
-  FAIL_FAST: "true"                        # if true, abort run on first hard failure
-
-  # ---- Stats / Reporting ----
-  STATS_ENABLED: "true"                    # write SQLite rows to STATS_PATH for success/skip/fail events
-  APP_VERSION: "v1.39.1"                    # version stamp written into stats + startup banner
-  REPORTS_DIR: "/work/reports"             # where weekly-report writes its output text file(s)
-  WEEKLY_REPORT_DAYS: "7"                  # how many days back weekly-report aggregates
-  WEEKLY_STATS_PATHS: "/config/chonk.db"  # comma list of SQLite DB inputs
-  REPORT_RETENTION_DAYS: "30"              # delete weekly reports older than N days (weekly-report)
-
-  # ---- Retry bootstrap defaults (DB-backed Global Settings are source of truth after first init) ----
-  RETRY_COUNT: "1"                         # bootstrap default for Global Settings retry_count
-  RETRY_BACKOFF_SECONDS: "5"               # bootstrap default for Global Settings retry_backoff_seconds
-  RETRY_BACKOFF_SECS: "5"                  # legacy compatibility bootstrap alias
-
-  # ---- Candidate selection ----
-  TOP_CANDIDATES: "5"                      # how many “top candidates” to print in the log header
-  MAX_FILES: "1"                           # max files to process per run (keeps runs scheduler-friendly)
-  MIN_FILE_AGE_MINUTES: "10"                # skip files modified within this many minutes (0=off)
-
-  # ---- Encode settings ----
-  QSV_QUALITY: "21"                        # Intel QSV quality (lower = better quality / bigger file)
-  QSV_PRESET: "7"                          # Intel QSV preset (ffmpeg hevc_qsv preset)
-  EXTRA_HW_FRAMES: "64"                    # ffmpeg QSV extra_hw_frames (decoder/encoder buffering)
-  MIN_SAVINGS_PERCENT: "15"                # require at least this % savings or treat as min-savings skip
-  MAX_SAVINGS_PERCENT: "65"                # if savings exceed this %, treat as max-savings skip (guardrail)
-  MIN_MEDIA_FREE_GB: "50"                  # abort run if MEDIA_ROOT volume has < this free space (0=off)
-  MAX_GB_PER_RUN: "40"                     # stop after saving this many GB in a single run (0=off)
-
-  # ---- Skip policies (pre-encode) ----
-  SKIP_CODECS: "hevc,av1"                  # skip if source codec matches list (comma list; empty=off)
-  SKIP_MIN_HEIGHT: "2160"                  # skip if height >= this (0=off)
-  SKIP_RESOLUTION_TAGS: "2160p,4k,uhd"     # skip if filename contains any of these tags (comma list; empty=off)
-
-  # ---- Validation ----
-  POST_ENCODE_VALIDATE: "1"                # if 1, validate output after encode (decode test)
-  VALIDATE_MODE: decode                    # validation mode (currently: decode)
-  VALIDATE_SECONDS: "10"                   # seconds to validate (decode first N seconds)
-
-  # ---- Output ownership ----
-  OUT_UID: "1028"                          # chown output file to this UID
-  OUT_GID: "100"                           # chown output file to this GID
-  OUT_MODE: "664"                          # chmod for output files
-  OUT_DIR_MODE: "775"                      # chmod for any created directories
-
-  # ---- Logging & retention ----
-  LOG_SKIPS: "true"                        # if true, log SKIP(...) lines (noise control)
-  LOG_RETENTION_DAYS: "30"                 # delete /work/logs/*.log older than N days
-  BAK_RETENTION_DAYS: "60"                 # delete *.bak.* older than N days under MEDIA_ROOT
-
-  # ---- Locks & cleanup ----
-  LOCK_STALE_HOURS: "12"                   # consider lock stale after N hours (stale lock recovery)
-  WORK_CLEANUP_HOURS: "0"                  # delete temp work files older than N hours (0=disabled)
-
-  # ---- Probing ----
-  PROBE_TIMEOUT_SECS: "60"                 # timeout for ffprobe calls (seconds)
-  FFPROBE_ANALYZEDURATION: "50000000"      # ffprobe analyzeduration tuning (microseconds)
-  FFPROBE_PROBESIZE: "50000000"            # ffprobe probesize tuning (bytes)
-
-  # ---- Path exclusions ----
-  EXCLUDE_PATH_PARTS: "#recycle,@eaDir"     # ignore any path containing these parts (comma list)
-
+  PYTHONPATH: /project/src
+  PYTHONPYCACHEPREFIX: /work/pycache
+  PYTHONDONTWRITEBYTECODE: 1
+  STATS_ENABLED: "true"
+  APP_VERSION: "v1.39.2"
+  WORK_ROOT: /work
+  STATS_PATH: /config/chonk.db
+  TZ: America/Chicago
 
 services:
-
-  # ============================================================
-  # MOVIES
-  # ============================================================
-  movie-transcoder:
-    build: .
-    container_name: movie-transcoder
-    entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
-
-    environment:
-      <<: *common-env
-
-      # ---- Identity ----
-      LIBRARY: movies                        # library label used in stats + reporting
-      TZ: America/Chicago                    # timezone for logs
-      LOG_PREFIX: movie                      # prefix for run log name + lock name
-
-      # ---- Roots ----
-      MEDIA_ROOT: /movies                    # media library root inside the container
-      WORK_ROOT: /work                       # writable work root (logs/reports/tmp)
-      STATS_PATH: /config/chonk.db          # SQLite stats database
-
-      # ---- Library-specific selection ----
-      MIN_SIZE_GB: "17"                      # minimum file size to consider as a candidate
-
-    volumes:
-      - /volume1/movies:/movies:rw
-      - /volume1/data/transcodework:/work:rw
-      - /volume1/docker/projects/nas-transcoder:/config:rw
-      - /volume1/docker/projects/nas-transcoder:/project:ro
-      - /usr/share/zoneinfo/America/Chicago:/etc/localtime:ro
-    devices:
-      - /dev/dri:/dev/dri
-    group_add:
-      - "937"
-    restart: "no"
-
-
-  # ============================================================
-  # TV
-  # ============================================================
-  tv-transcoder:
-    build: .
-    container_name: tv-transcoder
-    entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
-
-    environment:
-      <<: *common-env
-
-      # ---- Identity ----
-      LIBRARY: tv                            # library label used in stats + reporting
-      TZ: America/Chicago                    # timezone for logs
-      LOG_PREFIX: tv                         # prefix for run log name + lock name
-
-      # ---- Roots ----
-      MEDIA_ROOT: /tv_shows                  # media library root inside the container
-      WORK_ROOT: /work                       # writable work root (logs/reports/tmp)
-      STATS_PATH: /config/chonk.db          # SQLite stats database
-
-      # ---- Library-specific selection ----
-      MIN_SIZE_GB: "8"                       # minimum file size to consider as a candidate
-
-    volumes:
-      - /volume1/tv_shows:/tv_shows:rw
-      - /volume1/data/transcodework:/work:rw
-      - /volume1/docker/projects/nas-transcoder:/config:rw
-      - /volume1/docker/projects/nas-transcoder:/project:ro
-      - /usr/share/zoneinfo/America/Chicago:/etc/localtime:ro
-    devices:
-      - /dev/dri:/dev/dri
-    group_add:
-      - "937"
-    restart: "no"
-
-
-  # ============================================================
-  # LONG-RUNNING SERVICE (internal scheduler + health endpoint)
-  # ============================================================
   chonk-service:
     build: .
     container_name: chonk-service
     entrypoint: ["/usr/bin/python3", "-m", "chonk_reducer"]
-
     environment:
-      <<: *common-env
-
+      <<: *runtime-env
       SERVICE_MODE: "true"
       SERVICE_HOST: "0.0.0.0"
       SERVICE_PORT: "8080"
-      #MOVIE_MEDIA_ROOT: /movies
-      #MOVIE_MIN_SIZE_GB: "17"
-      #TV_MEDIA_ROOT: /tv_shows
-      #TV_MIN_SIZE_GB: "8"
-
-      # Schedules are DB-backed in service mode; do not set MOVIE_SCHEDULE/TV_SCHEDULE here.
-      WORK_ROOT: /work
-      STATS_PATH: /config/chonk.db
-      TZ: America/Chicago
-
     volumes:
       - /volume1/movies:/movies:rw
       - /volume1/tv_shows:/tv_shows:rw

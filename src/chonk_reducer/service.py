@@ -85,6 +85,11 @@ EDITABLE_SETTINGS = {
     "min_file_age_minutes": {"env": "MIN_FILE_AGE_MINUTES", "default": "10"},
     "min_savings_percent": {"env": "MIN_SAVINGS_PERCENT", "default": "15"},
     "max_savings_percent": {"env": "MAX_SAVINGS_PERCENT", "default": "0"},
+    "min_media_free_gb": {"env": "MIN_MEDIA_FREE_GB", "default": "0"},
+    "max_gb_per_run": {"env": "MAX_GB_PER_RUN", "default": "0"},
+    "fail_fast": {"env": "FAIL_FAST", "default": "0"},
+    "log_skips": {"env": "LOG_SKIPS", "default": "0"},
+    "top_candidates": {"env": "TOP_CANDIDATES", "default": "5"},
     "retry_count": {"env": "RETRY_COUNT", "default": "1"},
     "retry_backoff_seconds": {"env": "RETRY_BACKOFF_SECONDS", "default": "5"},
     "skip_codecs": {"env": "SKIP_CODECS", "default": ""},
@@ -99,7 +104,7 @@ EDITABLE_SETTINGS = {
     "enable_run_failure_notifications": {"env": "ENABLE_RUN_FAILURE_NOTIFICATIONS", "default": "0"},
 }
 
-CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications"}
+CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications", "fail_fast", "log_skips"}
 SECRET_SETTINGS = {"discord_webhook_url", "generic_webhook_url"}
 SECRET_PLACEHOLDER_VALUES = {"set (hidden)", "configured (hidden)", "********", "******"}
 
@@ -938,7 +943,7 @@ class ChonkService:
                 continue
             normalized[key] = raw_value
 
-        for key in ("retry_count", "retry_backoff_seconds"):
+        for key in ("retry_count", "retry_backoff_seconds", "top_candidates"):
             if key not in normalized:
                 continue
             raw_value = str(normalized.get(key, "")).strip()
@@ -3470,6 +3475,11 @@ def editable_settings_environment(values: Dict[str, str]) -> Iterator[None]:
         "min_file_age_minutes": "MIN_FILE_AGE_MINUTES",
         "min_savings_percent": "MIN_SAVINGS_PERCENT",
         "max_savings_percent": "MAX_SAVINGS_PERCENT",
+        "min_media_free_gb": "MIN_MEDIA_FREE_GB",
+        "max_gb_per_run": "MAX_GB_PER_RUN",
+        "fail_fast": "FAIL_FAST",
+        "log_skips": "LOG_SKIPS",
+        "top_candidates": "TOP_CANDIDATES",
         "retry_count": "RETRY_COUNT",
         "retry_backoff_seconds": "RETRY_BACKOFF_SECONDS",
         "skip_codecs": "SKIP_CODECS",
