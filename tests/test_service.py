@@ -417,6 +417,7 @@ def test_scheduler_registers_jobs_from_env(monkeypatch):
     jobs = {job.id for job in service.scheduler.get_jobs()}
     assert "library-1-schedule" in jobs
     assert "library-2-schedule" in jobs
+    assert "housekeeping-daily" in jobs
 
 
 def test_blank_schedule_disables_job_registration():
@@ -431,7 +432,8 @@ def test_blank_schedule_disables_job_registration():
 
     service.register_jobs()
 
-    assert service.scheduler.get_jobs() == []
+    jobs = {job.id for job in service.scheduler.get_jobs()}
+    assert jobs == {"housekeeping-daily"}
 
 
 def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monkeypatch):
@@ -1002,6 +1004,7 @@ def test_disabled_library_not_scheduled_or_manually_runnable(tmp_path, monkeypat
 
     jobs = {job.id for job in service.scheduler.get_jobs()}
     assert "library-2-schedule" not in jobs
+    assert "housekeeping-daily" in jobs
     payload, status_code = service.manual_run_payload_for_id(2)
     assert status_code == 404
     assert payload["status"] == "not_found"
@@ -2849,6 +2852,9 @@ def test_settings_tooltip_metadata_is_defined_for_global_and_library_fields():
         "qsv_quality",
         "qsv_preset",
         "min_savings_percent",
+        "skip_codecs",
+        "skip_min_height",
+        "skip_resolution_tags",
         "schedule",
         "enabled",
     }
@@ -2871,7 +2877,7 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT name, path, enabled, schedule, qsv_quality, qsv_preset, min_savings_percent FROM libraries ORDER BY id ASC"
+        "SELECT name, path, enabled, schedule, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries ORDER BY id ASC"
     ).fetchall()
     conn.close()
 
@@ -2883,6 +2889,9 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert int(rows[0]["qsv_quality"]) == 22
     assert int(rows[0]["qsv_preset"]) == 5
     assert float(rows[0]["min_savings_percent"]) == 13.0
+    assert rows[0]["skip_codecs"] == ""
+    assert int(rows[0]["skip_min_height"]) == 0
+    assert rows[0]["skip_resolution_tags"] == ""
     assert rows[1]["name"] == "TV"
     assert rows[1]["path"] == "/mnt/media/tv"
     assert int(rows[1]["enabled"]) == 1
@@ -2890,6 +2899,9 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert int(rows[1]["qsv_quality"]) == 22
     assert int(rows[1]["qsv_preset"]) == 5
     assert float(rows[1]["min_savings_percent"]) == 13.0
+    assert rows[1]["skip_codecs"] == ""
+    assert int(rows[1]["skip_min_height"]) == 0
+    assert rows[1]["skip_resolution_tags"] == ""
 
 
 def test_libraries_bootstrap_schedule_from_legacy_settings_table(tmp_path, monkeypatch):
@@ -2941,6 +2953,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "qsv_quality": "20",
             "qsv_preset": "7",
             "min_savings_percent": "12.5",
+            "skip_codecs": "HEVC, av1",
+            "skip_min_height": "1080",
+            "skip_resolution_tags": "2160p, 4K",
         },
     )
     assert create_status == 200
@@ -2949,7 +2964,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     anime = conn.execute(
-        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent FROM libraries WHERE name = 'Anime'"
+        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE name = 'Anime'"
     ).fetchone()
     assert anime is not None
     library_id = int(anime["id"])
@@ -2962,6 +2977,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert int(anime["qsv_quality"]) == 20
     assert int(anime["qsv_preset"]) == 7
     assert float(anime["min_savings_percent"]) == 12.5
+    assert anime["skip_codecs"] == "hevc,av1"
+    assert int(anime["skip_min_height"]) == 1080
+    assert anime["skip_resolution_tags"] == "2160p,4k"
     conn.close()
 
     update_status, update_body = _call_post(
@@ -2979,6 +2997,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "qsv_quality": "23",
             "qsv_preset": "8",
             "min_savings_percent": "10",
+            "skip_codecs": "mpeg2",
+            "skip_min_height": "720",
+            "skip_resolution_tags": "uhd",
         },
     )
     assert update_status == 200
@@ -2987,7 +3008,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     updated = conn.execute(
-        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent FROM libraries WHERE id = ?",
+        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE id = ?",
         (library_id,),
     ).fetchone()
     assert updated is not None
@@ -3001,6 +3022,9 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert int(updated["qsv_quality"]) == 23
     assert int(updated["qsv_preset"]) == 8
     assert float(updated["min_savings_percent"]) == 10.0
+    assert updated["skip_codecs"] == "mpeg2"
+    assert int(updated["skip_min_height"]) == 720
+    assert updated["skip_resolution_tags"] == "uhd"
     conn.close()
 
     toggle_status, toggle_body = _call_post(
@@ -3467,9 +3491,6 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
         "top_candidates",
         "retry_count",
         "retry_backoff_seconds",
-        "skip_codecs",
-        "skip_resolution_tags",
-        "skip_min_height",
         "validate_seconds",
         "log_retention_days",
         "bak_retention_days",
@@ -3489,9 +3510,6 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
     assert values["top_candidates"] == "9"
     assert values["retry_count"] == "4"
     assert values["retry_backoff_seconds"] == "8"
-    assert values["skip_codecs"] == "mpeg2"
-    assert values["skip_resolution_tags"] == "2160p"
-    assert values["skip_min_height"] == "720"
     assert values["validate_seconds"] == "12"
     assert values["log_retention_days"] == "40"
     assert values["bak_retention_days"] == "70"
@@ -3519,9 +3537,6 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
             "log_skips": "1",
             "retry_count": "3",
             "retry_backoff_seconds": "11",
-            "skip_codecs": "h264,mpeg2",
-            "skip_resolution_tags": "2160p,4k",
-            "skip_min_height": "1080",
             "validate_seconds": "14",
             "log_retention_days": "15",
             "bak_retention_days": "45",
@@ -3549,9 +3564,6 @@ def test_post_settings_persists_to_sqlite(tmp_path, monkeypatch):
     assert values["log_skips"] == "1"
     assert values["retry_count"] == "3"
     assert values["retry_backoff_seconds"] == "11"
-    assert values["skip_codecs"] == "h264,mpeg2"
-    assert values["skip_resolution_tags"] == "2160p,4k"
-    assert values["skip_min_height"] == "1080"
     assert values["validate_seconds"] == "14"
     assert values["log_retention_days"] == "15"
     assert values["bak_retention_days"] == "45"
@@ -3605,8 +3617,8 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
 
     conn = sqlite3.connect(str(db_path))
     conn.execute(
-        "UPDATE libraries SET min_size_gb = ?, max_files = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ? WHERE name = ?",
-        (2.5, 4, 20, 8, 12.0, "Movies"),
+        "UPDATE libraries SET min_size_gb = ?, max_files = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ?, skip_codecs = ?, skip_min_height = ?, skip_resolution_tags = ? WHERE name = ?",
+        (2.5, 4, 20, 8, 12.0, "h264,av1", 1080, "2160p,uhd", "Movies"),
     )
     conn.commit()
     conn.close()
@@ -3623,6 +3635,9 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
         captured["qsv_quality"] = os.getenv("QSV_QUALITY")
         captured["qsv_preset"] = os.getenv("QSV_PRESET")
         captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
+        captured["skip_codecs"] = os.getenv("SKIP_CODECS")
+        captured["skip_min_height"] = os.getenv("SKIP_MIN_HEIGHT")
+        captured["skip_resolution_tags"] = os.getenv("SKIP_RESOLUTION_TAGS")
         return 0
 
     monkeypatch.setattr(service_module, "run", fake_run_once)
@@ -3638,6 +3653,9 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
     assert captured["qsv_quality"] == "20"
     assert captured["qsv_preset"] == "8"
     assert captured["min_savings_percent"] == "12.0"
+    assert captured["skip_codecs"] == "h264,av1"
+    assert captured["skip_min_height"] == "1080"
+    assert captured["skip_resolution_tags"] == "2160p,uhd"
 
 
 
@@ -3693,6 +3711,9 @@ def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_pat
         captured["qsv_quality"] = os.getenv("QSV_QUALITY")
         captured["qsv_preset"] = os.getenv("QSV_PRESET")
         captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
+        captured["skip_codecs"] = os.getenv("SKIP_CODECS")
+        captured["skip_min_height"] = os.getenv("SKIP_MIN_HEIGHT")
+        captured["skip_resolution_tags"] = os.getenv("SKIP_RESOLUTION_TAGS")
         return 0
 
     monkeypatch.setattr(service_module, "run", fake_run_once)
@@ -4577,3 +4598,93 @@ def test_dashboard_library_card_shows_disabled_for_disabled_library(monkeypatch)
 
 def test_next_run_from_cron_returns_none_for_invalid_expression():
     assert service_module._next_run_from_cron("invalid schedule") is None
+
+def test_library_skip_settings_migrate_from_env_and_are_not_overridden(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("SKIP_CODECS", "hevc,av1")
+    monkeypatch.setenv("SKIP_MIN_HEIGHT", "1080")
+    monkeypatch.setenv("SKIP_RESOLUTION_TAGS", "2160p,4k")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    movies = conn.execute("SELECT id, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE name = 'Movies'").fetchone()
+    assert movies is not None
+    assert movies["skip_codecs"] == "hevc,av1"
+    assert int(movies["skip_min_height"]) == 1080
+    assert movies["skip_resolution_tags"] == "2160p,4k"
+
+    conn.execute(
+        "UPDATE libraries SET skip_codecs = ?, skip_min_height = ?, skip_resolution_tags = ? WHERE id = ?",
+        ("mpeg2", 720, "uhd", int(movies["id"])),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("SKIP_CODECS", "vp9")
+    monkeypatch.setenv("SKIP_MIN_HEIGHT", "2160")
+    monkeypatch.setenv("SKIP_RESOLUTION_TAGS", "8k")
+
+    captured = {}
+
+    def fake_run_once():
+        captured["skip_codecs"] = os.getenv("SKIP_CODECS")
+        captured["skip_min_height"] = os.getenv("SKIP_MIN_HEIGHT")
+        captured["skip_resolution_tags"] = os.getenv("SKIP_RESOLUTION_TAGS")
+        return 0
+
+    monkeypatch.setattr(service_module, "run", fake_run_once)
+    service._run_library_once("movies", "manual")
+
+    assert captured["skip_codecs"] == "mpeg2"
+    assert captured["skip_min_height"] == "720"
+    assert captured["skip_resolution_tags"] == "uhd"
+
+
+def test_housekeeping_runs_cleanup_without_encode_run(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    work_root = tmp_path / "work"
+    logs_dir = work_root / "logs"
+    logs_dir.mkdir(parents=True)
+    stale_log = logs_dir / "transcode_20000101_000000.log"
+    stale_log.write_text("old", encoding="utf-8")
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("WORK_ROOT", str(work_root))
+    monkeypatch.setenv("LOG_RETENTION_DAYS", "1")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.run_housekeeping_once()
+
+    assert not stale_log.exists()
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    events = [
+        row["event_type"]
+        for row in conn.execute(
+            "SELECT event_type FROM activity_events WHERE event_type LIKE 'housekeeping_%' ORDER BY id ASC"
+        ).fetchall()
+    ]
+    conn.close()
+    assert events == ["housekeeping_started", "housekeeping_completed"]
+
+
+def test_housekeeping_skips_when_jobs_active(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    with service._job_condition:
+        service._job_queue.append(RuntimeJob(library_id=1, library_name="Movies", trigger="manual", priority=100))
+
+    service.run_housekeeping_once()
+
+    conn = sqlite3.connect(str(db_path))
+    count = conn.execute(
+        "SELECT COUNT(*) FROM activity_events WHERE event_type LIKE 'housekeeping_%'"
+    ).fetchone()[0]
+    conn.close()
+    assert int(count) == 0

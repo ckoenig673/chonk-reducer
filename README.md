@@ -188,9 +188,9 @@ App-wide operational defaults, editable from **Settings** page.
 
 ### 3) Library Settings (SQLite `libraries` table)
 
-Per-library scheduling + processing + encoding behavior.
+Per-library scheduling + processing + encoding + skip-rule behavior.
 
-> Bootstrap note: on first service startup, missing Global Settings and default Movies/TV library rows are initialized from env defaults. After bootstrap, SQLite is source of truth for service operations.
+> Bootstrap note: on first service startup, missing Global Settings and default Movies/TV library rows are initialized from env defaults. Existing libraries are automatically backfilled with new library fields (including skip rules) from legacy defaults when needed. After bootstrap/backfill, SQLite is source of truth for service operations.
 
 ---
 
@@ -212,9 +212,6 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `top_candidates` | Global | SQLite `settings` | Candidate ranking/display/selection helper limit. | `5`. |
 | `retry_count` | Global | SQLite `settings` | Number of retries after initial encode attempt. | `1` retry. |
 | `retry_backoff_seconds` | Global | SQLite `settings` | Delay between retry attempts. | `5` seconds. |
-| `skip_codecs` | Global | SQLite `settings` | Comma-separated codecs to skip before encode. | empty (none). |
-| `skip_resolution_tags` | Global | SQLite `settings` | Comma-separated resolution tags to skip. | empty (none). |
-| `skip_min_height` | Global | SQLite `settings` | Skip files below this video height threshold. | `0` (disabled). |
 | `validate_seconds` | Global | SQLite `settings` | Validation sample duration for post-encode checks. | `10`. |
 | `log_retention_days` | Global | SQLite `settings` | Log cleanup retention window. | `30` days. |
 | `bak_retention_days` | Global | SQLite `settings` | Backup file cleanup retention window. | `60` days. |
@@ -237,6 +234,9 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `qsv_quality` | Per-library | SQLite `libraries` | QSV quality for this library. | Bootstrapped from env (`QSV_QUALITY`, fallback `21`). |
 | `qsv_preset` | Per-library | SQLite `libraries` | QSV preset for this library. | Bootstrapped from env (`QSV_PRESET`, fallback `7`). |
 | `min_savings_percent` | Per-library | SQLite `libraries` | Library-specific minimum savings threshold. | Bootstrapped from env (`MIN_SAVINGS_PERCENT`, fallback `15`). |
+| `skip_codecs` | Per-library | SQLite `libraries` | Comma-separated codecs to skip (normalized). | Bootstrapped from legacy `SKIP_CODECS` default when missing. |
+| `skip_min_height` | Per-library | SQLite `libraries` | Skip files at or above this vertical resolution. | Bootstrapped from legacy `SKIP_MIN_HEIGHT` default when missing. |
+| `skip_resolution_tags` | Per-library | SQLite `libraries` | Comma-separated filename tags to skip (normalized). | Bootstrapped from legacy `SKIP_RESOLUTION_TAGS` default when missing. |
 
 ### Deployment / Environment Settings
 
@@ -253,6 +253,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `MOVIE_MEDIA_ROOT`, `TV_MEDIA_ROOT` | Bootstrap | env/compose | Used to seed default libraries on first startup. |
 | `MOVIE_SCHEDULE`, `TV_SCHEDULE` | Bootstrap | env/compose | Legacy schedule seed values for first startup only. |
 | `QSV_QUALITY`, `QSV_PRESET`, `MIN_SAVINGS_PERCENT` | Bootstrap | env/compose | Seed defaults for new/bootstrap library encoding fields. |
+| `SKIP_CODECS`, `SKIP_MIN_HEIGHT`, `SKIP_RESOLUTION_TAGS` | Bootstrap compatibility | env/compose | Optional one-time/default seed inputs for library skip fields when DB values are absent. |
 
 ---
 
@@ -262,6 +263,15 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 - Final hard failures can mark media with `.failed` marker to avoid repeated failures.
 - Successful swaps mark `.optimized`.
 - Cancelled runs are recorded and surfaced as cancelled status in run summaries.
+
+---
+
+## Daily Housekeeping
+
+- The long-running service schedules a lightweight daily housekeeping task.
+- Housekeeping performs log cleanup under `/work/logs` using `LOG_RETENTION_DAYS`, even if no library run starts that day.
+- It does not run encode work, does not modify media files, and skips itself when queue/run activity is in progress.
+- Activity entries include `housekeeping_started` and `housekeeping_completed`.
 
 ---
 
