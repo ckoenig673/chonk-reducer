@@ -321,6 +321,7 @@ def _seed_encode(
     size_before_bytes=0,
     size_after_bytes=0,
     saved_bytes=0,
+    duration_seconds=None,
     library="",
     skip_reason=None,
     skip_detail=None,
@@ -344,6 +345,7 @@ def _seed_encode(
             size_before_bytes INTEGER,
             size_after_bytes INTEGER,
             saved_bytes INTEGER,
+            duration_seconds REAL,
             skip_reason TEXT,
             skip_detail TEXT,
             fail_stage TEXT,
@@ -356,9 +358,9 @@ def _seed_encode(
         """
         INSERT INTO encodes(
             ts, run_id, library, status, path, codec_from, codec_to,
-            size_before_bytes, size_after_bytes, saved_bytes,
+            size_before_bytes, size_after_bytes, saved_bytes, duration_seconds,
             skip_reason, skip_detail, fail_stage, error_type, error_msg
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ts,
@@ -371,6 +373,7 @@ def _seed_encode(
             int(size_before_bytes),
             int(size_after_bytes),
             int(saved_bytes),
+            duration_seconds,
             skip_reason,
             skip_detail,
             fail_stage,
@@ -2059,23 +2062,24 @@ def test_runs_page_renders_history_table_with_expected_columns(tmp_path, monkeyp
     for heading in (
         "Time",
         "Library",
+        "Mode",
         "Result",
-        "Duration",
         "Processed",
-        "Success",
         "Skipped",
         "Failed",
         "Saved",
+        "Duration",
         "Run ID",
     ):
         assert ">%s<" % heading in body
     assert "<td>movies</td>" in body
+    assert "<td>Live</td>" in body
     assert "<td>success</td>" in body
     assert "<td>3</td>" in body
-    assert "<td>2</td>" in body
     assert "<td>1</td>" in body
     assert "<td>0</td>" in body
-    assert "<td>1.0 KB</td>" in body
+    assert "<td>0.0 MB</td>" in body
+    assert "<td>12s</td>" in body
     assert 'href="/runs/movies-2026-01-02T08:00:00"' in body
 
 
@@ -2101,6 +2105,7 @@ def test_run_detail_page_renders_summary_and_file_rows(tmp_path, monkeypatch):
         size_before_bytes=4 * 1024,
         size_after_bytes=3 * 1024,
         saved_bytes=1024,
+        duration_seconds=201,
     )
     _seed_encode(
         db_path,
@@ -2138,8 +2143,9 @@ def test_run_detail_page_renders_summary_and_file_rows(tmp_path, monkeypatch):
     assert "Trigger Type</th><td" in body and "Unknown" in body
     assert "Mode</th><td" in body and "Live" in body
     assert "Result</th><td" in body and "failed" in body
-    assert "Duration</th><td" in body and "15.0s" in body
-    assert "Total Bytes Saved</th><td" in body and "1.0 MB" in body
+    assert "Duration</th><td" in body and "15s" in body
+    assert "Total Saved</th><td" in body and "0.0 MB" in body
+    assert "Avg Saved / File</th><td" in body and "0.0 MB" in body
     assert "Run Log Path" in body
     assert "No raw log path recorded for this run" in body
     assert "File-Level Entries" in body
@@ -2149,6 +2155,7 @@ def test_run_detail_page_renders_summary_and_file_rows(tmp_path, monkeypatch):
     assert "/movies/C.mkv" in body
     assert "min_savings: below threshold" in body
     assert "encode_error: ffmpeg failed" in body
+    assert "Encode Time" in body and "3m 21s" in body
 
 
 def test_run_detail_page_shows_raw_log_path_when_available(tmp_path, monkeypatch):
@@ -2278,7 +2285,7 @@ def test_runs_page_shows_empty_state_when_no_rows(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("saved_bytes", "expected_saved"),
     [
-        (500, "<td>500 B</td>"),
+        (500, "<td>0.0 MB</td>"),
         (1024 * 1024 * 3, "<td>3.0 MB</td>"),
         (1024 * 1024 * 1024 * 2, "<td>2.0 GB</td>"),
     ],
@@ -2303,6 +2310,46 @@ def test_runs_page_saved_bytes_formatting(tmp_path, monkeypatch, saved_bytes, ex
     assert expected_saved in body
 
 
+
+
+def test_run_duration_formatter_supports_seconds_minutes_and_hours():
+    assert service_module._format_duration_seconds(12) == "12s"
+    assert service_module._format_duration_seconds(222) == "3m 42s"
+    assert service_module._format_duration_seconds(3900) == "1h 05m"
+
+
+def test_run_duration_prefers_started_and_completed_timestamps():
+    seconds = service_module._duration_seconds_from_run("2026-01-02T08:00:00", "2026-01-02T08:00:12", 99)
+    assert seconds == 12.0
+
+
+def test_run_detail_uses_encode_derived_savings_and_average(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    run_id = "movies-2026-01-02T08:00:00"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00", success_count=2, saved_bytes=1)
+    _seed_encode(db_path, run_id=run_id, ts="2026-01-02T08:00:01", status="success", path="/movies/A.mkv", size_before_bytes=4 * 1024 * 1024, size_after_bytes=2 * 1024 * 1024)
+    _seed_encode(db_path, run_id=run_id, ts="2026-01-02T08:00:02", status="success", path="/movies/B.mkv", size_before_bytes=3 * 1024 * 1024, size_after_bytes=2 * 1024 * 1024)
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "Total Saved</th><td" in body and "3.0 MB" in body
+    assert "Avg Saved / File</th><td" in body and "1.5 MB" in body
+
+
+def test_run_detail_zero_encode_average_saved_defaults_to_zero(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    run_id = "movies-2026-01-02T08:00:00"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00", success_count=0, saved_bytes=0)
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    status_code, body, _ = _call_get(service, "/runs/%s" % run_id)
+
+    assert status_code == 200
+    assert "Avg Saved / File</th><td" in body and "0.0 MB" in body
 def test_activity_table_created_automatically(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))

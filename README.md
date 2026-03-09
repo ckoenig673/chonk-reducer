@@ -108,12 +108,13 @@ Service UI routes:
 ### Runs
 
 - Recent run table backed by `runs`
-- Result/mode/duration/counts/savings
+- Result/mode/duration/counts/savings (including total saved per run)
 - Links into Run Detail
 
 ### Run Detail
 
 - Sectioned summary: Run Summary, Outcome, Counts, Savings, Related Information
+- Savings now include total saved and average saved per encoded file
 - Includes trigger type when available from `activity_events`
 - Includes file-level rows from `encodes`
 
