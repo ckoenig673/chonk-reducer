@@ -82,26 +82,142 @@ LEGACY_CRON_WEEKDAY_MAP = {
 
 
 EDITABLE_SETTINGS = {
-    "min_file_age_minutes": {"env": "MIN_FILE_AGE_MINUTES", "default": "10"},
-    "min_savings_percent": {"env": "MIN_SAVINGS_PERCENT", "default": "15"},
-    "max_savings_percent": {"env": "MAX_SAVINGS_PERCENT", "default": "0"},
-    "min_media_free_gb": {"env": "MIN_MEDIA_FREE_GB", "default": "0"},
-    "max_gb_per_run": {"env": "MAX_GB_PER_RUN", "default": "0"},
-    "fail_fast": {"env": "FAIL_FAST", "default": "0"},
-    "log_skips": {"env": "LOG_SKIPS", "default": "0"},
-    "top_candidates": {"env": "TOP_CANDIDATES", "default": "5"},
-    "retry_count": {"env": "RETRY_COUNT", "default": "1"},
-    "retry_backoff_seconds": {"env": "RETRY_BACKOFF_SECONDS", "default": "5"},
-    "skip_codecs": {"env": "SKIP_CODECS", "default": ""},
-    "skip_resolution_tags": {"env": "SKIP_RESOLUTION_TAGS", "default": ""},
-    "skip_min_height": {"env": "SKIP_MIN_HEIGHT", "default": "0"},
-    "validate_seconds": {"env": "VALIDATE_SECONDS", "default": "10"},
-    "log_retention_days": {"env": "LOG_RETENTION_DAYS", "default": "30"},
-    "bak_retention_days": {"env": "BAK_RETENTION_DAYS", "default": "60"},
-    "discord_webhook_url": {"env": "DISCORD_WEBHOOK_URL", "default": ""},
-    "generic_webhook_url": {"env": "GENERIC_WEBHOOK_URL", "default": ""},
-    "enable_run_complete_notifications": {"env": "ENABLE_RUN_COMPLETE_NOTIFICATIONS", "default": "0"},
-    "enable_run_failure_notifications": {"env": "ENABLE_RUN_FAILURE_NOTIFICATIONS", "default": "0"},
+    "min_file_age_minutes": {
+        "env": "MIN_FILE_AGE_MINUTES",
+        "default": "10",
+        "label": "Minimum File Age (Minutes)",
+        "description": "Skip very recent files newer than this age. Helps avoid processing files still being copied.",
+    },
+    "min_savings_percent": {
+        "env": "MIN_SAVINGS_PERCENT",
+        "default": "15",
+        "label": "Minimum Savings Percent",
+        "description": "Minimum required savings percent before swap. Higher values are stricter.",
+    },
+    "max_savings_percent": {
+        "env": "MAX_SAVINGS_PERCENT",
+        "default": "0",
+        "label": "Maximum Savings Percent",
+        "description": "Optional upper savings guard. Set to 0 to disable this limit.",
+    },
+    "min_media_free_gb": {
+        "env": "MIN_MEDIA_FREE_GB",
+        "default": "0",
+        "label": "Minimum Media Free Space (GB)",
+        "description": "Minimum free-space safety threshold for the media volume. Set to 0 to disable.",
+    },
+    "max_gb_per_run": {
+        "env": "MAX_GB_PER_RUN",
+        "default": "0",
+        "label": "Maximum GB Per Run",
+        "description": "Optional cap on total GB processed in one run. Set to 0 for no cap.",
+    },
+    "fail_fast": {
+        "env": "FAIL_FAST",
+        "default": "0",
+        "label": "Fail Fast",
+        "description": "Stop early on failure conditions instead of continuing with remaining files.",
+    },
+    "log_skips": {
+        "env": "LOG_SKIPS",
+        "default": "0",
+        "label": "Log Skips",
+        "description": "Emit skip reasons more verbosely in logs and stats output.",
+    },
+    "top_candidates": {
+        "env": "TOP_CANDIDATES",
+        "default": "5",
+        "label": "Top Candidates",
+        "description": "Candidate ranking helper limit used for selection and display.",
+    },
+    "retry_count": {
+        "env": "RETRY_COUNT",
+        "default": "1",
+        "label": "Retry Count",
+        "description": "Number of retries after the initial encode attempt.",
+    },
+    "retry_backoff_seconds": {
+        "env": "RETRY_BACKOFF_SECONDS",
+        "default": "5",
+        "label": "Retry Backoff Seconds",
+        "description": "Delay between retry attempts in seconds.",
+    },
+    "skip_codecs": {
+        "env": "SKIP_CODECS",
+        "default": "",
+        "label": "Skip Codecs",
+        "description": "Comma-separated codecs to skip before encode (for example: hevc,av1).",
+    },
+    "skip_resolution_tags": {
+        "env": "SKIP_RESOLUTION_TAGS",
+        "default": "",
+        "label": "Skip Resolution Tags",
+        "description": "Comma-separated resolution tags to skip (for example: 2160p,4k).",
+    },
+    "skip_min_height": {
+        "env": "SKIP_MIN_HEIGHT",
+        "default": "0",
+        "label": "Skip Minimum Height",
+        "description": "Skip files below this video height threshold. Set to 0 to disable.",
+    },
+    "validate_seconds": {
+        "env": "VALIDATE_SECONDS",
+        "default": "10",
+        "label": "Validate Seconds",
+        "description": "Validation sample duration used for post-encode checks.",
+    },
+    "log_retention_days": {
+        "env": "LOG_RETENTION_DAYS",
+        "default": "30",
+        "label": "Log Retention Days",
+        "description": "Retention window for log cleanup.",
+    },
+    "bak_retention_days": {
+        "env": "BAK_RETENTION_DAYS",
+        "default": "60",
+        "label": "Backup Retention Days",
+        "description": "Retention window for backup (.bak) cleanup.",
+    },
+    "discord_webhook_url": {
+        "env": "DISCORD_WEBHOOK_URL",
+        "default": "",
+        "label": "Discord Webhook URL",
+        "description": "Discord notification endpoint. Leave empty if not used.",
+    },
+    "generic_webhook_url": {
+        "env": "GENERIC_WEBHOOK_URL",
+        "default": "",
+        "label": "Generic Webhook URL",
+        "description": "Generic webhook endpoint. Leave empty if not used.",
+    },
+    "enable_run_complete_notifications": {
+        "env": "ENABLE_RUN_COMPLETE_NOTIFICATIONS",
+        "default": "0",
+        "label": "Enable Run Complete Notifications",
+        "description": "Send notifications after successful run completion.",
+    },
+    "enable_run_failure_notifications": {
+        "env": "ENABLE_RUN_FAILURE_NOTIFICATIONS",
+        "default": "0",
+        "label": "Enable Run Failure Notifications",
+        "description": "Send notifications when a run fails.",
+    },
+}
+
+LIBRARY_SETTINGS_HELP = {
+    "name": "Operator label for the library. Must be unique.",
+    "path": "Media root path for scanning. Must be unique.",
+    "min_size_gb": "Skip files below this library-specific size floor.",
+    "max_files": "Maximum files processed per run for this library.",
+    "priority": "Queue priority for this library. Higher numbers run first.",
+    "qsv_quality": "QSV quality value for this library. Lower values generally mean higher quality and larger output.",
+    "qsv_preset": "QSV preset for this library. Tune based on speed and quality needs.",
+    "min_savings_percent": "Library-specific minimum savings percent required before swap.",
+    "schedule": "Cron schedule for automatic runs. Blank schedule means manual runs only.",
+    "enabled": "Enable or disable this library for runtime controls and scheduling.",
+    "schedule_days": "Select weekdays for simple schedule mode.",
+    "schedule_time": "Run time used with selected days in simple schedule mode.",
+    "raw_cron": "Raw cron expression for advanced scheduling.",
 }
 
 CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications", "fail_fast", "log_skips"}
@@ -847,21 +963,45 @@ class ChonkService:
             _escape_html(progress_label),
         )
 
+    def _label_with_help(self, label: str, help_text: str, token: str) -> str:
+        if not help_text:
+            return "<strong>%s</strong>" % _escape_html(label)
+        tooltip_id = "help-%s" % "".join(ch if ch.isalnum() else "-" for ch in token)
+        return (
+            '<span class="help-label"><strong>%s</strong>%s</span>'
+            % (_escape_html(label), self._help_icon_html(help_text, tooltip_id))
+        )
+
+    def _help_icon_html(self, help_text: str, tooltip_id: str) -> str:
+        escaped_text = _escape_html(help_text)
+        escaped_id = _escape_html(tooltip_id)
+        return (
+            '<span class="help-tooltip-wrap">'
+            '<span class="help-tooltip-trigger" tabindex="0" aria-label="Help: %s" aria-describedby="%s">?</span>'
+            '<span class="help-tooltip-bubble" role="tooltip" id="%s">%s</span>'
+            "</span>"
+            % (escaped_text, escaped_id, escaped_id, escaped_text)
+        )
+
     def settings_page_html(self, message: str = "") -> str:
         libraries = self.list_libraries()
         rows = []
         for key in EDITABLE_SETTINGS:
+            meta = EDITABLE_SETTINGS[key]
             value = self._editable_settings.get(key, "")
+            label = meta.get("label", key.replace("_", " ").title())
+            description = meta.get("description", "")
+            label_html = self._label_with_help(label, description, "global-%s" % key)
             restart_badge = ""
             if key in RESTART_REQUIRED_SETTINGS:
                 restart_badge = ' <span style="color: #8a4f00; font-size: 0.9rem;">(restart required)</span>'
             if key in CHECKBOX_SETTINGS:
                 checked = "checked" if _env_bool_text(value) else ""
                 rows.append(
-                    """<label for="{key}" style="display:block; margin-top: 0.75rem;"><strong>{label}</strong>{restart_badge}</label>
+                    """<label for="{key}" style="display:block; margin-top: 0.75rem;">{label_html}{restart_badge}</label>
   <input id="{key}" name="{key}" type="checkbox" value="1" {checked} />""".format(
                         key=key,
-                        label=key.replace("_", " ").title(),
+                        label_html=label_html,
                         restart_badge=restart_badge,
                         checked=checked,
                     )
@@ -870,28 +1010,64 @@ class ChonkService:
                 configured = bool(str(value or "").strip())
                 status = "Configured (hidden)" if configured else "Not configured"
                 rows.append(
-                    """<label for="{key}" style="display:block; margin-top: 0.75rem;"><strong>{label}</strong>{restart_badge}</label>
+                    """<label for="{key}" style="display:block; margin-top: 0.75rem;">{label_html}{restart_badge}</label>
   <input id="{key}" name="{key}" value="" placeholder="Set (hidden)" style="width: 100%; max-width: 420px;" autocomplete="off" />
   <div style="font-size: 0.9rem; color: #555; margin-top: 0.2rem;">{status}</div>
   <label style="display:block; margin-top: 0.3rem; color:#444;"><input type="checkbox" name="clear_{key}" value="1" /> Clear stored secret</label>""".format(
                         key=key,
-                        label=key.replace("_", " ").title(),
+                        label_html=label_html,
                         restart_badge=restart_badge,
                         status=_escape_html(status),
                     )
                 )
             else:
                 rows.append(
-                    """<label for="{key}" style="display:block; margin-top: 0.75rem;"><strong>{label}</strong>{restart_badge}</label>
+                    """<label for="{key}" style="display:block; margin-top: 0.75rem;">{label_html}{restart_badge}</label>
   <input id="{key}" name="{key}" value="{value}" style="width: 100%; max-width: 420px;" />""".format(
                         key=key,
-                        label=key.replace("_", " ").title(),
+                        label_html=label_html,
                         restart_badge=restart_badge,
                         value=_escape_html(value),
                     )
                 )
 
-        content = "<h1>Settings</h1>"
+        content = """
+<style>
+.help-label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.help-tooltip-wrap { position: relative; display: inline-flex; align-items: center; }
+.help-tooltip-trigger {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 1px solid #8da0b4;
+  background: #eef4fb;
+  color: #1f3f5b;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-align: center;
+  cursor: help;
+}
+.help-tooltip-trigger:focus { outline: 2px solid #2d6aa0; outline-offset: 1px; }
+.help-tooltip-bubble {
+  display: none;
+  position: absolute;
+  left: 1.3rem;
+  top: -0.2rem;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 0.45rem 0.55rem;
+  border-radius: 4px;
+  background: #1f3f5b;
+  color: #fff;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  z-index: 10;
+}
+.help-tooltip-wrap:hover .help-tooltip-bubble,
+.help-tooltip-wrap:focus-within .help-tooltip-bubble { display: block; }
+</style>
+<h1>Settings</h1>
+"""
         if message:
             content += '<div style="padding: 0.5rem; border: 1px solid #cfe9cf; background:#f4fff4;">%s</div>' % _escape_html(
                 message
@@ -1642,31 +1818,31 @@ class ChonkService:
       <summary>Edit {name}</summary>
       <form method=\"post\" action=\"/settings/libraries/update\" style=\"margin-top: 0.5rem;\">
         <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
-        <label><strong>Name</strong></label><br />
+        <label>{name_label}</label><br />
         <input name=\"name\" value=\"{name}\" style=\"width: 100%%; max-width: 420px;\" /><br />
-        <label><strong>Path</strong></label><br />
+        <label>{path_label}</label><br />
         <input name="path" value="{path}" style="width: 100%; max-width: 420px;" /><br />
         <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
           <legend><strong>Processing Settings</strong></legend>
-          <label><strong>Minimum File Size (GB)</strong></label><br />
+          <label>{min_size_gb_label}</label><br />
           <input name="min_size_gb" type="number" step="0.1" min="0" value="{min_size_gb}" style="width: 100%;" /><br />
-          <label><strong>Max Files Per Run</strong></label><br />
+          <label>{max_files_label}</label><br />
           <input name="max_files" type="number" step="1" min="1" value="{max_files}" style="width: 100%;" /><br />
-          <label><strong>Priority</strong></label><br />
+          <label>{priority_label}</label><br />
           <input name="priority" type="number" step="1" value="{priority}" style="width: 100%;" /><br />
           <small>Higher numbers run first when multiple libraries are queued.</small><br />
         </fieldset>
         <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
           <legend><strong>Encoding Settings</strong></legend>
-          <label><strong>QSV Quality</strong></label><br />
+          <label>{qsv_quality_label}</label><br />
           <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality}" style="width: 100%;" /><br />
-          <label><strong>QSV Preset</strong></label><br />
+          <label>{qsv_preset_label}</label><br />
           <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset}" style="width: 100%;" /><br />
-          <label><strong>Minimum Savings Percent</strong></label><br />
+          <label>{min_savings_percent_label}</label><br />
           <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent}" style="width: 100%;" /><br />
         </fieldset>
         {schedule_fields}
-        <label><strong>Enabled</strong></label>
+        <label>{enabled_label}</label>
         <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
         <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Save Library</button></div>
       </form>
@@ -1684,6 +1860,15 @@ class ChonkService:
                     qsv_preset=_escape_html(str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7"))),
                     min_savings_percent=_escape_html(str(library.min_savings_percent if library.min_savings_percent is not None else _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))),
                     schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
+                    name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-edit-%d" % library.id),
+                    path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-edit-%d" % library.id),
+                    min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-edit-%d" % library.id),
+                    max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-edit-%d" % library.id),
+                    priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-edit-%d" % library.id),
+                    qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-edit-%d" % library.id),
+                    qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-edit-%d" % library.id),
+                    min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-edit-%d" % library.id),
+                    enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-edit-%d" % library.id),
                     library_id=library.id,
                     enabled_yes="selected" if library.enabled else "",
                     enabled_no="selected" if not library.enabled else "",
@@ -1722,31 +1907,31 @@ class ChonkService:
         return """
 <h3 style="margin-top: 1rem;">Create Library</h3>
 <form method="post" action="/settings/libraries/create">
-  <label><strong>Name</strong></label><br />
+  <label>{name_label}</label><br />
   <input name="name" style="width: 100%; max-width: 420px;" /><br />
-  <label><strong>Path</strong></label><br />
+  <label>{path_label}</label><br />
   <input name="path" style="width: 100%; max-width: 420px;" /><br />
   <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
     <legend><strong>Processing Settings</strong></legend>
-    <label><strong>Minimum File Size (GB)</strong></label><br />
+    <label>{min_size_gb_label}</label><br />
     <input name="min_size_gb" type="number" step="0.1" min="0" value="0.0" style="width: 100%;" /><br />
-    <label><strong>Max Files Per Run</strong></label><br />
+    <label>{max_files_label}</label><br />
     <input name="max_files" type="number" step="1" min="1" value="1" style="width: 100%;" /><br />
-    <label><strong>Priority</strong></label><br />
+    <label>{priority_label}</label><br />
     <input name="priority" type="number" step="1" value="100" style="width: 100%;" /><br />
     <small>Higher numbers run first when multiple libraries are queued.</small><br />
   </fieldset>
   <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
     <legend><strong>Encoding Settings</strong></legend>
-    <label><strong>QSV Quality</strong></label><br />
+    <label>{qsv_quality_label}</label><br />
     <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality_default}" style="width: 100%;" /><br />
-    <label><strong>QSV Preset</strong></label><br />
+    <label>{qsv_preset_label}</label><br />
     <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset_default}" style="width: 100%;" /><br />
-    <label><strong>Minimum Savings Percent</strong></label><br />
+    <label>{min_savings_percent_label}</label><br />
     <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent_default}" style="width: 100%;" /><br />
   </fieldset>
   {schedule_fields}
-  <label><strong>Enabled</strong></label>
+  <label>{enabled_label}</label>
   <select name="enabled"><option value="1" selected>Yes</option><option value="0">No</option></select>
   <div style="margin-top: 0.5rem;"><button type="submit">Create Library</button></div>
 </form>
@@ -1755,6 +1940,15 @@ class ChonkService:
     qsv_quality_default=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
     qsv_preset_default=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
     min_savings_percent_default=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
+    name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-create"),
+    path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-create"),
+    min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
+    max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
+    priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-create"),
+    qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
+    qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
+    min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
+    enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-create"),
 )
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
@@ -1787,21 +1981,21 @@ class ChonkService:
 
         return """
   <fieldset style=\"margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd;\">
-    <legend><strong>Schedule</strong></legend>
+    <legend>%s</legend>
     <label style=\"margin-right: 1rem;\"><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
     <label><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"advanced\" %s onchange=\"toggleScheduleMode_%s()\" /> Advanced cron</label>
 
     <div id=\"simple-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
-      <label><strong>Days</strong></label><br />
+      <label>%s</label><br />
       %s
       <br />
-      <label><strong>Time</strong></label><br />
+      <label>%s</label><br />
       <select name=\"schedule_time\" style=\"width: 100%%; max-width: 180px;\">%s</select>
       <div style=\"margin-top: 0.35rem; color:#555;\">Generated cron: <code>%s</code></div>
     </div>
 
     <div id=\"advanced-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
-      <label><strong>Raw cron expression</strong></label><br />
+      <label>%s</label><br />
       <input name=\"schedule\" value=\"%s\" style=\"width: 100%%; max-width: 420px;\" />
     </div>
   </fieldset>
@@ -1822,6 +2016,7 @@ class ChonkService:
     toggleScheduleMode_%s();
   </script>
 """ % (
+            self._label_with_help("Schedule", LIBRARY_SETTINGS_HELP["schedule"], "lib-schedule-%s" % form_token),
             simple_radio_id,
             simple_checked,
             form_token,
@@ -1830,11 +2025,14 @@ class ChonkService:
             form_token,
             form_token,
             simple_display,
+            self._label_with_help("Days", LIBRARY_SETTINGS_HELP["schedule_days"], "lib-schedule-days-%s" % form_token),
             "".join(weekday_options),
+            self._label_with_help("Time", LIBRARY_SETTINGS_HELP["schedule_time"], "lib-schedule-time-%s" % form_token),
             "".join(time_options),
             preview,
             form_token,
             advanced_display,
+            self._label_with_help("Raw cron expression", LIBRARY_SETTINGS_HELP["raw_cron"], "lib-schedule-raw-%s" % form_token),
             raw_value,
             form_token,
             simple_radio_id,

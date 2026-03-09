@@ -131,6 +131,7 @@ Service UI routes:
 - Global Settings form (DB-backed)
 - Library CRUD (name/path/schedule/enabled + per-library processing/encoding fields)
 - Send Test Notification action
+- Inline help tooltips (`?`) beside each global and library setting label, with operator-focused descriptions aligned to the settings mapping table
 
 ### System
 
