@@ -276,6 +276,8 @@ class ChonkService:
         self._last_run_was_cancelled = False
         self._current_run_snapshot: Dict[str, str] = {}
         self._last_preview_results: List[Dict[str, object]] = []
+        self._last_preview_snapshots_by_library: Dict[int, Dict[str, object]] = {}
+        self._latest_preview_library_id: Optional[int] = None
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()
         self._configure_routes()
@@ -650,6 +652,8 @@ class ChonkService:
         setText("runtime-files-skipped", snapshot.files_skipped, "-");
         setText("runtime-files-failed", snapshot.files_failed, "-");
         setText("runtime-bytes-saved", savedBytesLabel(snapshot.bytes_saved), "-");
+        setText("runtime-preview-library", snapshot.preview_library, "-");
+        setText("runtime-preview-generated-at", snapshot.preview_generated_at, "-");
         setPreviewResults(snapshot.preview_results || []);
         var progress = document.getElementById("runtime-progress-section");
         if (progress) {
@@ -1004,6 +1008,8 @@ class ChonkService:
             "encode_eta": snapshot["encode_eta"],
             "encode_out_time": snapshot["encode_out_time"],
             "preview_results": snapshot.get("preview_results", []),
+            "preview_library": snapshot.get("preview_library", ""),
+            "preview_generated_at": snapshot.get("preview_generated_at", ""),
             "evaluated_count": snapshot["files_evaluated"],
             "processed_count": snapshot["files_processed"],
             "skipped_count": snapshot["files_skipped"],
@@ -1926,7 +1932,17 @@ class ChonkService:
                 with self._job_condition:
                     self._queued_or_running_library_ids.discard(job.library_id)
                     if job.trigger == "preview":
-                        self._last_preview_results = self._extract_preview_results(self._current_run_snapshot)
+                        preview_results = self._extract_preview_results(self._current_run_snapshot)
+                        preview_generated_at = str(self._current_run_snapshot.get("preview_generated_at", "") or "").strip() or _utc_timestamp()
+                        snapshot = {
+                            "library_id": job.library_id,
+                            "library_name": job.library_name,
+                            "generated_at": preview_generated_at,
+                            "results": list(preview_results),
+                        }
+                        self._last_preview_snapshots_by_library[job.library_id] = snapshot
+                        self._latest_preview_library_id = job.library_id
+                        self._last_preview_results = list(preview_results)
                     self._current_job = None
                     self._current_job_started_at = ""
                     self._current_job_run_id = ""
@@ -1971,10 +1987,21 @@ class ChonkService:
         else:
             status = "Idle"
         preview_results = []
+        preview_library = ""
+        preview_generated_at = ""
         if current_job is not None:
             preview_results = self._extract_preview_results(run_snapshot)
+            if current_job.trigger == "preview":
+                preview_library = current_job.library_name
+                preview_generated_at = str(run_snapshot.get("preview_generated_at", "") or "").strip() or started_at
         else:
-            preview_results = list(self._last_preview_results)
+            latest_preview = self._latest_preview_snapshot()
+            if latest_preview is not None:
+                preview_results = list(latest_preview.get("results") or [])
+                preview_library = str(latest_preview.get("library_name", "") or "")
+                preview_generated_at = str(latest_preview.get("generated_at", "") or "")
+            else:
+                preview_results = list(self._last_preview_results)
 
         return {
             "status": status,
@@ -1998,8 +2025,19 @@ class ChonkService:
             "retry_max": str(run_snapshot.get("retry_max", "")),
             "mode": str(run_snapshot.get("mode", "Preview" if (current_job is not None and current_job.trigger == "preview") else "Live") or "Live"),
             "preview_results": preview_results,
+            "preview_library": preview_library,
+            "preview_generated_at": preview_generated_at,
             "cancel_requested": "1" if cancel_requested else "0",
         }
+
+    def _latest_preview_snapshot(self) -> Optional[Dict[str, object]]:
+        library_id = self._latest_preview_library_id
+        if library_id is None:
+            return None
+        snapshot = self._last_preview_snapshots_by_library.get(library_id)
+        if snapshot is None:
+            return None
+        return dict(snapshot)
 
     def _runtime_status_html(self) -> str:
         snapshot = self._runtime_status_snapshot()
@@ -2047,12 +2085,18 @@ class ChonkService:
 
     def _preview_results_html(self, snapshot: Dict[str, str]) -> str:
         rows = snapshot.get("preview_results") or []
+        preview_library = str(snapshot.get("preview_library", "") or "").strip()
+        preview_generated_at = str(snapshot.get("preview_generated_at", "") or "").strip()
+        details = '<div style="margin-bottom:0.35rem;"><strong>Library:</strong> <span id="runtime-preview-library">%s</span></div><div style="margin-bottom:0.35rem;"><strong>Generated At:</strong> <span id="runtime-preview-generated-at">%s</span></div>' % (
+            _escape_html(preview_library or "-"),
+            _escape_html(preview_generated_at or "-"),
+        )
         body_rows = []
         for row in rows[:25]:
             savings_pct = row.get("estimated_savings_pct", "")
             savings_label = "%s%%" % savings_pct if savings_pct != "" else "-"
             body_rows.append(
-                "<tr><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td><td style=\"border-top:1px solid #ddd; padding:0.3rem;\">%s</td></tr>"
+                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>' 
                 % (
                     _escape_html(str(row.get("file", "-"))),
                     _escape_html(_format_saved_bytes(row.get("original_size"))),
@@ -2063,7 +2107,7 @@ class ChonkService:
             )
         if not body_rows:
             body_rows.append('<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>')
-        return """<div id=\"runtime-preview-results\" style=\"margin-top:0.8rem;\"><div style=\"font-weight:600; margin-bottom:0.35rem;\">Preview Results</div><table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\"><thead><tr><th style=\"text-align:left; padding:0.35rem;\">File</th><th style=\"text-align:left; padding:0.35rem;\">Original Size</th><th style=\"text-align:left; padding:0.35rem;\">Estimated Size</th><th style=\"text-align:left; padding:0.35rem;\">Savings %%</th><th style=\"text-align:left; padding:0.35rem;\">Decision</th></tr></thead><tbody id=\"runtime-preview-results-body\">%s</tbody></table></div>""" % ("".join(body_rows))
+        return """<div id="runtime-preview-results" style="margin-top:0.8rem;"><div style="font-weight:600; margin-bottom:0.35rem;">Preview Results</div>%s<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;"><thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Estimated Size</th><th style="text-align:left; padding:0.35rem;">Savings %%</th><th style="text-align:left; padding:0.35rem;">Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div>""" % (details, "".join(body_rows))
 
     def _runtime_progress_overview_html(self, snapshot: Dict[str, str]) -> str:
         if snapshot.get("status") != "Running":
@@ -2158,6 +2202,8 @@ class ChonkService:
                     parsed = json.loads(str(values.get("preview_result_json")))
                     if isinstance(parsed, dict):
                         results.append(parsed)
+                        if not str(self._current_run_snapshot.get("preview_generated_at", "") or "").strip():
+                            self._current_run_snapshot["preview_generated_at"] = _utc_timestamp()
                 except Exception:
                     pass
                 self._current_run_snapshot["preview_results_json"] = json.dumps(results[:25])
