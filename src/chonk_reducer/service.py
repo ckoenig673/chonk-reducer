@@ -3420,12 +3420,11 @@ def _parse_simple_cron(schedule: str) -> Optional[Dict[str, object]]:
 
     normalized_days = []
     for day in raw_days:
-        if day == "7":
-            day = "0"
-        if day not in {"0", "1", "2", "3", "4", "5", "6"}:
+        normalized_day = _normalize_cron_day_of_week(day)
+        if normalized_day is None:
             return None
-        if day not in normalized_days:
-            normalized_days.append(day)
+        if normalized_day not in normalized_days:
+            normalized_days.append(normalized_day)
 
     ordered_days = [day for _, day in WEEKDAY_CHOICES if day in normalized_days]
     if not ordered_days:
@@ -3435,6 +3434,15 @@ def _parse_simple_cron(schedule: str) -> Optional[Dict[str, object]]:
         "days": ordered_days,
         "time": "%02d:%02d" % (hour, minute),
     }
+
+
+def _normalize_cron_day_of_week(day: str) -> Optional[str]:
+    value = str(day or "").strip()
+    if value == "7":
+        return "0"
+    if value in {"0", "1", "2", "3", "4", "5", "6"}:
+        return value
+    return None
 
 
 def _schedule_form_state(schedule: str) -> Dict[str, object]:
