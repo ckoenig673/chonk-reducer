@@ -327,6 +327,7 @@ def _env_bool_text(value: str) -> bool:
 class _ScheduledJob:
     def __init__(self, job_id: str):
         self.id = job_id
+        self.next_run_time = None
 
 
 class _FallbackScheduler:
@@ -2159,14 +2160,16 @@ class ChonkService:
             self._record_activity(event_type="housekeeping_completed", message="Daily housekeeping completed")
 
     def _register_library_job(self, library: RuntimeLibrary) -> None:
-        schedule = _normalize_schedule_for_scheduler(library.schedule)
+        raw_schedule = str(library.schedule or "").strip()
+        schedule = _normalize_schedule_for_scheduler(raw_schedule)
         if not schedule:
             LOGGER.info("No schedule configured for %s; job disabled", library.name)
             return
 
+        timezone = _cron_trigger_timezone()
         if CronTrigger is not None:
             try:
-                trigger = CronTrigger.from_crontab(schedule, timezone=_cron_trigger_timezone())
+                trigger = CronTrigger.from_crontab(schedule, timezone=timezone)
             except ValueError:
                 LOGGER.error("Invalid cron schedule for %s: %r", library.name, schedule)
                 return
@@ -2177,7 +2180,7 @@ class ChonkService:
             trigger = schedule
 
         self.scheduler.add_job(
-            self.trigger_library_by_id,
+            self._scheduled_library_trigger,
             trigger=trigger,
             id=self._schedule_job_id(library.id),
             args=[library.id],
@@ -2185,12 +2188,35 @@ class ChonkService:
             max_instances=1,
             replace_existing=True,
         )
-        LOGGER.info("Registered %s schedule: %s", library.name, schedule)
+        registered_job = None
+        get_job = getattr(self.scheduler, "get_job", None)
+        if callable(get_job):
+            try:
+                registered_job = get_job(self._schedule_job_id(library.id))
+            except Exception:
+                registered_job = None
+
+        next_run_time = _format_scheduler_datetime(getattr(registered_job, "next_run_time", None))
+        LOGGER.info(
+            "Registering %s schedule: raw=%r normalized=%r tz=%r trigger=%r next_run=%r",
+            library.name,
+            raw_schedule,
+            schedule,
+            str(timezone),
+            str(trigger),
+            next_run_time,
+        )
         self._record_activity(
             event_type="schedule_registered",
             message="Scheduler registered %s schedule" % library.name,
             library=library.name,
         )
+
+    def _scheduled_library_trigger(self, library_id: int) -> bool:
+        library = self._library_by_id(library_id)
+        library_name = str(getattr(library, "name", library_id))
+        LOGGER.info("Scheduled trigger fired for %s", library_name)
+        return self.trigger_library_by_id(library_id)
 
     def _schedule_job_id(self, library_id: int) -> str:
         return "library-%d-schedule" % int(library_id)

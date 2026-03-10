@@ -483,6 +483,54 @@ def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monke
     assert added["id"] == "library-99-schedule"
 
 
+def test_scheduler_registration_logs_timezone_and_next_run_for_named_weekday_schedule(monkeypatch, caplog):
+    monkeypatch.setenv("TZ", "America/Chicago")
+    captured = {}
+
+    class FakeTrigger(object):
+        def __str__(self):
+            return "cron[0 2 * * sun,tue,thu]"
+
+    class FakeCronTrigger(object):
+        @staticmethod
+        def from_crontab(expr, timezone=None):
+            captured["expr"] = expr
+            captured["timezone"] = timezone
+            return FakeTrigger()
+
+    class FakeJob(object):
+        next_run_time = datetime(2026, 3, 10, 2, 0, tzinfo=service_module.ZoneInfo("America/Chicago"))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    monkeypatch.setattr(service_module, "CronTrigger", FakeCronTrigger)
+    monkeypatch.setattr(service.scheduler, "add_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service.scheduler, "get_job", lambda job_id: FakeJob())
+
+    caplog.set_level("INFO")
+    service._register_library_job(
+        service_module.RuntimeLibrary(
+            id=99,
+            name="Movies",
+            path="/movies",
+            schedule="0 2 * * sun,tue,thu",
+            min_size_gb=0.0,
+            max_files=1,
+            priority=1,
+            qsv_quality=None,
+            qsv_preset=None,
+            min_savings_percent=None,
+        )
+    )
+
+    assert captured["expr"] == "0 2 * * sun,tue,thu"
+    assert captured["timezone"] == service_module._cron_trigger_timezone()
+    assert "Registering Movies schedule: raw='0 2 * * sun,tue,thu'" in caplog.text
+    assert "normalized='0 2 * * sun,tue,thu'" in caplog.text
+    assert "next_run='2026-03-10 02:00'" in caplog.text
+
+
 def test_home_page_route_returns_minimal_operator_page():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
@@ -4567,6 +4615,76 @@ def test_dashboard_next_run_matches_scheduler_for_legacy_weekend_crons(monkeypat
 
     assert service_module._format_scheduler_datetime(sunday_next) == service_module._format_scheduler_datetime(expected_sunday)
     assert service_module._format_scheduler_datetime(saturday_next) == service_module._format_scheduler_datetime(expected_saturday)
+
+
+def test_next_run_from_cron_computes_named_sun_tue_thu_schedule(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Chicago")
+    now = datetime(2026, 3, 10, 1, 30, tzinfo=service_module.ZoneInfo("America/Chicago"))
+
+    value = service_module._next_run_from_cron("0 2 * * sun,tue,thu", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-10 02:00"
+
+
+def test_next_run_from_cron_computes_named_mon_wed_fri_schedule(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Chicago")
+    now = datetime(2026, 3, 11, 1, 30, tzinfo=service_module.ZoneInfo("America/Chicago"))
+
+    value = service_module._next_run_from_cron("0 2 * * mon,wed,fri", now=now)
+
+    assert value is not None
+    assert service_module._format_scheduler_datetime(value) == "2026-03-11 02:00"
+
+
+def test_scheduler_registration_uses_same_next_fire_time_as_dashboard_helper(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Chicago")
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    library = service_module.RuntimeLibrary(
+        id=99,
+        name="Movies",
+        path="/movies",
+        schedule="0 2 * * sun,tue,thu",
+        min_size_gb=0.0,
+        max_files=1,
+        priority=1,
+        qsv_quality=None,
+        qsv_preset=None,
+        min_savings_percent=None,
+    )
+    service._register_library_job(library)
+
+    service.scheduler.start()
+    try:
+        registered_job = service.scheduler.get_job("library-99-schedule")
+        expected_next = service_module._next_run_from_cron("0 2 * * sun,tue,thu")
+
+        assert registered_job is not None
+        assert expected_next is not None
+        assert service_module._format_scheduler_datetime(registered_job.next_run_time) == service_module._format_scheduler_datetime(expected_next)
+    finally:
+        service.scheduler.shutdown(wait=False)
+
+
+def test_scheduled_library_trigger_logs_and_enqueues_expected_job(caplog, monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    calls = []
+
+    def _enqueue(library, trigger):
+        calls.append((library.name, trigger))
+        return True
+
+    monkeypatch.setattr(service, "_enqueue_library_job", _enqueue)
+
+    caplog.set_level("INFO")
+    assert service._scheduled_library_trigger(1) is True
+
+    assert calls == [("Movies", "schedule")]
+    assert "Scheduled trigger fired for Movies" in caplog.text
 
 
 def test_dashboard_library_card_shows_disabled_for_disabled_library(monkeypatch):
