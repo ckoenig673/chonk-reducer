@@ -251,7 +251,6 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `CHONK_SECRET_KEY` | Runtime secret | env/compose | Required for encrypted webhook settings. |
 | `APP_VERSION` | Runtime metadata | env/compose | Optional runtime version override. |
 | `MOVIE_MEDIA_ROOT`, `TV_MEDIA_ROOT` | Bootstrap | env/compose | Used to seed default libraries on first startup. |
-| `MOVIE_SCHEDULE`, `TV_SCHEDULE` | Bootstrap | env/compose | Legacy schedule seed values for first startup only. |
 | `QSV_QUALITY`, `QSV_PRESET`, `MIN_SAVINGS_PERCENT` | Bootstrap | env/compose | Seed defaults for new/bootstrap library encoding fields. |
 | `SKIP_CODECS`, `SKIP_MIN_HEIGHT`, `SKIP_RESOLUTION_TAGS` | Bootstrap compatibility | env/compose | Optional one-time/default seed inputs for library skip fields when DB values are absent. |
 

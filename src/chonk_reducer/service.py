@@ -272,8 +272,8 @@ class ServiceSettings:
             enabled=_env_bool("SERVICE_MODE", False),
             host=_env("SERVICE_HOST", "0.0.0.0"),
             port=_env_int("SERVICE_PORT", 8080),
-            movie_schedule=_env("MOVIE_SCHEDULE", ""),
-            tv_schedule=_env("TV_SCHEDULE", ""),
+            movie_schedule="",
+            tv_schedule="",
             settings_db_path=_env("STATS_PATH", "/config/chonk.db"),
         )
 
@@ -340,6 +340,9 @@ class _FallbackScheduler:
 
     def get_jobs(self):
         return list(self._jobs)
+
+    def remove_job(self, job_id):
+        self._jobs = [job for job in self._jobs if job.id != job_id]
 
     def start(self):
         return None
@@ -1515,8 +1518,8 @@ class ChonkService:
                 return
 
             now = _utc_timestamp()
-            movies_schedule = self._legacy_schedule_value(conn, "movie_schedule", "MOVIE_SCHEDULE")
-            tv_schedule = self._legacy_schedule_value(conn, "tv_schedule", "TV_SCHEDULE")
+            movies_schedule = self._legacy_schedule_value(conn, "movie_schedule")
+            tv_schedule = self._legacy_schedule_value(conn, "tv_schedule")
             defaults = [
                 (
                     "Movies",
@@ -1571,11 +1574,28 @@ class ChonkService:
                 )
         conn.close()
 
-    def _legacy_schedule_value(self, conn: sqlite3.Connection, key: str, env_name: str) -> str:
+    def _legacy_schedule_value(self, conn: sqlite3.Connection, key: str) -> str:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         if row is not None:
             return str(row["value"] or "").strip()
-        return _env(env_name, "")
+        return ""
+
+    def _remove_library_schedule_job(self, library_id: int) -> None:
+        remove_job = getattr(self.scheduler, "remove_job", None)
+        if not callable(remove_job):
+            return
+        try:
+            remove_job(self._schedule_job_id(library_id))
+        except Exception:
+            return
+
+    def _sync_library_schedule_job(self, library_id: int) -> None:
+        target_id = int(library_id)
+        self._remove_library_schedule_job(target_id)
+        for library in self.enabled_runtime_libraries():
+            if library.id == target_id:
+                self._register_library_job(library)
+                return
 
     def list_libraries(self) -> List[LibraryRecord]:
         conn = _connect_settings_db(self._settings_db_path)
@@ -1608,9 +1628,10 @@ class ChonkService:
         if message:
             return message
         conn = _connect_settings_db(self._settings_db_path)
+        created_library_id = 0
         try:
             with conn:
-                conn.execute(
+                cursor = conn.execute(
                     """
                     INSERT INTO libraries(
                         name, path, enabled, schedule, min_size_gb, max_files, priority,
@@ -1638,10 +1659,13 @@ class ChonkService:
                         _utc_timestamp(),
                     ),
                 )
+                created_library_id = int(cursor.lastrowid or 0)
         except sqlite3.IntegrityError as exc:
             conn.close()
             return self._library_integrity_error_message(exc)
         conn.close()
+        if created_library_id > 0:
+            self._sync_library_schedule_job(created_library_id)
         return "Library created."
 
     def update_library(self, values: Dict[str, str]) -> str:
@@ -1687,6 +1711,7 @@ class ChonkService:
             conn.close()
             return self._library_integrity_error_message(exc)
         conn.close()
+        self._sync_library_schedule_job(int(library_id))
         return "Library updated."
 
     def delete_library(self, values: Dict[str, str]) -> str:
@@ -1695,14 +1720,16 @@ class ChonkService:
             return "Library delete failed: missing library id."
         conn = _connect_settings_db(self._settings_db_path)
         try:
+            library_id_int = int(library_id)
             with conn:
-                cursor = conn.execute("DELETE FROM libraries WHERE id = ?", (int(library_id),))
+                cursor = conn.execute("DELETE FROM libraries WHERE id = ?", (library_id_int,))
                 if cursor.rowcount <= 0:
                     return "Library delete failed: library not found."
         except ValueError:
             conn.close()
             return "Library delete failed: invalid library id."
         conn.close()
+        self._remove_library_schedule_job(library_id_int)
         return "Library deleted."
 
     def toggle_library(self, values: Dict[str, str]) -> str:
@@ -1724,6 +1751,7 @@ class ChonkService:
             conn.close()
             return "Library toggle failed: invalid library id."
         conn.close()
+        self._sync_library_schedule_job(int(library_id))
         return "Library %s." % ("enabled" if enabled else "disabled")
 
     def _validate_library_values(self, values: Dict[str, str]) -> tuple:

@@ -396,21 +396,22 @@ def test_service_settings_from_env(monkeypatch):
     assert settings.enabled is True
     assert settings.host == "127.0.0.1"
     assert settings.port == 9090
-    assert settings.movie_schedule == "0 1 * * *"
-    assert settings.tv_schedule == "15 2 * * *"
+    assert settings.movie_schedule == ""
+    assert settings.tv_schedule == ""
 
 
-def test_scheduler_registers_jobs_from_env(monkeypatch):
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
-    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
-    settings = ServiceSettings(
-        enabled=True,
-        host="0.0.0.0",
-        port=8080,
-        movie_schedule="",
-        tv_schedule="",
+def test_scheduler_registers_jobs_from_db_schedules(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
-    service = ChonkService(settings)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE name = ?", ("0 1 * * *", "Movies"))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE name = ?", ("15 2 * * *", "TV"))
+    conn.commit()
+    conn.close()
 
     service.register_jobs()
 
@@ -1444,11 +1445,16 @@ def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     assert "Status</th><td" in body and "Idle" in body
 
 
-def test_dashboard_library_card_shows_not_scheduled_for_invalid_schedule(monkeypatch):
-    monkeypatch.setenv("MOVIE_SCHEDULE", "invalid schedule")
+def test_dashboard_library_card_shows_not_scheduled_for_invalid_schedule(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("invalid schedule", 1))
+    conn.commit()
+    conn.close()
 
     class _NoRunJob:
         id = "library-1-schedule"
@@ -1462,11 +1468,16 @@ def test_dashboard_library_card_shows_not_scheduled_for_invalid_schedule(monkeyp
     assert "Next Run:</strong> Not Scheduled" in body
 
 
-def test_dashboard_library_card_shows_scheduler_next_run_time(monkeypatch):
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+def test_dashboard_library_card_shows_scheduler_next_run_time(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 1 * * *", 1))
+    conn.commit()
+    conn.close()
 
     class _NextRunJob:
         id = "library-1-schedule"
@@ -1503,14 +1514,19 @@ def test_dashboard_current_job_status_shows_scheduler_running_and_start_time():
     assert "2026-03-08 20:27" in body
 
 
-def test_current_job_status_uses_earliest_enabled_library_next_run_for_global_schedule(monkeypatch):
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * *")
-    monkeypatch.setenv("TV_SCHEDULE", "0 4 * * *")
+def test_current_job_status_uses_earliest_enabled_library_next_run_for_global_schedule(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
     monkeypatch.setenv("TZ", "UTC")
 
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 2 * * *", 1))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 4 * * *", 2))
+    conn.commit()
+    conn.close()
 
     def _fake_next_run(schedule, now=None):
         del now
@@ -1619,10 +1635,14 @@ def test_dashboard_library_card_shows_computed_next_run_for_valid_schedule(tmp_p
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
     monkeypatch.setenv("TZ", "UTC")
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * 6")
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 2 * * 6", 1))
+    conn.commit()
+    conn.close()
 
     monkeypatch.setattr(service.scheduler, "get_job", lambda _job_id: None)
 
@@ -1953,12 +1973,15 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
     monkeypatch.setenv("TV_MEDIA_ROOT", "/data/tv")
     monkeypatch.setenv("TZ", "UTC")
 
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * *")
-    monkeypatch.setenv("TV_SCHEDULE", "0 4 * * *")
-
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 2 * * *", 1))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 4 * * *", 2))
+    conn.commit()
+    conn.close()
 
     class FakeJob:
         def __init__(self, job_id, next_run_time):
@@ -2390,9 +2413,6 @@ def test_schedule_registration_records_activity_entries(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
 
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
-    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
-
     service = ChonkService(
         ServiceSettings(
             enabled=True,
@@ -2402,6 +2422,12 @@ def test_schedule_registration_records_activity_entries(tmp_path, monkeypatch):
             tv_schedule="",
         )
     )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 1 * * *", 1))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("15 2 * * *", 2))
+    conn.commit()
+    conn.close()
 
     service.register_jobs()
 
@@ -2861,7 +2887,7 @@ def test_settings_tooltip_metadata_is_defined_for_global_and_library_fields():
     assert expected_library_fields.issubset(set(service_module.LIBRARY_SETTINGS_HELP.keys()))
 
 
-def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
+def test_libraries_table_created_and_bootstrapped_without_schedule_env(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
     monkeypatch.setenv("MOVIE_MEDIA_ROOT", "/mnt/media/movies")
@@ -2885,7 +2911,7 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert rows[0]["name"] == "Movies"
     assert rows[0]["path"] == "/mnt/media/movies"
     assert int(rows[0]["enabled"]) == 1
-    assert rows[0]["schedule"] == "0 3 * * *"
+    assert rows[0]["schedule"] == ""
     assert int(rows[0]["qsv_quality"]) == 22
     assert int(rows[0]["qsv_preset"]) == 5
     assert float(rows[0]["min_savings_percent"]) == 13.0
@@ -2895,7 +2921,7 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert rows[1]["name"] == "TV"
     assert rows[1]["path"] == "/mnt/media/tv"
     assert int(rows[1]["enabled"]) == 1
-    assert rows[1]["schedule"] == "0 4 * * *"
+    assert rows[1]["schedule"] == ""
     assert int(rows[1]["qsv_quality"]) == 22
     assert int(rows[1]["qsv_preset"]) == 5
     assert float(rows[1]["min_savings_percent"]) == 13.0
@@ -3054,6 +3080,89 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert int(remaining) == 0
 
 
+
+
+def test_update_library_resyncs_live_scheduler_job(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    events = []
+
+    def fake_add_job(func, trigger=None, id=None, args=None, coalesce=True, max_instances=1, replace_existing=True):
+        del func, trigger, args, coalesce, max_instances, replace_existing
+        events.append(("add", id))
+
+    def fake_remove_job(job_id):
+        events.append(("remove", job_id))
+
+    monkeypatch.setattr(service.scheduler, "add_job", fake_add_job)
+    monkeypatch.setattr(service.scheduler, "remove_job", fake_remove_job)
+
+    result = service.update_library(
+        {
+            "library_id": "1",
+            "name": "Movies",
+            "path": "/movies",
+            "enabled": "1",
+            "schedule": "0 2 * * tue,thu",
+            "min_size_gb": "0",
+            "max_files": "1",
+            "priority": "100",
+            "qsv_quality": "21",
+            "qsv_preset": "7",
+            "min_savings_percent": "15",
+            "skip_codecs": "",
+            "skip_min_height": "0",
+            "skip_resolution_tags": "",
+        }
+    )
+
+    assert result == "Library updated."
+    assert ("remove", "library-1-schedule") in events
+    assert ("add", "library-1-schedule") in events
+
+
+def test_registered_schedule_job_fires_using_saved_library_schedule(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET schedule = ? WHERE id = ?", ("0 2 * * tue", 1))
+    conn.commit()
+    conn.close()
+
+    scheduled = {}
+
+    def fake_add_job(func, trigger=None, id=None, args=None, coalesce=True, max_instances=1, replace_existing=True):
+        del trigger, coalesce, max_instances, replace_existing
+        scheduled[id] = (func, list(args or []))
+
+    monkeypatch.setattr(service.scheduler, "add_job", fake_add_job)
+    monkeypatch.setattr(service, "_enqueue_library_job", lambda library, trigger: trigger == "schedule" and library.id == 1)
+
+    service.register_jobs()
+
+    job_func, job_args = scheduled["library-1-schedule"]
+    fired = job_func(*job_args)
+
+    assert fired is True
+    event_types = [row["event_type"] for row in _read_activity_rows(db_path)]
+    assert "scheduled_run_requested" in event_types
+
+
+def test_legacy_schedule_env_does_not_override_db_schedule(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    rows = service.list_libraries()
+
+    assert rows[0].schedule == ""
+    assert rows[1].schedule == ""
 
 
 def test_simple_schedule_helper_build_and_parse_round_trip():
@@ -3454,8 +3563,6 @@ def test_duplicate_library_protection_unchanged_with_priority(tmp_path, monkeypa
 def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 5 * * *")
-    monkeypatch.setenv("TV_SCHEDULE", "30 6 * * *")
     monkeypatch.setenv("MIN_FILE_AGE_MINUTES", "22")
     monkeypatch.setenv("MIN_SAVINGS_PERCENT", "18")
     monkeypatch.setenv("MAX_SAVINGS_PERCENT", "45")
@@ -4570,7 +4677,6 @@ def test_dashboard_next_run_matches_scheduler_for_legacy_weekend_crons(monkeypat
 
 
 def test_dashboard_library_card_shows_disabled_for_disabled_library(monkeypatch):
-    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
 
     movies, tv = service.list_libraries()
