@@ -3830,12 +3830,60 @@ class ChonkService:
         self._scheduler_stopped = False
         self.scheduler.start()
 
+        scheduler_state = getattr(self.scheduler, "state", None)
+        scheduler_running = bool(getattr(self.scheduler, "running", False))
+        scheduler_paused = scheduler_state == 2
+        LOGGER.info(
+            "Scheduler state after start: state=%r running=%s paused=%s",
+            scheduler_state,
+            scheduler_running,
+            scheduler_paused,
+        )
+        if scheduler_paused:
+            resume = getattr(self.scheduler, "resume", None)
+            if callable(resume):
+                resume()
+                scheduler_state = getattr(self.scheduler, "state", None)
+                scheduler_running = bool(getattr(self.scheduler, "running", False))
+                scheduler_paused = scheduler_state == 2
+                LOGGER.info(
+                    "Scheduler resumed at startup: state=%r running=%s paused=%s",
+                    scheduler_state,
+                    scheduler_running,
+                    scheduler_paused,
+                )
+
+        resume_job = getattr(self.scheduler, "resume_job", None)
+        timezone = _cron_trigger_timezone()
+        now = datetime.now(timezone) if hasattr(timezone, "utcoffset") else datetime.utcnow()
+        for job in self.scheduler.get_jobs():
+            if callable(resume_job):
+                try:
+                    resume_job(job.id)
+                except Exception:
+                    LOGGER.warning("Unable to resume job at startup: job_id=%s", job.id, exc_info=True)
+            if getattr(job, "next_run_time", None) is None and hasattr(job, "trigger"):
+                trigger = getattr(job, "trigger", None)
+                if hasattr(trigger, "get_next_fire_time"):
+                    try:
+                        computed_next_run = trigger.get_next_fire_time(None, now)
+                    except Exception:
+                        computed_next_run = None
+                    if computed_next_run is not None:
+                        modify = getattr(job, "modify", None)
+                        if callable(modify):
+                            modify(next_run_time=computed_next_run)
+
         for job in self.scheduler.get_jobs():
             next_run_time = getattr(job, "next_run_time", None)
+            pending = getattr(job, "pending", None)
+            trigger_repr = repr(getattr(job, "trigger", None))
             LOGGER.info(
-                "Scheduler job active: job_id=%s next_run=%s",
+                "Scheduler job active: job_id=%s next_run=%s pending=%s trigger=%s",
                 job.id,
                 next_run_time,
+                pending,
+                trigger_repr,
             )
 
         self._scheduler_started_at = _utc_timestamp()
