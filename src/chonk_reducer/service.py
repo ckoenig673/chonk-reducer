@@ -338,8 +338,18 @@ class _FallbackScheduler:
     def __init__(self):
         self._jobs: List[_ScheduledJob] = []
 
-    def add_job(self, func, trigger=None, id=None, args=None, coalesce=True, max_instances=1, replace_existing=True):
-        del func, trigger, args, coalesce, max_instances, replace_existing
+    def add_job(
+        self,
+        func,
+        trigger=None,
+        id=None,
+        args=None,
+        coalesce=True,
+        max_instances=1,
+        replace_existing=True,
+        next_run_time=None,
+    ):
+        del func, trigger, args, coalesce, max_instances, replace_existing, next_run_time
         self._jobs = [job for job in self._jobs if job.id != id]
         self._jobs.append(_ScheduledJob(id))
 
@@ -2162,13 +2172,19 @@ class ChonkService:
             trigger = _build_scheduler_cron_trigger("0 2 * * *", timezone=_cron_trigger_timezone())
         else:
             trigger = "0 2 * * *"
+        add_job_kwargs = {
+            "trigger": trigger,
+            "id": "housekeeping-daily",
+            "coalesce": True,
+            "max_instances": 1,
+            "replace_existing": True,
+        }
+        next_run_time = self._compute_initial_next_run_time(trigger)
+        if next_run_time is not None:
+            add_job_kwargs["next_run_time"] = next_run_time
         self.scheduler.add_job(
             self.run_housekeeping_once,
-            trigger=trigger,
-            id="housekeeping-daily",
-            coalesce=True,
-            max_instances=1,
-            replace_existing=True,
+            **add_job_kwargs,
         )
 
     def run_housekeeping_once(self) -> None:
@@ -2207,14 +2223,20 @@ class ChonkService:
                 return
             trigger = schedule
 
+        add_job_kwargs = {
+            "trigger": trigger,
+            "id": self._schedule_job_id(library.id),
+            "args": [library.id],
+            "coalesce": True,
+            "max_instances": 1,
+            "replace_existing": True,
+        }
+        next_run_time = self._compute_initial_next_run_time(trigger)
+        if next_run_time is not None:
+            add_job_kwargs["next_run_time"] = next_run_time
         self.scheduler.add_job(
             self._scheduled_library_trigger,
-            trigger=trigger,
-            id=self._schedule_job_id(library.id),
-            args=[library.id],
-            coalesce=True,
-            max_instances=1,
-            replace_existing=True,
+            **add_job_kwargs,
         )
         registered_job = None
         get_job = getattr(self.scheduler, "get_job", None)
@@ -2249,6 +2271,13 @@ class ChonkService:
             message="Scheduler registered %s schedule" % library.name,
             library=library.name,
         )
+
+    def _compute_initial_next_run_time(self, trigger):
+        if CronTrigger is None or not hasattr(trigger, "get_next_fire_time"):
+            return None
+        timezone = _cron_trigger_timezone()
+        now = datetime.now(timezone) if hasattr(timezone, "utcoffset") else datetime.utcnow()
+        return trigger.get_next_fire_time(None, now)
 
     def _scheduled_library_trigger(self, library_id: int) -> bool:
         library = self._library_by_id(library_id)
@@ -3802,10 +3831,11 @@ class ChonkService:
         self.scheduler.start()
 
         for job in self.scheduler.get_jobs():
+            next_run_time = getattr(job, "next_run_time", None)
             LOGGER.info(
                 "Scheduler job active: job_id=%s next_run=%s",
                 job.id,
-                job.next_run_time
+                next_run_time,
             )
 
         self._scheduler_started_at = _utc_timestamp()
