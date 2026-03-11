@@ -1,6 +1,4 @@
+-r requirements.txt
 pytest
 pytest-mock
-fastapi
-uvicorn
-apscheduler
 httpx
