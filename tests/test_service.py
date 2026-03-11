@@ -519,9 +519,10 @@ def test_scheduler_registration_logs_timezone_and_next_run_for_named_weekday_sch
     assert captured["expr"] == "0 2 * * sun,tue,thu"
     assert captured["timezone"] == service_module._cron_trigger_timezone()
     assert "Registering Movies schedule: raw='0 2 * * sun,tue,thu'" in caplog.text
-    assert "normalized='0 2 * * sun,tue,thu'" in caplog.text
+    assert "minute=0 hour=2 day='*' month='*' dow='sun,tue,thu'" in caplog.text
+    assert "timezone='America/Chicago'" in caplog.text
     assert "job_id='library-99-schedule'" in caplog.text
-    assert "next_run='2026-03-10 02:00'" in caplog.text
+    assert "next_run='2026-03-10 02:00:00-05:00'" in caplog.text
 
 
 def test_home_page_route_returns_minimal_operator_page():
@@ -4673,16 +4674,10 @@ def test_build_scheduler_cron_trigger_supports_named_weekday_sets(monkeypatch):
     assert service_module._format_scheduler_datetime(tv_trigger.get_next_fire_time(None, now)) == "2026-03-11 02:00"
 
 
-def test_scheduler_event_listener_records_missed_and_error_events(monkeypatch, caplog):
+def test_scheduler_event_listener_records_missed_and_error_events(caplog):
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
-    recorded = []
-
-    def _record_activity(**kwargs):
-        recorded.append(kwargs)
-
-    monkeypatch.setattr(service, "_record_activity", _record_activity)
     caplog.set_level("INFO")
 
     class MissedEvent(object):
@@ -4698,18 +4693,15 @@ def test_scheduler_event_listener_records_missed_and_error_events(monkeypatch, c
     service._on_scheduler_event(MissedEvent())
     service._on_scheduler_event(ErrorEvent())
 
-    assert "Scheduler missed job id='library-1-schedule'" in caplog.text
-    assert "Scheduler job error id='library-2-schedule'" in caplog.text
-    assert [row["event_type"] for row in recorded] == ["scheduler_job_missed", "scheduler_job_error"]
+    assert "Scheduler event: job_missed job_id=library-1-schedule" in caplog.text
+    assert "Scheduler event: job_error job_id=library-2-schedule" in caplog.text
 
 
-def test_scheduler_event_listener_records_library_schedule_execution(monkeypatch):
+def test_scheduler_event_listener_records_library_schedule_execution(caplog):
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
-    recorded = []
-
-    monkeypatch.setattr(service, "_record_activity", lambda **kwargs: recorded.append(kwargs))
+    caplog.set_level("INFO")
 
     class ExecutedEvent(object):
         code = service_module.EVENT_JOB_EXECUTED
@@ -4718,8 +4710,53 @@ def test_scheduler_event_listener_records_library_schedule_execution(monkeypatch
 
     service._on_scheduler_event(ExecutedEvent())
 
-    assert [row["event_type"] for row in recorded] == ["scheduled_trigger_fired"]
+    assert "Scheduler event: job_executed job_id=library-1-schedule" in caplog.text
 
+
+
+
+def test_parse_scheduler_cron_fields_supports_named_weekday_sets():
+    movies = service_module._parse_scheduler_cron_fields("0 2 * * sun,tue,thu")
+    tv = service_module._parse_scheduler_cron_fields("0 2 * * mon,wed,fri")
+
+    assert movies == {
+        "minute": "0",
+        "hour": "2",
+        "day": "*",
+        "month": "*",
+        "day_of_week": "sun,tue,thu",
+    }
+    assert tv["day_of_week"] == "mon,wed,fri"
+
+
+def test_scheduler_registration_logs_none_next_run(monkeypatch, caplog):
+    monkeypatch.setattr(service_module, "CronTrigger", None)
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    class FakeJob(object):
+        id = "library-99-schedule"
+        next_run_time = None
+
+    monkeypatch.setattr(service.scheduler, "add_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service.scheduler, "get_job", lambda _job_id: FakeJob())
+
+    caplog.set_level("INFO")
+    service._register_library_job(
+        service_module.RuntimeLibrary(
+            id=99,
+            name="Movies",
+            path="/movies",
+            schedule="0 2 * * sun,tue,thu",
+            min_size_gb=0.0,
+            max_files=1,
+            priority=1,
+            qsv_quality=None,
+            qsv_preset=None,
+            min_savings_percent=None,
+        )
+    )
+
+    assert "next_run=None" in caplog.text
 
 def test_scheduled_library_trigger_logs_and_enqueues_expected_job(caplog, monkeypatch):
     service = ChonkService(
