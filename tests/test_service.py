@@ -4791,6 +4791,8 @@ def test_run_forever_starts_library_jobs_in_active_state(monkeypatch, caplog):
     assert rc == 0
     assert "Scheduler job active: job_id=library-1-schedule next_run=None" not in caplog.text
     assert "Scheduler job active: job_id=library-2-schedule next_run=None" not in caplog.text
+    assert "Scheduler state after start:" in caplog.text
+    assert "paused=False" in caplog.text
 
 
 def test_run_forever_starts_housekeeping_job_in_active_state(monkeypatch, caplog):
@@ -4805,6 +4807,67 @@ def test_run_forever_starts_housekeeping_job_in_active_state(monkeypatch, caplog
 
     assert rc == 0
     assert "Scheduler job active: job_id=housekeeping-daily next_run=None" not in caplog.text
+
+
+def test_run_forever_resumes_scheduler_and_logs_job_diagnostics(monkeypatch, caplog):
+    service = ChonkService(ServiceSettings(enabled=True, host="127.0.0.1", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service_module, "uvicorn", None)
+    monkeypatch.setattr(service_module, "_run_simple_http_server", lambda *args, **kwargs: None)
+
+    class FakeTrigger(object):
+        def get_next_fire_time(self, previous_fire_time, now):
+            del previous_fire_time, now
+            return datetime(2026, 1, 1, 1, 0, 0)
+
+    class FakeJob(object):
+        def __init__(self):
+            self.id = "housekeeping-daily"
+            self.next_run_time = None
+            self.pending = False
+            self.trigger = FakeTrigger()
+
+        def modify(self, next_run_time=None):
+            self.next_run_time = next_run_time
+
+    class FakeScheduler(object):
+        def __init__(self):
+            self.state = 2
+            self.running = False
+            self._job = FakeJob()
+
+        def add_job(self, func, **kwargs):
+            del func, kwargs
+            return None
+
+        def start(self):
+            return None
+
+        def resume(self):
+            self.state = 1
+            self.running = True
+
+        def get_jobs(self):
+            return [self._job]
+
+        def resume_job(self, _job_id):
+            return None
+
+        def shutdown(self, wait=False):
+            del wait
+            return None
+
+    service.scheduler = FakeScheduler()
+
+    caplog.set_level("INFO")
+    rc = service.run_forever()
+
+    assert rc == 0
+    assert "Scheduler state after start: state=2" in caplog.text
+    assert "Scheduler resumed at startup: state=1" in caplog.text
+    assert "Scheduler job active: job_id=housekeeping-daily" in caplog.text
+    assert "pending=False" in caplog.text
+    assert "trigger=<" in caplog.text
+    assert "next_run=2026-01-01 01:00:00" in caplog.text
 
 def test_scheduled_library_trigger_logs_and_enqueues_expected_job(caplog, monkeypatch):
     service = ChonkService(
