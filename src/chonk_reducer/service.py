@@ -25,11 +25,14 @@ except Exception:  # pragma: no cover - fallback for Python 3.8 runtime
     except Exception:  # pragma: no cover - best-effort timezone display
         ZoneInfo = None
 
+_APSCHEDULER_IMPORT_ERROR: Optional[Exception] = None
+
 try:
     from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
     from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED  # type: ignore
     from apscheduler.triggers.cron import CronTrigger  # type: ignore
-except Exception:  # pragma: no cover - exercised by fallback tests
+except Exception as exc:  # pragma: no cover - exercised by fallback tests
+    _APSCHEDULER_IMPORT_ERROR = exc
     BackgroundScheduler = None
     EVENT_JOB_ERROR = None
     EVENT_JOB_EXECUTED = None
@@ -433,7 +436,17 @@ class ChonkService:
                 getattr(scheduler_class, "__module__", "<unknown_module>"),
                 getattr(scheduler_class, "__qualname__", getattr(scheduler_class, "__name__", "<unknown_class>")),
             )
+            LOGGER.info("APScheduler import status: available")
             return scheduler_class(timezone=os.getenv("TZ", "UTC"))
+        reason = _APSCHEDULER_IMPORT_ERROR
+        if reason is not None:
+            LOGGER.warning(
+                "APScheduler import status: unavailable (%s: %s)",
+                type(reason).__name__,
+                reason,
+            )
+        else:
+            LOGGER.warning("APScheduler import status: unavailable (no import exception captured)")
         LOGGER.info(
             "Instantiating scheduler class: %s.%s",
             _FallbackScheduler.__module__,

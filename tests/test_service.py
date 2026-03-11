@@ -4714,6 +4714,32 @@ def test_scheduler_event_listener_records_library_schedule_execution(caplog):
     assert "Scheduler event: job_executed job_id=library-1-schedule" in caplog.text
 
 
+def test_build_scheduler_prefers_apscheduler_when_available(caplog):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    caplog.set_level("INFO")
+
+    scheduler = service._build_scheduler()
+    assert scheduler.__class__.__name__ == "BackgroundScheduler"
+    assert "APScheduler import status: available" in caplog.text
+
+
+def test_build_scheduler_logs_import_error_reason_when_falling_back(monkeypatch, caplog):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    caplog.set_level("INFO")
+
+    monkeypatch.setattr(service_module, "BackgroundScheduler", None)
+    monkeypatch.setattr(service_module, "_APSCHEDULER_IMPORT_ERROR", ImportError("No module named 'apscheduler'"))
+
+    scheduler = service._build_scheduler()
+
+    assert isinstance(scheduler, service_module._FallbackScheduler)
+    assert "APScheduler import status: unavailable (ImportError: No module named 'apscheduler')" in caplog.text
+
+
 
 
 def test_parse_scheduler_cron_fields_supports_named_weekday_sets():
