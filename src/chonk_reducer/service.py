@@ -427,7 +427,18 @@ class ChonkService:
 
     def _build_scheduler(self):
         if BackgroundScheduler is not None:
-            return BackgroundScheduler(timezone=os.getenv("TZ", "UTC"))
+            scheduler_class = BackgroundScheduler
+            LOGGER.info(
+                "Instantiating scheduler class: %s.%s",
+                getattr(scheduler_class, "__module__", "<unknown_module>"),
+                getattr(scheduler_class, "__qualname__", getattr(scheduler_class, "__name__", "<unknown_class>")),
+            )
+            return scheduler_class(timezone=os.getenv("TZ", "UTC"))
+        LOGGER.info(
+            "Instantiating scheduler class: %s.%s",
+            _FallbackScheduler.__module__,
+            _FallbackScheduler.__qualname__,
+        )
         return _FallbackScheduler()
 
     def _build_app(self):
@@ -3830,6 +3841,8 @@ class ChonkService:
         self._scheduler_stopped = False
         self.scheduler.start()
 
+        LOGGER.info("Scheduler instance diagnostics: type=%s repr=%r", type(self.scheduler), self.scheduler)
+
         scheduler_state = getattr(self.scheduler, "state", None)
         scheduler_running = bool(getattr(self.scheduler, "running", False))
         scheduler_paused = scheduler_state == 2
@@ -3857,6 +3870,7 @@ class ChonkService:
         timezone = _cron_trigger_timezone()
         now = datetime.now(timezone) if hasattr(timezone, "utcoffset") else datetime.utcnow()
         for job in self.scheduler.get_jobs():
+            LOGGER.info("Scheduler job instance diagnostics: type=%s repr=%r", type(job), job)
             if callable(resume_job):
                 try:
                     resume_job(job.id)
@@ -3875,6 +3889,7 @@ class ChonkService:
                             modify(next_run_time=computed_next_run)
 
         for job in self.scheduler.get_jobs():
+            LOGGER.info("Scheduler job instance diagnostics: type=%s repr=%r", type(job), job)
             next_run_time = getattr(job, "next_run_time", None)
             pending = getattr(job, "pending", None)
             trigger_repr = repr(getattr(job, "trigger", None))
