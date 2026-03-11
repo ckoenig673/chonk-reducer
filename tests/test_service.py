@@ -451,7 +451,8 @@ def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monke
 
     added = {}
 
-    def fake_add_job(func, trigger, id, args, coalesce, max_instances, replace_existing):
+    def fake_add_job(func, trigger, id, args, coalesce, max_instances, replace_existing, **kwargs):
+        del kwargs
         added["trigger"] = trigger
         added["id"] = id
 
@@ -4757,6 +4758,53 @@ def test_scheduler_registration_logs_none_next_run(monkeypatch, caplog):
     )
 
     assert "next_run=None" in caplog.text
+
+
+def test_registered_recurring_jobs_have_non_none_next_run_time(monkeypatch):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    service.register_jobs()
+    service.scheduler.start()
+    try:
+        jobs = {job.id: getattr(job, "next_run_time", None) for job in service.scheduler.get_jobs()}
+    finally:
+        service.scheduler.shutdown(wait=False)
+        service.stop_background_worker()
+
+    assert jobs["library-1-schedule"] is not None
+    assert jobs["library-2-schedule"] is not None
+    assert jobs["housekeeping-daily"] is not None
+
+
+def test_run_forever_starts_library_jobs_in_active_state(monkeypatch, caplog):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
+    service = ChonkService(ServiceSettings(enabled=True, host="127.0.0.1", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service_module, "uvicorn", None)
+    monkeypatch.setattr(service_module, "_run_simple_http_server", lambda *args, **kwargs: None)
+
+    caplog.set_level("INFO")
+    rc = service.run_forever()
+
+    assert rc == 0
+    assert "Scheduler job active: job_id=library-1-schedule next_run=None" not in caplog.text
+    assert "Scheduler job active: job_id=library-2-schedule next_run=None" not in caplog.text
+
+
+def test_run_forever_starts_housekeeping_job_in_active_state(monkeypatch, caplog):
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 1 * * *")
+    monkeypatch.setenv("TV_SCHEDULE", "15 2 * * *")
+    service = ChonkService(ServiceSettings(enabled=True, host="127.0.0.1", port=8080, movie_schedule="", tv_schedule=""))
+    monkeypatch.setattr(service_module, "uvicorn", None)
+    monkeypatch.setattr(service_module, "_run_simple_http_server", lambda *args, **kwargs: None)
+
+    caplog.set_level("INFO")
+    rc = service.run_forever()
+
+    assert rc == 0
+    assert "Scheduler job active: job_id=housekeeping-daily next_run=None" not in caplog.text
 
 def test_scheduled_library_trigger_logs_and_enqueues_expected_job(caplog, monkeypatch):
     service = ChonkService(
