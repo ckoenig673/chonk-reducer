@@ -440,16 +440,12 @@ class ChonkService:
         job_id = str(getattr(event, "job_id", "") or "")
         exception = getattr(event, "exception", None)
         if getattr(event, "code", None) == EVENT_JOB_MISSED:
-            LOGGER.warning("Scheduler missed job id=%r", job_id)
-            self._record_activity(event_type="scheduler_job_missed", message="Scheduler missed job %s" % job_id, level="warning")
+            LOGGER.warning("Scheduler event: job_missed job_id=%s", job_id)
             return
         if exception is not None:
-            LOGGER.error("Scheduler job error id=%r error=%r", job_id, exception)
-            self._record_activity(event_type="scheduler_job_error", message="Scheduler job error for %s" % job_id, level="error")
+            LOGGER.error("Scheduler event: job_error job_id=%s", job_id)
             return
-        LOGGER.info("Scheduler job executed id=%r", job_id)
-        if job_id.startswith("library-") and job_id.endswith("-schedule"):
-            self._record_activity(event_type="scheduled_trigger_fired", message="Scheduled trigger fired for job %s" % job_id)
+        LOGGER.info("Scheduler event: job_executed job_id=%s", job_id)
 
     def _configure_routes(self) -> None:
         @self.app.get("/")
@@ -2163,7 +2159,7 @@ class ChonkService:
 
     def _register_housekeeping_job(self) -> None:
         if CronTrigger is not None:
-            trigger = CronTrigger.from_crontab("0 2 * * *", timezone=_cron_trigger_timezone())
+            trigger = _build_scheduler_cron_trigger("0 2 * * *", timezone=_cron_trigger_timezone())
         else:
             trigger = "0 2 * * *"
         self.scheduler.add_job(
@@ -2198,9 +2194,10 @@ class ChonkService:
             return
 
         timezone = _cron_trigger_timezone()
+        parsed_fields = _parse_scheduler_cron_fields(schedule)
         if CronTrigger is not None:
             try:
-                trigger = _build_scheduler_cron_trigger(schedule, timezone=timezone)
+                trigger = _build_scheduler_cron_trigger(schedule, timezone=timezone, parsed_fields=parsed_fields)
             except ValueError:
                 LOGGER.error("Invalid cron schedule for %s: %r", library.name, schedule)
                 return
@@ -2231,13 +2228,17 @@ class ChonkService:
         if raw_next_run_time is None and CronTrigger is not None and hasattr(trigger, "get_next_fire_time"):
             now = datetime.now(timezone) if hasattr(timezone, "utcoffset") else datetime.utcnow()
             raw_next_run_time = trigger.get_next_fire_time(None, now)
-        next_run_time = _format_scheduler_datetime(raw_next_run_time)
+        next_run_time = None if raw_next_run_time is None else str(raw_next_run_time)
         job_id = getattr(registered_job, "id", self._schedule_job_id(library.id))
         LOGGER.info(
-            "Registering %s schedule: raw=%r normalized=%r tz=%r trigger=%r job_id=%r next_run=%r",
+            "Registering %s schedule: raw=%r minute=%s hour=%s day=%r month=%r dow=%r timezone=%r trigger=%r job_id=%r next_run=%r",
             library.name,
             raw_schedule,
-            schedule,
+            parsed_fields["minute"],
+            parsed_fields["hour"],
+            parsed_fields["day"],
+            parsed_fields["month"],
+            parsed_fields["day_of_week"],
             str(timezone),
             str(trigger),
             job_id,
@@ -4262,19 +4263,30 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         return None
 
 
-def _build_scheduler_cron_trigger(schedule: str, timezone):
-    if CronTrigger is None:
-        raise ValueError("Cron scheduler not available")
+def _parse_scheduler_cron_fields(schedule: str) -> Dict[str, str]:
     parts = str(schedule or "").strip().split()
     if len(parts) != 5:
         raise ValueError("Invalid cron schedule")
     minute, hour, day, month, day_of_week = parts
+    return {
+        "minute": minute,
+        "hour": hour,
+        "day": day,
+        "month": month,
+        "day_of_week": day_of_week,
+    }
+
+
+def _build_scheduler_cron_trigger(schedule: str, timezone, parsed_fields: Optional[Dict[str, str]] = None):
+    if CronTrigger is None:
+        raise ValueError("Cron scheduler not available")
+    fields = parsed_fields or _parse_scheduler_cron_fields(schedule)
     return CronTrigger(
-        minute=minute,
-        hour=hour,
-        day=day,
-        month=month,
-        day_of_week=day_of_week,
+        minute=fields["minute"],
+        hour=fields["hour"],
+        day=fields["day"],
+        month=fields["month"],
+        day_of_week=fields["day_of_week"],
         timezone=timezone,
     )
 
