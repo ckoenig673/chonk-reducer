@@ -27,9 +27,13 @@ except Exception:  # pragma: no cover - fallback for Python 3.8 runtime
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
+    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED  # type: ignore
     from apscheduler.triggers.cron import CronTrigger  # type: ignore
 except Exception:  # pragma: no cover - exercised by fallback tests
     BackgroundScheduler = None
+    EVENT_JOB_ERROR = None
+    EVENT_JOB_EXECUTED = None
+    EVENT_JOB_MISSED = None
     CronTrigger = None
 
 try:
@@ -384,6 +388,7 @@ class ChonkService:
             settings_db_path=settings_db_path,
         )
         self.scheduler = self._build_scheduler()
+        self._attach_scheduler_listeners()
         self.app = self._build_app()
         self._library_locks: Dict[str, threading.Lock] = {}
         self._job_state_lock = threading.Lock()
@@ -419,6 +424,32 @@ class ChonkService:
         if FastAPI is not None:
             return FastAPI(title="Chonk Reducer Service")
         return _FallbackFastAPI()
+
+    def _attach_scheduler_listeners(self) -> None:
+        add_listener = getattr(self.scheduler, "add_listener", None)
+        if not callable(add_listener):
+            return
+        if EVENT_JOB_EXECUTED is None or EVENT_JOB_ERROR is None or EVENT_JOB_MISSED is None:
+            return
+        try:
+            add_listener(self._on_scheduler_event, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED)
+        except Exception:
+            LOGGER.warning("Unable to attach APScheduler event listeners", exc_info=True)
+
+    def _on_scheduler_event(self, event) -> None:
+        job_id = str(getattr(event, "job_id", "") or "")
+        exception = getattr(event, "exception", None)
+        if getattr(event, "code", None) == EVENT_JOB_MISSED:
+            LOGGER.warning("Scheduler missed job id=%r", job_id)
+            self._record_activity(event_type="scheduler_job_missed", message="Scheduler missed job %s" % job_id, level="warning")
+            return
+        if exception is not None:
+            LOGGER.error("Scheduler job error id=%r error=%r", job_id, exception)
+            self._record_activity(event_type="scheduler_job_error", message="Scheduler job error for %s" % job_id, level="error")
+            return
+        LOGGER.info("Scheduler job executed id=%r", job_id)
+        if job_id.startswith("library-") and job_id.endswith("-schedule"):
+            self._record_activity(event_type="scheduled_trigger_fired", message="Scheduled trigger fired for job %s" % job_id)
 
     def _configure_routes(self) -> None:
         @self.app.get("/")
@@ -2169,7 +2200,7 @@ class ChonkService:
         timezone = _cron_trigger_timezone()
         if CronTrigger is not None:
             try:
-                trigger = CronTrigger.from_crontab(schedule, timezone=timezone)
+                trigger = _build_scheduler_cron_trigger(schedule, timezone=timezone)
             except ValueError:
                 LOGGER.error("Invalid cron schedule for %s: %r", library.name, schedule)
                 return
@@ -2196,14 +2227,20 @@ class ChonkService:
             except Exception:
                 registered_job = None
 
-        next_run_time = _format_scheduler_datetime(getattr(registered_job, "next_run_time", None))
+        raw_next_run_time = getattr(registered_job, "next_run_time", None)
+        if raw_next_run_time is None and CronTrigger is not None and hasattr(trigger, "get_next_fire_time"):
+            now = datetime.now(timezone) if hasattr(timezone, "utcoffset") else datetime.utcnow()
+            raw_next_run_time = trigger.get_next_fire_time(None, now)
+        next_run_time = _format_scheduler_datetime(raw_next_run_time)
+        job_id = getattr(registered_job, "id", self._schedule_job_id(library.id))
         LOGGER.info(
-            "Registering %s schedule: raw=%r normalized=%r tz=%r trigger=%r next_run=%r",
+            "Registering %s schedule: raw=%r normalized=%r tz=%r trigger=%r job_id=%r next_run=%r",
             library.name,
             raw_schedule,
             schedule,
             str(timezone),
             str(trigger),
+            job_id,
             next_run_time,
         )
         self._record_activity(
@@ -4219,10 +4256,27 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         return None
 
     try:
-        trigger = CronTrigger.from_crontab(cron_expr, timezone=_cron_trigger_timezone())
+        trigger = _build_scheduler_cron_trigger(cron_expr, timezone=_cron_trigger_timezone())
         return trigger.get_next_fire_time(None, reference)
     except Exception:
         return None
+
+
+def _build_scheduler_cron_trigger(schedule: str, timezone):
+    if CronTrigger is None:
+        raise ValueError("Cron scheduler not available")
+    parts = str(schedule or "").strip().split()
+    if len(parts) != 5:
+        raise ValueError("Invalid cron schedule")
+    minute, hour, day, month, day_of_week = parts
+    return CronTrigger(
+        minute=minute,
+        hour=hour,
+        day=day,
+        month=month,
+        day_of_week=day_of_week,
+        timezone=timezone,
+    )
 
 
 def _configured_timezone_name() -> str:
