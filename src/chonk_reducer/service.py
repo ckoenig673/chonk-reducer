@@ -3800,6 +3800,14 @@ class ChonkService:
         self.register_jobs()
         self._scheduler_stopped = False
         self.scheduler.start()
+
+        for job in self.scheduler.get_jobs():
+            LOGGER.info(
+                "Scheduler job active: job_id=%s next_run=%s",
+                job.id,
+                job.next_run_time
+            )
+
         self._scheduler_started_at = _utc_timestamp()
         LOGGER.info("Service scheduler started")
         self._record_activity(event_type="scheduler_start", message="Scheduler started")
