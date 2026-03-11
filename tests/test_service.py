@@ -439,15 +439,10 @@ def test_blank_schedule_disables_job_registration():
 def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monkeypatch):
     captured = {}
 
-    class FakeTrigger(object):
-        pass
-
     class FakeCronTrigger(object):
-        @staticmethod
-        def from_crontab(expr, timezone=None):
-            captured["expr"] = expr
+        def __init__(self, minute, hour, day, month, day_of_week, timezone=None):
+            captured["expr"] = "%s %s %s %s %s" % (minute, hour, day, month, day_of_week)
             captured["timezone"] = timezone
-            return FakeTrigger()
 
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
@@ -479,7 +474,7 @@ def test_scheduler_registration_normalizes_legacy_numeric_weekday_schedule(monke
 
     assert captured["expr"] == "0 2 * * sun"
     assert str(captured["timezone"]) == "UTC"
-    assert isinstance(added["trigger"], FakeTrigger)
+    assert isinstance(added["trigger"], FakeCronTrigger)
     assert added["id"] == "library-99-schedule"
 
 
@@ -487,16 +482,13 @@ def test_scheduler_registration_logs_timezone_and_next_run_for_named_weekday_sch
     monkeypatch.setenv("TZ", "America/Chicago")
     captured = {}
 
-    class FakeTrigger(object):
+    class FakeCronTrigger(object):
+        def __init__(self, minute, hour, day, month, day_of_week, timezone=None):
+            captured["expr"] = "%s %s %s %s %s" % (minute, hour, day, month, day_of_week)
+            captured["timezone"] = timezone
+
         def __str__(self):
             return "cron[0 2 * * sun,tue,thu]"
-
-    class FakeCronTrigger(object):
-        @staticmethod
-        def from_crontab(expr, timezone=None):
-            captured["expr"] = expr
-            captured["timezone"] = timezone
-            return FakeTrigger()
 
     class FakeJob(object):
         next_run_time = datetime(2026, 3, 10, 2, 0, tzinfo=service_module.ZoneInfo("America/Chicago"))
@@ -528,6 +520,7 @@ def test_scheduler_registration_logs_timezone_and_next_run_for_named_weekday_sch
     assert captured["timezone"] == service_module._cron_trigger_timezone()
     assert "Registering Movies schedule: raw='0 2 * * sun,tue,thu'" in caplog.text
     assert "normalized='0 2 * * sun,tue,thu'" in caplog.text
+    assert "job_id='library-99-schedule'" in caplog.text
     assert "next_run='2026-03-10 02:00'" in caplog.text
 
 
@@ -4610,8 +4603,8 @@ def test_dashboard_next_run_matches_scheduler_for_legacy_weekend_crons(monkeypat
     assert service_module._format_scheduler_datetime(saturday_next) == "2026-03-14 20:15"
 
     timezone = service_module._cron_trigger_timezone()
-    expected_sunday = service_module.CronTrigger.from_crontab(normalized_sun, timezone=timezone).get_next_fire_time(None, now)
-    expected_saturday = service_module.CronTrigger.from_crontab(normalized_sat, timezone=timezone).get_next_fire_time(None, now)
+    expected_sunday = service_module._build_scheduler_cron_trigger(normalized_sun, timezone=timezone).get_next_fire_time(None, now)
+    expected_saturday = service_module._build_scheduler_cron_trigger(normalized_sat, timezone=timezone).get_next_fire_time(None, now)
 
     assert service_module._format_scheduler_datetime(sunday_next) == service_module._format_scheduler_datetime(expected_sunday)
     assert service_module._format_scheduler_datetime(saturday_next) == service_module._format_scheduler_datetime(expected_saturday)
@@ -4666,6 +4659,66 @@ def test_scheduler_registration_uses_same_next_fire_time_as_dashboard_helper(mon
         assert service_module._format_scheduler_datetime(registered_job.next_run_time) == service_module._format_scheduler_datetime(expected_next)
     finally:
         service.scheduler.shutdown(wait=False)
+
+
+def test_build_scheduler_cron_trigger_supports_named_weekday_sets(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Chicago")
+    timezone = service_module._cron_trigger_timezone()
+    now = datetime(2026, 3, 9, 12, 0, tzinfo=service_module.ZoneInfo("America/Chicago"))
+
+    movies_trigger = service_module._build_scheduler_cron_trigger("0 2 * * sun,tue,thu", timezone=timezone)
+    tv_trigger = service_module._build_scheduler_cron_trigger("0 2 * * mon,wed,fri", timezone=timezone)
+
+    assert service_module._format_scheduler_datetime(movies_trigger.get_next_fire_time(None, now)) == "2026-03-10 02:00"
+    assert service_module._format_scheduler_datetime(tv_trigger.get_next_fire_time(None, now)) == "2026-03-11 02:00"
+
+
+def test_scheduler_event_listener_records_missed_and_error_events(monkeypatch, caplog):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    recorded = []
+
+    def _record_activity(**kwargs):
+        recorded.append(kwargs)
+
+    monkeypatch.setattr(service, "_record_activity", _record_activity)
+    caplog.set_level("INFO")
+
+    class MissedEvent(object):
+        code = service_module.EVENT_JOB_MISSED
+        job_id = "library-1-schedule"
+        exception = None
+
+    class ErrorEvent(object):
+        code = service_module.EVENT_JOB_ERROR
+        job_id = "library-2-schedule"
+        exception = RuntimeError("boom")
+
+    service._on_scheduler_event(MissedEvent())
+    service._on_scheduler_event(ErrorEvent())
+
+    assert "Scheduler missed job id='library-1-schedule'" in caplog.text
+    assert "Scheduler job error id='library-2-schedule'" in caplog.text
+    assert [row["event_type"] for row in recorded] == ["scheduler_job_missed", "scheduler_job_error"]
+
+
+def test_scheduler_event_listener_records_library_schedule_execution(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    recorded = []
+
+    monkeypatch.setattr(service, "_record_activity", lambda **kwargs: recorded.append(kwargs))
+
+    class ExecutedEvent(object):
+        code = service_module.EVENT_JOB_EXECUTED
+        job_id = "library-1-schedule"
+        exception = None
+
+    service._on_scheduler_event(ExecutedEvent())
+
+    assert [row["event_type"] for row in recorded] == ["scheduled_trigger_fired"]
 
 
 def test_scheduled_library_trigger_logs_and_enqueues_expected_job(caplog, monkeypatch):
