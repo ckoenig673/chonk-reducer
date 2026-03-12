@@ -763,17 +763,15 @@ class ChonkService:
   <h1>Dashboard</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
   <section style="border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; background: #fff; max-width: 520px;">
-    <h3 style="margin: 0 0 0.45rem 0;">System Info</h3>
+    <h3 style="margin: 0 0 0.45rem 0;">System Status</h3>
     <div><strong>Scheduler:</strong> <span id="runtime-system-scheduler">%s</span></div>
     <div><strong>Next Library Run:</strong> <span id="runtime-system-next-library-run">%s</span></div>
     <div><strong>Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">%s</span></div>
   </section>
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Libraries</h2>
+  %s
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Lifetime Savings</h2>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Recent Runs</h2>
   %s
   <script>
     (function () {
@@ -1046,10 +1044,9 @@ class ChonkService:
             self._scheduler_running_label(),
             self._next_global_scheduled_job_label(),
             self._next_housekeeping_run_label(),
-            self._runtime_status_html(),
             "".join(library_sections),
-            self._lifetime_savings_html(lifetime_savings),
-            self._recent_runs_html(recent_runs),
+            self._runtime_status_html(include_preview=False),
+            self._preview_results_html(self._runtime_status_snapshot()),
         )
         return self._render_shell_html("Dashboard", content)
 
@@ -1429,9 +1426,6 @@ class ChonkService:
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Housekeeping</h2>
   %s
 
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
-  %s
-
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Runtime / Storage Information</h2>
   <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
@@ -1455,7 +1449,6 @@ class ChonkService:
             _escape_html(scheduler_snapshot["next_time"]),
             _escape_html(self.current_job_status()["queue_depth"]),
             self._housekeeping_summary_html(),
-            self._runtime_job_status_html(),
             _escape_html(service_mode),
             _escape_html(self.settings.host),
             _escape_html(str(self.settings.port)),
@@ -2841,7 +2834,7 @@ class ChonkService:
             return None
         return dict(snapshot)
 
-    def _runtime_status_html(self) -> str:
+    def _runtime_status_html(self, include_preview: bool = True) -> str:
         snapshot = self._runtime_status_snapshot()
         idle_placeholder = "-"
         current_library = snapshot["current_library"] or idle_placeholder
@@ -2849,6 +2842,7 @@ class ChonkService:
         run_id = snapshot["run_id"] or idle_placeholder
         started_at = snapshot["started_at"] or idle_placeholder
         current_file = snapshot["current_file"] or ("Waiting for first file" if snapshot["status"] == "Running" else idle_placeholder)
+        preview_html = self._preview_results_html(snapshot) if include_preview else ""
         return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\">
   <tbody>
     <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td id=\"runtime-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
@@ -2890,7 +2884,7 @@ class ChonkService:
             _escape_html(snapshot["files_failed"] or "-"),
             _escape_html(_format_saved_bytes(snapshot["bytes_saved"]) if snapshot["bytes_saved"] else "-"),
             self._runtime_progress_overview_html(snapshot),
-            self._preview_results_html(snapshot),
+            preview_html,
         )
 
     def _preview_results_html(self, snapshot: Dict[str, str]) -> str:
