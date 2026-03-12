@@ -63,7 +63,7 @@ from . import secrets
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.43.1") or "1.43.1").strip() or "1.43.1"
+APP_VERSION = (os.getenv("APP_VERSION", "1.43.2") or "1.43.2").strip() or "1.43.2"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -1668,7 +1668,7 @@ class ChonkService:
             for row in rows
         ]
 
-    def _smart_optimization_summary(self, library_rows: List[Dict[str, object]], top_file_rows: List[Dict[str, object]], top_run_rows: List[Dict[str, object]]) -> Dict[str, str]:
+    def _smart_optimization_summary(self, library_rows: List[Dict[str, object]], top_file_rows: List[Dict[str, object]], top_run_rows: List[Dict[str, object]]) -> Dict[str, object]:
         best_library = "-"
         reclaimable = 0
         if library_rows:
@@ -1702,6 +1702,7 @@ class ChonkService:
             "best_next_library": best_library,
             "estimated_reclaimable_space": _format_saved_bytes(reclaimable),
             "highest_potential_files": highest_potential_files,
+            "highest_potential_file_paths": [str(row.get("file") or "-") for row in top_file_rows[:3]],
             "most_effective_library_recently": most_effective_library_recently,
             "most_effective_recent_run": most_effective_recent_run,
         }
@@ -1711,11 +1712,11 @@ class ChonkService:
         avg_label = "-" if avg is None else "%.1f%%" % float(avg)
         return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
   <tbody>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Total Files Optimized</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Total Space Saved</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Average Savings Percent</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Saved This Week</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
-    <tr><th style="text-align:left; padding:0.35rem;">Saved This Month</th><td style="padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Total Files Optimized</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Total Space Saved</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Average Savings Percent</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Saved This Week</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
+    <tr><th style="text-align:left; padding:0.35rem;">Saved This Month</th><td style="padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
   </tbody>
 </table>""" % (
             _escape_html(str(summary.get("files_optimized", 0))),
@@ -1812,7 +1813,20 @@ class ChonkService:
   <tbody>%s</tbody>
 </table>""" % "".join(body)
 
-    def _smart_optimization_summary_html(self, summary: Dict[str, str]) -> str:
+    def _analytics_file_list_html(self, paths: List[str]) -> str:
+        if not paths:
+            return "-"
+        items = []
+        for raw_path in paths:
+            path = str(raw_path or "").strip()
+            display_name = _analytics_file_display_name(path)
+            items.append('<li title="%s">%s</li>' % (_escape_html(path), _escape_html(display_name)))
+        return '<ul style="margin:0; padding-left:1.15rem;">%s</ul>' % "".join(items)
+
+    def _smart_optimization_summary_html(self, summary: Dict[str, object]) -> str:
+        highest_potential_paths = summary.get("highest_potential_file_paths")
+        if not isinstance(highest_potential_paths, list):
+            highest_potential_paths = []
         return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
   <tbody>
     <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Best Next Library</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
@@ -1824,7 +1838,7 @@ class ChonkService:
 </table>""" % (
             _escape_html(summary.get("best_next_library", "-")),
             _escape_html(summary.get("estimated_reclaimable_space", "-")),
-            _escape_html(summary.get("highest_potential_files", "-")),
+            self._analytics_file_list_html(highest_potential_paths),
             _escape_html(summary.get("most_effective_library_recently", "-")),
             _escape_html(summary.get("most_effective_recent_run", "-")),
         )
