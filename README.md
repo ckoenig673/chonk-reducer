@@ -4,7 +4,11 @@
 
 # Chonk Reducer
 
-**Current Version:** v1.39.2
+<p align="center">
+  <img src="assets/chonk-reducer-logo.png" width="400">
+</p>
+
+**Current Version:** v1.43.3
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
