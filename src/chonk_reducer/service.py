@@ -1428,7 +1428,6 @@ class ChonkService:
 
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Housekeeping</h2>
   %s
-  <div style="margin-top: 0.75rem;">%s</div>
 
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
@@ -1456,7 +1455,6 @@ class ChonkService:
             _escape_html(scheduler_snapshot["next_time"]),
             _escape_html(self.current_job_status()["queue_depth"]),
             self._housekeeping_summary_html(),
-            self._housekeeping_settings_form_html(),
             self._runtime_job_status_html(),
             _escape_html(service_mode),
             _escape_html(self.settings.host),
