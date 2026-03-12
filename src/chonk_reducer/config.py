@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from chonk_reducer import __version__ as PACKAGE_VERSION
 
 
 
@@ -148,7 +147,7 @@ def load_config() -> Config:
     stats_path = Path(_env("STATS_PATH", str(default_stats_path)))
     library = _env("LIBRARY", "")
     encoder = _env("ENCODER", "hevc_qsv")
-    app_version = (os.getenv("APP_VERSION") or "").strip() or (PACKAGE_VERSION or "").strip() or "unknown"
+    app_version = (os.getenv("APP_VERSION", "dev") or "dev").strip() or "dev"
 
     return Config(
         version=app_version,

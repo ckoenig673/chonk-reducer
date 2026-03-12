@@ -19,7 +19,6 @@ from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .skip_policy import evaluate_skip
 from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path
-from . import __version__ as PKG_VERSION
 
 
 def _fmt_hms(seconds: float) -> str:

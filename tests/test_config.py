@@ -70,3 +70,11 @@ def test_retry_backoff_seconds_falls_back_to_legacy_env_name(monkeypatch):
     cfg = load_config()
 
     assert cfg.retry_backoff_seconds == 9
+
+
+def test_app_version_comes_from_environment(monkeypatch):
+    monkeypatch.setenv("APP_VERSION", "v1.41.0")
+
+    cfg = load_config()
+
+    assert cfg.version == "v1.41.0"
