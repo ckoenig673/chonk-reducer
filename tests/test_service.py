@@ -536,8 +536,9 @@ def test_home_page_route_returns_minimal_operator_page():
     assert "Chonk Reducer" in body
     assert "Run Now" in body
     assert "Path:" in body
-    assert "Lifetime Savings" in body
-    assert "Recent Runs" in body
+    assert "System Status" in body
+    assert "Libraries" in body
+    assert "Preview Results" in body
 
 
 def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch):
@@ -551,11 +552,11 @@ def test_home_page_shows_placeholder_when_no_runs_recorded(tmp_path, monkeypatch
 
     assert status_code == 200
     assert "Last Run:</strong> Never" in body
-    assert "No reclaimed storage recorded yet" in body
-    assert "No recent runs recorded yet" in body
+    assert "System Status" in body
+    assert "Preview Results" in body
 
 
-def test_home_page_shows_lifetime_savings_values_for_movies_and_tv(tmp_path, monkeypatch):
+def test_home_page_shows_latest_run_savings_values_for_movies_and_tv(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     _seed_run(
         db_path,
@@ -592,14 +593,11 @@ def test_home_page_shows_lifetime_savings_values_for_movies_and_tv(tmp_path, mon
     status_code, body, _ = _call_get(service, "/")
 
     assert status_code == 200
-    assert "Lifetime Savings" in body
-    assert "Movies reclaimed:</strong> 3.0 GB" in body
-    assert "TV reclaimed:</strong> 2.0 GB" in body
-    assert "Total reclaimed:</strong> 5.0 GB" in body
-    assert "Files optimized:</strong> 5" in body
+    assert "Recent Savings:</strong> 1.0 GB across 0 files" in body
+    assert "Recent Savings:</strong> 2.0 GB across 0 files" in body
 
 
-def test_home_page_shows_lifetime_savings_empty_state_when_no_successful_runs(tmp_path, monkeypatch):
+def test_home_page_shows_zero_recent_savings_when_no_successful_runs(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     _seed_run(
         db_path,
@@ -627,8 +625,7 @@ def test_home_page_shows_lifetime_savings_empty_state_when_no_successful_runs(tm
     status_code, body, _ = _call_get(service, "/")
 
     assert status_code == 200
-    assert "Lifetime Savings" in body
-    assert "No reclaimed storage recorded yet" in body
+    assert body.count("Recent Savings:</strong> 0 B across 0 files") >= 2
 
 
 def test_home_page_shows_latest_movies_run_information(tmp_path, monkeypatch):
@@ -688,7 +685,7 @@ def test_home_page_shows_latest_tv_run_information(tmp_path, monkeypatch):
     assert "Recent Savings:</strong> 0 B across 0 files" in body
 
 
-def test_home_page_shows_recent_runs_table_with_latest_rows(tmp_path, monkeypatch):
+def test_home_page_does_not_render_recent_runs_section(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     _seed_run(
         db_path,
@@ -700,26 +697,6 @@ def test_home_page_shows_recent_runs_table_with_latest_rows(tmp_path, monkeypatc
         duration_seconds=12.0,
         saved_bytes=1024,
     )
-    _seed_run(
-        db_path,
-        library="tv",
-        ts_end="2026-01-02T09:00:00",
-        success_count=0,
-        failed_count=1,
-        skipped_count=0,
-        duration_seconds=9.0,
-        saved_bytes=0,
-    )
-    _seed_run(
-        db_path,
-        library="tv",
-        ts_end="2026-01-02T10:00:00",
-        success_count=0,
-        failed_count=0,
-        skipped_count=3,
-        duration_seconds=4.0,
-        saved_bytes=0,
-    )
     monkeypatch.setenv("STATS_PATH", str(db_path))
 
     service = ChonkService(
@@ -728,22 +705,11 @@ def test_home_page_shows_recent_runs_table_with_latest_rows(tmp_path, monkeypatc
     status_code, body, _ = _call_get(service, "/")
 
     assert status_code == 200
-    assert "Recent Runs" in body
-    assert "<th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Time</th>" in body
-    assert "2026-01-02T10:00:00" in body
-    assert "2026-01-02T09:00:00" in body
-    assert "2026-01-02T08:00:00" in body
-    recent_runs_start = body.index("Recent Runs")
-    recent_runs_html = body[recent_runs_start:]
-    assert recent_runs_html.index("2026-01-02T10:00:00") < recent_runs_html.index("2026-01-02T09:00:00")
-    assert recent_runs_html.index("2026-01-02T09:00:00") < recent_runs_html.index("2026-01-02T08:00:00")
-    assert "<td>skipped</td>" in body
-    assert "<td>failed</td>" in body
-    assert "<td>success</td>" in body
-    assert "<td>1.0 KB</td>" in body
+    assert "Recent Runs" not in body
+    assert "Preview Results" in body
 
 
-def test_home_page_recent_runs_empty_state_when_runs_table_has_no_rows(tmp_path, monkeypatch):
+def test_home_page_no_recent_runs_section_even_with_empty_runs_table(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -778,8 +744,8 @@ def test_home_page_recent_runs_empty_state_when_runs_table_has_no_rows(tmp_path,
     status_code, body, _ = _call_get(service, "/")
 
     assert status_code == 200
-    assert "Recent Runs" in body
-    assert "No recent runs recorded yet" in body
+    assert "Recent Runs" not in body
+    assert "Preview Results" in body
 
 
 def test_health_endpoint_payload():
@@ -1323,8 +1289,8 @@ def test_dashboard_and_system_show_runtime_status():
     assert "id=\"runtime-progress-section\"></div>" in dashboard_body
 
     assert system_code == 200
-    assert "Current Job Status" in system_body
-    assert "Status</th><td" in system_body
+    assert "Current Job Status" not in system_body
+    assert "Scheduler Status</th><td" in system_body
     assert "Queue Depth" in system_body
 
 
@@ -1521,7 +1487,7 @@ def test_shell_header_version_does_not_double_prefix(monkeypatch):
     assert "Chonk Reducer vv1.42.0" not in body
 
 
-def test_dashboard_system_info_shows_library_and_housekeeping_runs(monkeypatch):
+def test_dashboard_system_status_shows_library_and_housekeeping_runs(monkeypatch):
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
     )
@@ -1531,10 +1497,13 @@ def test_dashboard_system_info_shows_library_and_housekeeping_runs(monkeypatch):
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert "System Info" in body
+    assert "System Status" in body
     assert 'Next Library Run:</strong> <span id="runtime-system-next-library-run">TV — 2:00 AM</span>' in body
     assert 'Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">2026-03-14 03:00</span>' in body
     assert "runtime-system-next-run" not in body
+    assert body.index("System Status") < body.index("Libraries")
+    assert body.index("Libraries") < body.index("Current Job Status")
+    assert body.index("Current Job Status") < body.index("Preview Results")
 
 
 def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
@@ -2094,7 +2063,7 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
     assert status_code == 200
     assert "Service / Scheduler Summary" in body
     assert "Runtime / Storage Information" in body
-    assert "Current Job Status" in body
+    assert "Current Job Status" not in body
     assert "App Version</th>" in body
     assert "Service Mode</th><td" in body and "Enabled" in body
     assert "Scheduler Status</th><td" in body and "Running" in body
