@@ -136,9 +136,9 @@ Service UI routes:
 
 ### System
 
-- Service/runtime info, scheduler state, queue state
-- Configured schedules + next scheduled times
-- Paths (DB/work roots)
+- Service/scheduler summary (app version, scheduler status/start time, next scheduled library job/time, queue depth)
+- Housekeeping section (enabled state, schedule, next run, retention, and in-page controls)
+- Current job status + runtime paths (DB/work roots)
 
 ---
 
@@ -219,6 +219,8 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `generic_webhook_url` | Global | SQLite `settings` (encrypted) | Generic webhook endpoint. | Empty = not configured. |
 | `enable_run_complete_notifications` | Global | SQLite `settings` | Enable run-complete notifications. | `0` (off). |
 | `enable_run_failure_notifications` | Global | SQLite `settings` | Enable run-failure notifications. | `0` (off). |
+| `housekeeping_enabled` | Global | SQLite `settings` | Enable/disable scheduled housekeeping runs. | `1` (enabled). |
+| `housekeeping_schedule` | Global | SQLite `settings` | Cron schedule for housekeeping scheduler registration. | `0 2 * * *` (daily 02:00). |
 
 ### Library Settings (SQLite: `libraries`)
 
@@ -268,9 +270,11 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 
 ## Daily Housekeeping
 
-- The long-running service schedules a lightweight daily housekeeping task.
+- Housekeeping is DB-backed (`housekeeping_enabled`, `housekeeping_schedule`) and configurable from the System/Settings UI with weekday checkboxes + time input.
+- Existing installs bootstrap defaults automatically (`enabled`, daily at `02:00`) so upgrade behavior matches prior cleanup behavior without manual setup.
 - Housekeeping performs log cleanup under `/work/logs` using `LOG_RETENTION_DAYS`, even if no library run starts that day.
 - It does not run encode work, does not modify media files, and skips itself when queue/run activity is in progress.
+- Updating housekeeping settings from the UI refreshes the live scheduler job without service restart.
 - Activity entries include `housekeeping_started` and `housekeeping_completed`.
 
 ---

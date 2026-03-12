@@ -2058,17 +2058,15 @@ def test_system_page_displays_service_scheduler_and_paths(monkeypatch, tmp_path)
     status_code, body, _ = _call_get(service, "/system")
 
     assert status_code == 200
-    assert "Service Information" in body
-    assert "Scheduler Information" in body
+    assert "Service / Scheduler Summary" in body
     assert "Runtime / Storage Information" in body
     assert "Current Job Status" in body
-    assert "Version</th>" in body
+    assert "App Version</th>" in body
     assert "Service Mode</th><td" in body and "Enabled" in body
     assert "Scheduler Status</th><td" in body and "Running" in body
-    assert "Movies Schedule" in body and "<code>0 2 * * *</code>" in body
-    assert "TV Schedule" in body and "<code>0 4 * * *</code>" in body
-    assert "2026-01-08 02:00" in body
-    assert "2026-01-08 04:00" in body
+    assert "Next Scheduled Job</th><td" in body and "Movies" in body
+    assert "Next Scheduled Time</th><td" in body and "2026-01-08 02:00" in body
+    assert "Housekeeping Enabled" in body
     assert str(db_path) in body
     assert "/work" in body
     assert "Movies: /data/movies" in body
@@ -2105,10 +2103,8 @@ def test_system_page_shows_placeholders_for_missing_schedule_data(monkeypatch, t
     assert "Service Host</th><td" in body and "127.0.0.1" in body
     assert "Service Port</th><td" in body and "9090" in body
     assert "Scheduler Status</th><td" in body and "Stopped" in body
-    assert "<code>Not set</code>" in body
-    assert "Movies Schedule" in body
-    assert "TV Schedule" in body
-    assert "Not Scheduled" in body
+    assert "Next Scheduled Job</th><td" in body and ">-<" in body
+    assert "Next Scheduled Time</th><td" in body and ">-<" in body
     assert "Work / Log Path</th><td" in body and "Not set" in body
 
 
@@ -3570,6 +3566,8 @@ def test_settings_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch)
         "generic_webhook_url",
         "enable_run_complete_notifications",
         "enable_run_failure_notifications",
+        "housekeeping_enabled",
+        "housekeeping_schedule",
     }
     values = {row["key"]: row["value"] for row in rows}
     assert values["min_file_age_minutes"] == "22"
@@ -5062,3 +5060,104 @@ def test_housekeeping_skips_when_jobs_active(tmp_path, monkeypatch):
     ).fetchone()[0]
     conn.close()
     assert int(count) == 0
+
+
+def test_housekeeping_settings_bootstrap_defaults(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    assert service._editable_settings["housekeeping_enabled"] == "1"
+    assert service._editable_settings["housekeeping_schedule"] == "0 2 * * *"
+
+
+def test_housekeeping_schedule_persists_in_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    service.update_editable_settings(
+        {
+            "housekeeping_form": "1",
+            "housekeeping_enabled": "1",
+            "housekeeping_schedule": "0 2 * * *",
+            "housekeeping_day_mon": "1",
+            "housekeeping_day_wed": "1",
+            "housekeeping_time": "03:30",
+        }
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    value = conn.execute("SELECT value FROM settings WHERE key = 'housekeeping_schedule'").fetchone()[0]
+    conn.close()
+    assert value == "30 3 * * mon,wed"
+
+
+def test_housekeeping_job_absent_when_disabled(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("HOUSEKEEPING_ENABLED", "0")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.register_jobs()
+
+    jobs = {job.id for job in service.scheduler.get_jobs()}
+    assert service_module.HOUSEKEEPING_JOB_ID not in jobs
+
+
+def test_updating_housekeeping_settings_refreshes_live_job(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    service.register_jobs()
+    assert service.scheduler.get_job(service_module.HOUSEKEEPING_JOB_ID) is not None
+
+    service.update_editable_settings({"housekeeping_form": "1", "housekeeping_schedule": "0 2 * * *", "housekeeping_enabled": "0"})
+    assert service.scheduler.get_job(service_module.HOUSEKEEPING_JOB_ID) is None
+
+    service.update_editable_settings(
+        {
+            "housekeeping_form": "1",
+            "housekeeping_enabled": "1",
+            "housekeeping_schedule": "0 2 * * *",
+            "housekeeping_day_tue": "1",
+            "housekeeping_day_thu": "1",
+            "housekeeping_time": "01:15",
+        }
+    )
+    assert service.scheduler.get_job(service_module.HOUSEKEEPING_JOB_ID) is not None
+    assert service._editable_settings["housekeeping_schedule"] == "15 1 * * tue,thu"
+
+
+def test_system_page_renders_housekeeping_next_run_and_scheduler_summary(monkeypatch, tmp_path):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    monkeypatch.setenv("MOVIE_SCHEDULE", "0 2 * * *")
+    monkeypatch.setenv("TZ", "UTC")
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service.update_editable_settings(
+        {
+            "housekeeping_form": "1",
+            "housekeeping_enabled": "1",
+            "housekeeping_schedule": "0 2 * * *",
+            "housekeeping_day_mon": "1",
+            "housekeeping_day_fri": "1",
+            "housekeeping_time": "02:00",
+        }
+    )
+    service.register_jobs()
+
+    status_code, body, _ = _call_get(service, "/system")
+
+    assert status_code == 200
+    assert "Service / Scheduler Summary" in body
+    assert "App Version" in body
+    assert "Next Scheduled Job" in body
+    assert "Next Scheduled Time" in body
+    assert "Housekeeping Enabled" in body
+    assert "Housekeeping Schedule" in body
+    assert "Next Housekeeping Run" in body
+    assert "Save Housekeeping" in body
