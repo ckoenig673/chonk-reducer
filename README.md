@@ -1,6 +1,12 @@
-![License](https://img.shields.io/github/license/ckoenig673/chonk-reducer)
+<p align="center">
+
+![License](https://img.shields.io/badge/license-MIT-green)
 ![Release](https://img.shields.io/github/v/release/ckoenig673/chonk-reducer)
-![CI](https://github.com/ckoenig673/chonk-reducer/actions/workflows/ci.yml/badge.svg)
+![CI](https://img.shields.io/github/actions/workflow/status/ckoenig673/chonk-reducer/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![Stars](https://img.shields.io/github/stars/ckoenig673/chonk-reducer?style=social)
+
+</p>
 
 # Chonk Reducer
 
