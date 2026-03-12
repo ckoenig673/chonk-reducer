@@ -5226,12 +5226,14 @@ def test_analytics_page_and_aggregations_render(tmp_path, monkeypatch):
     status_code, body, _ = _call_get(service, "/analytics")
     assert status_code == 200
     assert "Overall Summary" in body
-    assert "font-weight:700; font-size:1.05rem;" in body
+    assert "font-weight:800; font-size:1.1rem; color:#111827;" in body
     assert "Per-Library Breakdown" in body
     assert "Top Savings Files" in body
     assert 'title="/tv/b.mkv"' in body
     assert ">b<" in body
     assert "Best Next Opportunities" in body
+    assert "Highest Potential Files" in body
+    assert "<li title=\"/tv/b.mkv\">b</li>" in body
 
 
 def test_top_savings_runs_calculation(tmp_path, monkeypatch):
