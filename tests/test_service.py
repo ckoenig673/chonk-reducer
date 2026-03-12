@@ -1503,6 +1503,40 @@ def test_dashboard_library_card_displays_runtime_statuses(monkeypatch):
     assert "Status:</strong> Running" in running_body
     assert "Progress:</strong> 8 / 20 files" in running_body
 
+def test_display_version_avoids_double_prefix():
+    assert service_module._display_version("v1.42.0") == "v1.42.0"
+    assert service_module._display_version("1.42.0") == "v1.42.0"
+
+
+def test_shell_header_version_does_not_double_prefix(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    monkeypatch.setattr(service_module, "APP_VERSION", "v1.42.0")
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Chonk Reducer v1.42.0" in body
+    assert "Chonk Reducer vv1.42.0" not in body
+
+
+def test_dashboard_system_info_shows_library_and_housekeeping_runs(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    monkeypatch.setattr(service, "_next_global_scheduled_job_label", lambda: "TV — 2:00 AM")
+    monkeypatch.setattr(service, "_next_housekeeping_run_label", lambda: "2026-03-14 03:00")
+
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "System Info" in body
+    assert 'Next Library Run:</strong> <span id="runtime-system-next-library-run">TV — 2:00 AM</span>' in body
+    assert 'Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">2026-03-14 03:00</span>' in body
+    assert "runtime-system-next-run" not in body
+
+
 def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")

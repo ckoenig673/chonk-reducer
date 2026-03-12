@@ -79,6 +79,15 @@ WEEKDAY_CHOICES = [
     ("Sa", "sat"),
 ]
 
+
+
+def _display_version(version: str) -> str:
+    normalized = str(version or "").strip() or "dev"
+    if normalized.lower().startswith("v"):
+        return normalized
+    return "v%s" % normalized
+
+
 LEGACY_CRON_WEEKDAY_MAP = {
     "0": "sun",
     "1": "mon",
@@ -756,7 +765,8 @@ class ChonkService:
   <section style="border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; background: #fff; max-width: 520px;">
     <h3 style="margin: 0 0 0.45rem 0;">System Info</h3>
     <div><strong>Scheduler:</strong> <span id="runtime-system-scheduler">%s</span></div>
-    <div><strong>Next Run:</strong> <span id="runtime-system-next-run">%s</span></div>
+    <div><strong>Next Library Run:</strong> <span id="runtime-system-next-library-run">%s</span></div>
+    <div><strong>Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">%s</span></div>
   </section>
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
@@ -907,22 +917,13 @@ class ChonkService:
         return scheduler.running ? "Running" : "Stopped";
       }
 
-      function nextRunLabel(snapshot) {
-        var scheduler = snapshot.scheduler || {};
-        var nextRun = String(scheduler.next_run || "").trim();
+      function nextLibraryRunLabel(snapshot) {
         var library = String(snapshot.next_scheduled_job || "").trim();
-        if (!nextRun || nextRun === "null") {
+        var time = String(snapshot.next_scheduled_time || "").trim();
+        if (!library || library === "-" || !time || time === "-") {
           return "-";
         }
-        var parsed = new Date(nextRun);
-        var timeLabel = nextRun;
-        if (!isNaN(parsed.getTime())) {
-          timeLabel = parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-        if (!library || library === "-") {
-          return timeLabel;
-        }
-        return library + " — " + timeLabel;
+        return library + " — " + time;
       }
 
       function updateFromSnapshot(snapshot) {
@@ -947,7 +948,8 @@ class ChonkService:
         setText("runtime-files-failed", snapshot.files_failed, "-");
         setText("runtime-bytes-saved", savedBytesLabel(snapshot.bytes_saved), "-");
         setText("runtime-system-scheduler", schedulerStateLabel(snapshot), "-");
-        setText("runtime-system-next-run", nextRunLabel(snapshot), "-");
+        setText("runtime-system-next-library-run", nextLibraryRunLabel(snapshot), "-");
+        setText("runtime-system-next-housekeeping-run", snapshot.next_housekeeping_run, "-");
         setText("runtime-preview-library", snapshot.preview_library, "-");
         setText("runtime-preview-generated-at", snapshot.preview_generated_at, "-");
         setPreviewResults(snapshot.preview_results || []);
@@ -1043,6 +1045,7 @@ class ChonkService:
 """ % (
             self._scheduler_running_label(),
             self._next_global_scheduled_job_label(),
+            self._next_housekeeping_run_label(),
             self._runtime_status_html(),
             "".join(library_sections),
             self._lifetime_savings_html(lifetime_savings),
@@ -1414,7 +1417,7 @@ class ChonkService:
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Service / Scheduler Summary</h2>
   <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
-      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">App Version</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">Chonk Reducer v%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">App Version</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">Chonk Reducer %s</td></tr>
       <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Scheduler Status</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
       <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Scheduler Started</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
       <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next Scheduled Job</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
@@ -1446,7 +1449,7 @@ class ChonkService:
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Settings Source Information</h2>
   <p>Schedules and paths shown above are loaded from SQLite-backed settings and libraries, with environment/compose values used only for compatibility defaults.</p>
 """ % (
-            _escape_html(APP_VERSION),
+            _escape_html(_display_version(APP_VERSION)),
             _escape_html(scheduler_snapshot["status"]),
             _escape_html(_format_readable_timestamp(scheduler_snapshot["started_at"])),
             _escape_html(scheduler_snapshot["next_job"]),
@@ -1693,7 +1696,7 @@ class ChonkService:
   </div>
 </body>
 </html>
-""" % ("v%s" % _escape_html(APP_VERSION), "".join(nav), content_html)
+""" % (_escape_html(_display_version(APP_VERSION)), "".join(nav), content_html)
 
     def health_payload(self) -> dict:
         return {"status": "ok"}
