@@ -5226,8 +5226,11 @@ def test_analytics_page_and_aggregations_render(tmp_path, monkeypatch):
     status_code, body, _ = _call_get(service, "/analytics")
     assert status_code == 200
     assert "Overall Summary" in body
+    assert "font-weight:700; font-size:1.05rem;" in body
     assert "Per-Library Breakdown" in body
     assert "Top Savings Files" in body
+    assert 'title="/tv/b.mkv"' in body
+    assert ">b<" in body
     assert "Best Next Opportunities" in body
 
 

@@ -63,7 +63,7 @@ from . import secrets
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.43.0") or "1.43.0").strip() or "1.43.0"
+APP_VERSION = (os.getenv("APP_VERSION", "1.43.1") or "1.43.1").strip() or "1.43.1"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -86,6 +86,15 @@ def _display_version(version: str) -> str:
     if normalized.lower().startswith("v"):
         return normalized
     return "v%s" % normalized
+
+
+def _analytics_file_display_name(path: str) -> str:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return "-"
+    filename = os.path.basename(raw_path)
+    stem, _ = os.path.splitext(filename)
+    return stem or filename
 
 
 LEGACY_CRON_WEEKDAY_MAP = {
@@ -1702,11 +1711,11 @@ class ChonkService:
         avg_label = "-" if avg is None else "%.1f%%" % float(avg)
         return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
   <tbody>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Total Files Optimized</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Total Space Saved</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Average Savings Percent</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Saved This Week</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
-    <tr><th style="text-align:left; padding:0.35rem;">Saved This Month</th><td style="padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Total Files Optimized</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Total Space Saved</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Average Savings Percent</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Saved This Week</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
+    <tr><th style="text-align:left; padding:0.35rem;">Saved This Month</th><td style="padding:0.35rem; font-weight:700; font-size:1.05rem;">%s</td></tr>
   </tbody>
 </table>""" % (
             _escape_html(str(summary.get("files_optimized", 0))),
@@ -1761,10 +1770,13 @@ class ChonkService:
             return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No optimized files recorded yet.</div>'
         body = []
         for row in rows:
+            full_path = str(row.get("file") or "-")
+            display_name = _analytics_file_display_name(full_path)
             body.append(
-                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
+                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;" title="%s">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
                 % (
-                    _escape_html(str(row.get("file") or "-")),
+                    _escape_html(full_path),
+                    _escape_html(display_name),
                     _escape_html(str(row.get("library") or "-")),
                     _escape_html(_format_saved_bytes(row.get("original_size") or 0)),
                     _escape_html(_format_saved_bytes(row.get("encoded_size") or 0)),
