@@ -89,6 +89,7 @@ Core run pipeline:
 Service UI routes:
 
 - `/dashboard`
+- `/analytics`
 - `/runs`
 - `/runs/{run_id}`
 - `/history`
@@ -104,6 +105,16 @@ Service UI routes:
 - Live runtime status/progress (auto refresh)
 - Stop Run action while active
 - Preview Results panel (latest snapshot) + **Clear Preview Results**
+- Preview Summary block (files evaluated/candidates + estimated totals and savings percent)
+- Compact Dashboard Summary widget (total saved, files optimized, saved this week/month, next runs)
+
+### Analytics
+
+- Overall savings summary (total files optimized, total saved, average savings percent, saved this week/month)
+- Savings over time tables (daily/weekly/monthly)
+- Per-library savings breakdown (files optimized, total saved, average savings percent, recent savings)
+- Top savings files and top savings runs
+- Best Next Opportunities summary (best next library, reclaimable space, highest potential files, recent effectiveness)
 
 ### Runs
 

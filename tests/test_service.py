@@ -5167,3 +5167,125 @@ def test_system_page_renders_housekeeping_next_run_and_scheduler_summary(monkeyp
     assert "Save Housekeeping" not in body
     assert "Generated cron" not in body
     assert "Enable housekeeping scheduler" not in body
+
+
+def test_analytics_page_and_aggregations_render(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    run_id = "run-analytics-1"
+    _seed_run(
+        db_path,
+        library="movies",
+        ts_end="2026-01-02T08:00:00",
+        success_count=2,
+        failed_count=0,
+        skipped_count=0,
+        saved_bytes=300,
+    )
+    _seed_encode(
+        db_path,
+        run_id=run_id,
+        ts="2026-01-02T08:00:00",
+        status="success",
+        path="/movies/a.mkv",
+        library="movies",
+        size_before_bytes=1000,
+        size_after_bytes=700,
+        saved_bytes=300,
+        duration_seconds=30,
+    )
+    _seed_encode(
+        db_path,
+        run_id="run-analytics-2",
+        ts="2026-01-03T08:00:00",
+        status="success",
+        path="/tv/b.mkv",
+        library="tv",
+        size_before_bytes=2000,
+        size_after_bytes=1400,
+        saved_bytes=600,
+        duration_seconds=22,
+    )
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    summary = service._analytics_overall_summary()
+    assert summary["files_optimized"] == 2
+    assert summary["total_saved"] == 900
+
+    libs = service._analytics_library_breakdown()
+    by_name = {row["library"].lower(): row for row in libs}
+    assert by_name["movies"]["total_saved"] == 300
+    assert by_name["tv"]["total_saved"] == 600
+
+    top_files = service._analytics_top_savings_files(limit=2)
+    assert top_files[0]["file"] == "/tv/b.mkv"
+    assert top_files[0]["saved_bytes"] == 600
+
+    status_code, body, _ = _call_get(service, "/analytics")
+    assert status_code == 200
+    assert "Overall Summary" in body
+    assert "Per-Library Breakdown" in body
+    assert "Top Savings Files" in body
+    assert "Best Next Opportunities" in body
+
+
+def test_top_savings_runs_calculation(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    _seed_run(db_path, library="movies", ts_end="2026-02-01T00:00:00", success_count=1, saved_bytes=1200)
+    _seed_run(db_path, library="tv", ts_end="2026-02-02T00:00:00", success_count=2, saved_bytes=800)
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    rows = service._analytics_top_savings_runs(limit=2)
+
+    assert rows[0]["saved_bytes"] == 1200
+    assert rows[0]["library"].lower() == "movies"
+    assert rows[1]["saved_bytes"] == 800
+
+
+def test_preview_savings_summary_calculation_and_render():
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    snapshot = {
+        "preview_results": [
+            {"file": "a.mkv", "original_size": 1000, "estimated_size": 700, "estimated_savings_pct": "30.0", "decision": "Encode"},
+            {"file": "b.mkv", "original_size": 1000, "estimated_size": 950, "estimated_savings_pct": "5.0", "decision": "Skip"},
+        ],
+        "preview_library": "movies",
+        "preview_generated_at": "2026-01-01T00:00:00Z",
+    }
+
+    summary = service._preview_summary(snapshot["preview_results"])
+    assert summary["files_evaluated"] == 2
+    assert summary["candidates_found"] == 1
+    assert summary["estimated_total_savings"] == 350
+
+    html = service._preview_results_html(snapshot)
+    assert "Preview Summary" in html
+    assert "Estimated Total Savings" in html
+
+
+def test_dashboard_summary_widget_render(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    _seed_encode(
+        db_path,
+        run_id="run-dashboard-1",
+        ts=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        status="success",
+        path="/movies/dashboard.mkv",
+        library="movies",
+        size_before_bytes=1000,
+        size_after_bytes=800,
+        saved_bytes=200,
+    )
+
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    status_code, body, _ = _call_get(service, "/dashboard")
+
+    assert status_code == 200
+    assert "Compact dashboard summary" in body
+    assert "runtime-dashboard-total-saved" in body
+    assert "Saved This Week" in body
