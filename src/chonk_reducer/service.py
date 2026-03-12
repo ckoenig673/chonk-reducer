@@ -1821,7 +1821,7 @@ class ChonkService:
             path = str(raw_path or "").strip()
             display_name = _analytics_file_display_name(path)
             items.append('<li title="%s">%s</li>' % (_escape_html(path), _escape_html(display_name)))
-        return '<ul style="margin:0; padding-left:1.15rem;">%s</ul>' % "".join(items)
+        return '<ul style="margin:0.4rem 0 0 0; padding-left:1.15rem;">%s</ul>' % "".join(items)
 
     def _smart_optimization_summary_html(self, summary: Dict[str, object]) -> str:
         highest_potential_paths = summary.get("highest_potential_file_paths")
@@ -1830,7 +1830,7 @@ class ChonkService:
         return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
   <tbody>
     <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Best Next Library</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
-    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Estimated Reclaimable Space</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Estimated Reclaimable Space</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
     <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Highest Potential Files</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
     <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Most Effective Library Recently</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
     <tr><th style="text-align:left; padding:0.35rem;">Most Effective Recent Run</th><td style="padding:0.35rem;">%s</td></tr>
