@@ -1191,6 +1191,35 @@ def test_api_status_returns_valid_json_payload():
         "encode_out_time",
     }
     assert expected.issubset(set(effective.keys()))
+    assert effective["version"]
+    assert isinstance(effective["scheduler"], dict)
+
+
+def test_api_status_includes_scheduler_health_snapshot():
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    class _Job:
+        def __init__(self, next_run_time):
+            self.next_run_time = next_run_time
+
+    class _Scheduler:
+        state = 1
+
+        @staticmethod
+        def get_jobs():
+            return [_Job("2026-03-12T02:00:00-05:00"), _Job("2026-03-12T03:00:00-05:00")]
+
+    service.scheduler = _Scheduler()
+
+    status_code, body, payload = _call_get(service, "/api/status")
+    effective = payload if isinstance(payload, dict) else (body if isinstance(body, dict) else json.loads(body))
+
+    assert status_code == 200
+    assert effective["scheduler"]["running"] is True
+    assert effective["scheduler"]["paused"] is False
+    assert effective["scheduler"]["next_run"] == "2026-03-12T02:00:00-05:00"
 
 
 def test_api_status_returns_current_runtime_snapshot_data():

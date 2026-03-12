@@ -60,10 +60,10 @@ from .logging_utils import Logger
 from .runner import run
 from . import notifications
 from . import secrets
-from . import __version__
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
+APP_VERSION = (os.getenv("APP_VERSION", "dev") or "dev").strip() or "dev"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
 _ENV_RUNTIME_DEPTH = 0
@@ -726,6 +726,11 @@ class ChonkService:
         content = """
   <h1>Dashboard</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
+  <section style="border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; background: #fff; max-width: 520px;">
+    <h3 style="margin: 0 0 0.45rem 0;">System Info</h3>
+    <div><strong>Scheduler:</strong> <span id="runtime-system-scheduler">%s</span></div>
+    <div><strong>Next Run:</strong> <span id="runtime-system-next-run">%s</span></div>
+  </section>
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
   %s
@@ -867,7 +872,34 @@ class ChonkService:
           '</div>';
       }
 
+      function schedulerStateLabel(snapshot) {
+        var scheduler = snapshot.scheduler || {};
+        if (scheduler.paused) {
+          return "Paused";
+        }
+        return scheduler.running ? "Running" : "Stopped";
+      }
+
+      function nextRunLabel(snapshot) {
+        var scheduler = snapshot.scheduler || {};
+        var nextRun = String(scheduler.next_run || "").trim();
+        var library = String(snapshot.next_scheduled_job || "").trim();
+        if (!nextRun || nextRun === "null") {
+          return "-";
+        }
+        var parsed = new Date(nextRun);
+        var timeLabel = nextRun;
+        if (!isNaN(parsed.getTime())) {
+          timeLabel = parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        }
+        if (!library || library === "-") {
+          return timeLabel;
+        }
+        return library + " — " + timeLabel;
+      }
+
       function updateFromSnapshot(snapshot) {
+        setText("runtime-app-version", snapshot.version, "dev");
         setText("runtime-status", snapshot.status, "Idle");
         setText("runtime-mode", snapshot.mode, "-");
         setText("runtime-library", snapshot.current_library, "-");
@@ -887,6 +919,8 @@ class ChonkService:
         setText("runtime-files-skipped", snapshot.files_skipped, "-");
         setText("runtime-files-failed", snapshot.files_failed, "-");
         setText("runtime-bytes-saved", savedBytesLabel(snapshot.bytes_saved), "-");
+        setText("runtime-system-scheduler", schedulerStateLabel(snapshot), "-");
+        setText("runtime-system-next-run", nextRunLabel(snapshot), "-");
         setText("runtime-preview-library", snapshot.preview_library, "-");
         setText("runtime-preview-generated-at", snapshot.preview_generated_at, "-");
         setPreviewResults(snapshot.preview_results || []);
@@ -980,12 +1014,20 @@ class ChonkService:
     })();
   </script>
 """ % (
+            self._scheduler_running_label(),
+            self._next_global_scheduled_job_label(),
             self._runtime_status_html(),
             "".join(library_sections),
             self._lifetime_savings_html(lifetime_savings),
             self._recent_runs_html(recent_runs),
         )
         return self._render_shell_html("Dashboard", content)
+
+    def _next_global_scheduled_job_label(self) -> str:
+        next_job, next_time = self._next_global_scheduled_job()
+        if next_job == "-" and next_time == "-":
+            return "-"
+        return "%s — %s" % (next_job, next_time)
 
     def _library_runtime_status(self, library: RuntimeLibrary) -> str:
         with self._job_condition:
@@ -1287,7 +1329,7 @@ class ChonkService:
   <p>Schedules and paths shown above are loaded from SQLite-backed settings and libraries, with environment/compose values used only for compatibility defaults.</p>
 """ % (
             self._runtime_status_html(),
-            _escape_html(__version__),
+            _escape_html(APP_VERSION),
             _escape_html(service_mode),
             _escape_html(self.settings.host),
             _escape_html(str(self.settings.port)),
@@ -1301,10 +1343,12 @@ class ChonkService:
         )
         return self._render_shell_html("System", content)
 
-    def current_job_status(self) -> Dict[str, str]:
+    def current_job_status(self) -> Dict[str, object]:
         snapshot = self._runtime_status_snapshot()
         scheduler_snapshot = self._scheduler_status_snapshot()
+        scheduler_health = self._scheduler_health_snapshot()
         return {
+            "version": APP_VERSION,
             "status": snapshot["status"],
             "mode": snapshot.get("mode", "Live"),
             "current_library": snapshot["current_library"],
@@ -1335,6 +1379,27 @@ class ChonkService:
             "scheduler_started_at": scheduler_snapshot["started_at"],
             "next_scheduled_job": scheduler_snapshot["next_job"],
             "next_scheduled_time": scheduler_snapshot["next_time"],
+            "scheduler": scheduler_health,
+        }
+
+    def _scheduler_health_snapshot(self) -> Dict[str, object]:
+        state = getattr(self.scheduler, "state", None)
+        running = state == 1
+        paused = state == 2
+        next_run: Optional[datetime] = None
+        get_jobs = getattr(self.scheduler, "get_jobs", None)
+        if callable(get_jobs):
+            for job in get_jobs() or []:
+                parsed = _coerce_scheduler_datetime(getattr(job, "next_run_time", None))
+                if parsed is None:
+                    continue
+                if next_run is None or parsed < next_run:
+                    next_run = parsed
+
+        return {
+            "running": running,
+            "paused": paused,
+            "next_run": next_run.isoformat() if next_run is not None else None,
         }
 
     def _runtime_job_status_html(self) -> str:
@@ -1496,14 +1561,14 @@ class ChonkService:
 <body style=\"font-family: sans-serif; margin: 0; background: #f6f8fb;\">
   <div style=\"display: flex; min-height: 100vh;\">
     <aside style=\"width: 210px; background: #e6edf4; padding: 1rem; border-right: 1px solid #ccd7e3;\">
-      <h2 style=\"margin-top: 0;\">Chonk Reducer</h2>
+      <h2 style=\"margin-top: 0;\">Chonk Reducer %s</h2>
       <ul style=\"list-style: none; padding: 0; margin: 0;\">%s</ul>
     </aside>
     <main style=\"flex: 1; padding: 1.25rem 1.5rem;\">%s</main>
   </div>
 </body>
 </html>
-""" % ("".join(nav), content_html)
+""" % ("v%s" % _escape_html(APP_VERSION), "".join(nav), content_html)
 
     def health_payload(self) -> dict:
         return {"status": "ok"}
