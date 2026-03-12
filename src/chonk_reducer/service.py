@@ -63,7 +63,7 @@ from . import secrets
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.42.0") or "1.42.0").strip() or "1.42.0"
+APP_VERSION = (os.getenv("APP_VERSION", "1.43.0") or "1.43.0").strip() or "1.43.0"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -547,6 +547,10 @@ class ChonkService:
         def history_page():
             return self._html_response(self.history_page_html())
 
+        @self.app.get("/analytics")
+        def analytics_page():
+            return self._html_response(self.analytics_page_html())
+
         @self.app.get("/system")
         def system_page():
             return self._html_response(self.system_page_html())
@@ -762,9 +766,14 @@ class ChonkService:
         content = """
   <h1>Dashboard</h1>
   <p>Manual run controls for troubleshooting and operational checks.</p>
-  <section style="border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; background: #fff; max-width: 520px;">
+  <section style="border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; background: #fff; max-width: 620px;">
     <h3 style="margin: 0 0 0.45rem 0;">System Status</h3>
-    <div><strong>Scheduler:</strong> <span id="runtime-system-scheduler">%s</span></div>
+    <div style="font-size:0.92rem; color:#1f3f5b; margin-bottom:0.25rem;">Compact dashboard summary</div>
+    <div><strong>Total Saved:</strong> <span id="runtime-dashboard-total-saved">%s</span></div>
+    <div><strong>Files Optimized:</strong> <span id="runtime-dashboard-files-optimized">%s</span></div>
+    <div><strong>Saved This Week:</strong> <span id="runtime-dashboard-saved-week">%s</span></div>
+    <div><strong>Saved This Month:</strong> <span id="runtime-dashboard-saved-month">%s</span></div>
+    <div style="margin-top:0.45rem;"><strong>Scheduler:</strong> <span id="runtime-system-scheduler">%s</span></div>
     <div><strong>Next Library Run:</strong> <span id="runtime-system-next-library-run">%s</span></div>
     <div><strong>Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">%s</span></div>
   </section>
@@ -948,9 +957,14 @@ class ChonkService:
         setText("runtime-system-scheduler", schedulerStateLabel(snapshot), "-");
         setText("runtime-system-next-library-run", nextLibraryRunLabel(snapshot), "-");
         setText("runtime-system-next-housekeeping-run", snapshot.next_housekeeping_run, "-");
+        var dashboardSummary = snapshot.dashboard_summary || {};
+        setText("runtime-dashboard-total-saved", savedBytesLabel(dashboardSummary.total_saved), "-");
+        setText("runtime-dashboard-files-optimized", dashboardSummary.files_optimized, "0");
+        setText("runtime-dashboard-saved-week", savedBytesLabel(dashboardSummary.saved_this_week), "-");
+        setText("runtime-dashboard-saved-month", savedBytesLabel(dashboardSummary.saved_this_month), "-");
         setText("runtime-preview-library", snapshot.preview_library, "-");
         setText("runtime-preview-generated-at", snapshot.preview_generated_at, "-");
-        setPreviewResults(snapshot.preview_results || []);
+        setPreviewResults(snapshot.preview_results || [], snapshot.preview_summary || {});
         var progress = document.getElementById("runtime-progress-section");
         if (progress) {
           progress.innerHTML = progressMarkup(snapshot);
@@ -958,11 +972,23 @@ class ChonkService:
         updateStopButton(snapshot);
       }
 
-      function setPreviewResults(rows) {
+      function setPreviewResults(rows, summary) {
         var body = document.getElementById("runtime-preview-results-body");
         if (!body) {
           return;
         }
+        var summaryValue = summary || {};
+        setText("runtime-preview-files-evaluated", summaryValue.files_evaluated, "0");
+        setText("runtime-preview-candidates-found", summaryValue.candidates_found, "0");
+        setText("runtime-preview-estimated-original", savedBytesLabel(summaryValue.estimated_original_total), "-");
+        setText("runtime-preview-estimated-encoded", savedBytesLabel(summaryValue.estimated_encoded_total), "-");
+        setText("runtime-preview-estimated-saved", savedBytesLabel(summaryValue.estimated_total_savings), "-");
+        var pctValue = summaryValue.estimated_savings_percent;
+        var pctLabel = "-";
+        if (pctValue !== null && pctValue !== undefined && String(pctValue).trim() !== "") {
+          pctLabel = Number(pctValue).toFixed(1) + "%%";
+        }
+        setText("runtime-preview-estimated-pct", pctLabel, "-");
         if (!rows || !rows.length) {
           body.innerHTML = '<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>';
           return;
@@ -1041,6 +1067,10 @@ class ChonkService:
     })();
   </script>
 """ % (
+            _escape_html(_format_saved_bytes((lifetime_savings or {}).get("total_saved", 0))),
+            _escape_html(str((lifetime_savings or {}).get("files_optimized", 0))),
+            _escape_html(_format_saved_bytes(self._analytics_overall_summary().get("saved_this_week", 0))),
+            _escape_html(_format_saved_bytes(self._analytics_overall_summary().get("saved_this_month", 0))),
             self._scheduler_running_label(),
             self._next_global_scheduled_job_label(),
             self._next_housekeeping_run_label(),
@@ -1385,6 +1415,465 @@ class ChonkService:
         content += self._history_table_html(rows)
         return self._render_shell_html("History", content)
 
+    def analytics_page_html(self) -> str:
+        summary = self._analytics_overall_summary()
+        daily_rows = self._analytics_savings_over_time("day")
+        weekly_rows = self._analytics_savings_over_time("week")
+        monthly_rows = self._analytics_savings_over_time("month")
+        library_rows = self._analytics_library_breakdown()
+        top_file_rows = self._analytics_top_savings_files(limit=15)
+        top_run_rows = self._analytics_top_savings_runs(limit=10)
+        smart = self._smart_optimization_summary(library_rows, top_file_rows, top_run_rows)
+
+        content = """
+  <h1>Analytics</h1>
+  <p>Operator-facing savings intelligence from SQLite run and encode history.</p>
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Overall Summary</h2>
+  %s
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Savings Over Time</h2>
+  <h3 style="margin: 0.5rem 0;">Daily</h3>
+  %s
+  <h3 style="margin: 0.75rem 0 0.5rem 0;">Weekly</h3>
+  %s
+  <h3 style="margin: 0.75rem 0 0.5rem 0;">Monthly</h3>
+  %s
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Per-Library Breakdown</h2>
+  %s
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Top Savings Files</h2>
+  %s
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Top Savings Runs</h2>
+  %s
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Best Next Opportunities</h2>
+  %s
+""" % (
+            self._analytics_summary_html(summary),
+            self._analytics_period_table_html(daily_rows, "No daily savings data yet."),
+            self._analytics_period_table_html(weekly_rows, "No weekly savings data yet."),
+            self._analytics_period_table_html(monthly_rows, "No monthly savings data yet."),
+            self._analytics_library_breakdown_html(library_rows),
+            self._analytics_top_files_html(top_file_rows),
+            self._analytics_top_runs_html(top_run_rows),
+            self._smart_optimization_summary_html(smart),
+        )
+        return self._render_shell_html("Analytics", content)
+
+    def _analytics_overall_summary(self) -> Dict[str, object]:
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN 1 ELSE 0 END), 0) AS files_optimized,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS total_saved,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(size_before_bytes, 0) ELSE 0 END), 0) AS total_original,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(size_after_bytes, 0) ELSE 0 END), 0) AS total_encoded
+                FROM encodes
+                """
+            ).fetchone()
+            week_row = conn.execute(
+                """
+                SELECT COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS saved_this_week
+                FROM encodes
+                WHERE datetime(ts) >= datetime('now', '-7 day')
+                """
+            ).fetchone()
+            month_row = conn.execute(
+                """
+                SELECT COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS saved_this_month
+                FROM encodes
+                WHERE datetime(ts) >= datetime('now', '-30 day')
+                """
+            ).fetchone()
+        except sqlite3.Error:
+            conn.close()
+            return {
+                "files_optimized": 0,
+                "total_saved": 0,
+                "average_savings_percent": None,
+                "saved_this_week": 0,
+                "saved_this_month": 0,
+            }
+        conn.close()
+
+        total_original = int(row["total_original"] or 0)
+        total_encoded = int(row["total_encoded"] or 0)
+        average_savings_percent = None
+        if total_original > 0:
+            average_savings_percent = ((float(total_original - total_encoded) / float(total_original)) * 100.0)
+
+        return {
+            "files_optimized": int(row["files_optimized"] or 0),
+            "total_saved": int(row["total_saved"] or 0),
+            "average_savings_percent": average_savings_percent,
+            "saved_this_week": int(week_row["saved_this_week"] or 0),
+            "saved_this_month": int(month_row["saved_this_month"] or 0),
+        }
+
+    def _analytics_savings_over_time(self, grain: str) -> List[Dict[str, object]]:
+        formats = {
+            "day": ("%Y-%m-%d", "-14 day"),
+            "week": ("%Y-W%W", "-12 week"),
+            "month": ("%Y-%m", "-12 month"),
+        }
+        if grain not in formats:
+            return []
+        date_fmt, window = formats[grain]
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    strftime(?, COALESCE(ts, '')) AS period,
+                    COUNT(*) AS files_optimized,
+                    COALESCE(SUM(COALESCE(saved_bytes, 0)), 0) AS total_saved
+                FROM encodes
+                WHERE lower(COALESCE(status, '')) = 'success'
+                  AND datetime(ts) >= datetime('now', ?)
+                  AND trim(COALESCE(ts, '')) != ''
+                GROUP BY period
+                ORDER BY period DESC
+                LIMIT 20
+                """,
+                (date_fmt, window),
+            ).fetchall()
+        except sqlite3.Error:
+            conn.close()
+            return []
+        conn.close()
+        return [
+            {
+                "period": str(row["period"] or "Unknown"),
+                "files_optimized": int(row["files_optimized"] or 0),
+                "total_saved": int(row["total_saved"] or 0),
+            }
+            for row in rows
+            if str(row["period"] or "").strip()
+        ]
+
+    def _analytics_library_breakdown(self) -> List[Dict[str, object]]:
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    lower(trim(COALESCE(library, ''))) AS library_key,
+                    trim(COALESCE(library, '')) AS library_display,
+                    SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN 1 ELSE 0 END) AS files_optimized,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS total_saved,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(size_before_bytes, 0) ELSE 0 END), 0) AS total_original,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' THEN COALESCE(size_after_bytes, 0) ELSE 0 END), 0) AS total_encoded,
+                    COALESCE(SUM(CASE WHEN lower(COALESCE(status, '')) = 'success' AND datetime(ts) >= datetime('now', '-30 day') THEN COALESCE(saved_bytes, 0) ELSE 0 END), 0) AS recent_saved
+                FROM encodes
+                GROUP BY library_key
+                ORDER BY total_saved DESC
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            conn.close()
+            return []
+        conn.close()
+
+        result = []
+        for row in rows:
+            lib = str(row["library_display"] or row["library_key"] or "Unknown").strip() or "Unknown"
+            total_original = int(row["total_original"] or 0)
+            total_encoded = int(row["total_encoded"] or 0)
+            avg_pct = None
+            if total_original > 0:
+                avg_pct = ((float(total_original - total_encoded) / float(total_original)) * 100.0)
+            result.append({
+                "library": lib,
+                "files_optimized": int(row["files_optimized"] or 0),
+                "total_saved": int(row["total_saved"] or 0),
+                "average_savings_percent": avg_pct,
+                "recent_saved": int(row["recent_saved"] or 0),
+            })
+        return result
+
+    def _analytics_top_savings_files(self, limit: int = 15) -> List[Dict[str, object]]:
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    COALESCE(NULLIF(trim(path), ''), COALESCE(filename, 'Unknown')) AS file_path,
+                    COALESCE(NULLIF(trim(library), ''), 'Unknown') AS library,
+                    COALESCE(size_before_bytes, 0) AS original_size,
+                    COALESCE(size_after_bytes, 0) AS encoded_size,
+                    COALESCE(saved_bytes, 0) AS saved_bytes,
+                    COALESCE(duration_seconds, 0) AS duration_seconds,
+                    COALESCE(ts, '') AS ts
+                FROM encodes
+                WHERE lower(COALESCE(status, '')) = 'success'
+                ORDER BY COALESCE(saved_bytes, 0) DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        except sqlite3.Error:
+            conn.close()
+            return []
+        conn.close()
+        return [
+            {
+                "file": str(row["file_path"] or "Unknown"),
+                "library": str(row["library"] or "Unknown"),
+                "original_size": int(row["original_size"] or 0),
+                "encoded_size": int(row["encoded_size"] or 0),
+                "saved_bytes": int(row["saved_bytes"] or 0),
+                "runtime": _format_duration_seconds(row["duration_seconds"]),
+                "ts": _format_readable_timestamp(row["ts"]),
+            }
+            for row in rows
+        ]
+
+    def _analytics_top_savings_runs(self, limit: int = 10) -> List[Dict[str, object]]:
+        conn = _connect_settings_db(self._settings_db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    run_id,
+                    COALESCE(NULLIF(trim(library), ''), 'Unknown') AS library,
+                    COALESCE(ts_end, ts_start, '') AS ts,
+                    COALESCE(saved_bytes, 0) AS saved_bytes,
+                    COALESCE(success_count, 0) AS success_count
+                FROM runs
+                ORDER BY COALESCE(saved_bytes, 0) DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        except sqlite3.Error:
+            conn.close()
+            return []
+        conn.close()
+        return [
+            {
+                "run_id": str(row["run_id"] or "-"),
+                "library": str(row["library"] or "Unknown"),
+                "ts": _format_readable_timestamp(row["ts"]),
+                "saved_bytes": int(row["saved_bytes"] or 0),
+                "success_count": int(row["success_count"] or 0),
+            }
+            for row in rows
+        ]
+
+    def _smart_optimization_summary(self, library_rows: List[Dict[str, object]], top_file_rows: List[Dict[str, object]], top_run_rows: List[Dict[str, object]]) -> Dict[str, str]:
+        best_library = "-"
+        reclaimable = 0
+        if library_rows:
+            candidate = sorted(library_rows, key=lambda row: int(row.get("recent_saved") or 0), reverse=True)[0]
+            best_library = str(candidate.get("library") or "-")
+            reclaimable = int(candidate.get("recent_saved") or 0)
+
+        highest_potential_files = "-"
+        if top_file_rows:
+            top_files = [str(row.get("file") or "-") for row in top_file_rows[:3]]
+            highest_potential_files = ", ".join(top_files)
+
+        most_effective_library_recently = "-"
+        if library_rows:
+            recent = sorted(library_rows, key=lambda row: int(row.get("recent_saved") or 0), reverse=True)[0]
+            most_effective_library_recently = "%s (%s)" % (
+                str(recent.get("library") or "-"),
+                _format_saved_bytes(int(recent.get("recent_saved") or 0)),
+            )
+
+        most_effective_recent_run = "-"
+        if top_run_rows:
+            run = top_run_rows[0]
+            most_effective_recent_run = "%s (%s, %s)" % (
+                str(run.get("run_id") or "-"),
+                _format_saved_bytes(int(run.get("saved_bytes") or 0)),
+                str(run.get("library") or "-"),
+            )
+
+        return {
+            "best_next_library": best_library,
+            "estimated_reclaimable_space": _format_saved_bytes(reclaimable),
+            "highest_potential_files": highest_potential_files,
+            "most_effective_library_recently": most_effective_library_recently,
+            "most_effective_recent_run": most_effective_recent_run,
+        }
+
+    def _analytics_summary_html(self, summary: Dict[str, object]) -> str:
+        avg = summary.get("average_savings_percent")
+        avg_label = "-" if avg is None else "%.1f%%" % float(avg)
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
+  <tbody>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Total Files Optimized</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Total Space Saved</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Average Savings Percent</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Saved This Week</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; padding:0.35rem;">Saved This Month</th><td style="padding:0.35rem;">%s</td></tr>
+  </tbody>
+</table>""" % (
+            _escape_html(str(summary.get("files_optimized", 0))),
+            _escape_html(_format_saved_bytes(summary.get("total_saved", 0))),
+            _escape_html(avg_label),
+            _escape_html(_format_saved_bytes(summary.get("saved_this_week", 0))),
+            _escape_html(_format_saved_bytes(summary.get("saved_this_month", 0))),
+        )
+
+    def _analytics_period_table_html(self, rows: List[Dict[str, object]], empty_message: str) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">%s</div>' % _escape_html(empty_message)
+        body = []
+        for row in rows:
+            body.append(
+                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
+                % (
+                    _escape_html(str(row.get("period") or "-")),
+                    _escape_html(str(row.get("files_optimized") or 0)),
+                    _escape_html(_format_saved_bytes(row.get("total_saved") or 0)),
+                )
+            )
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
+  <thead><tr><th style="text-align:left; padding:0.35rem;">Period</th><th style="text-align:left; padding:0.35rem;">Files Optimized</th><th style="text-align:left; padding:0.35rem;">Saved</th></tr></thead>
+  <tbody>%s</tbody>
+</table>""" % "".join(body)
+
+    def _analytics_library_breakdown_html(self, rows: List[Dict[str, object]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No per-library savings recorded yet.</div>'
+        body = []
+        for row in rows:
+            avg = row.get("average_savings_percent")
+            avg_label = "-" if avg is None else "%.1f%%" % float(avg)
+            body.append(
+                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
+                % (
+                    _escape_html(str(row.get("library") or "Unknown")),
+                    _escape_html(str(row.get("files_optimized") or 0)),
+                    _escape_html(_format_saved_bytes(row.get("total_saved") or 0)),
+                    _escape_html(avg_label),
+                    _escape_html(_format_saved_bytes(row.get("recent_saved") or 0)),
+                )
+            )
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
+  <thead><tr><th style="text-align:left; padding:0.35rem;">Library</th><th style="text-align:left; padding:0.35rem;">Files Optimized</th><th style="text-align:left; padding:0.35rem;">Total Saved</th><th style="text-align:left; padding:0.35rem;">Average Savings %%</th><th style="text-align:left; padding:0.35rem;">Recent Savings</th></tr></thead>
+  <tbody>%s</tbody>
+</table>""" % "".join(body)
+
+    def _analytics_top_files_html(self, rows: List[Dict[str, object]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No optimized files recorded yet.</div>'
+        body = []
+        for row in rows:
+            body.append(
+                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
+                % (
+                    _escape_html(str(row.get("file") or "-")),
+                    _escape_html(str(row.get("library") or "-")),
+                    _escape_html(_format_saved_bytes(row.get("original_size") or 0)),
+                    _escape_html(_format_saved_bytes(row.get("encoded_size") or 0)),
+                    _escape_html(_format_saved_bytes(row.get("saved_bytes") or 0)),
+                    _escape_html(str(row.get("runtime") or "-")),
+                    _escape_html(str(row.get("ts") or "-")),
+                )
+            )
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
+  <thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Library</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Encoded Size</th><th style="text-align:left; padding:0.35rem;">Saved</th><th style="text-align:left; padding:0.35rem;">Run Time</th><th style="text-align:left; padding:0.35rem;">Date</th></tr></thead>
+  <tbody>%s</tbody>
+</table>""" % "".join(body)
+
+    def _analytics_top_runs_html(self, rows: List[Dict[str, object]]) -> str:
+        if not rows:
+            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No runs recorded yet.</div>'
+        body = []
+        for row in rows:
+            run_id = str(row.get("run_id") or "-")
+            body.append(
+                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;"><a href="/runs/%s">%s</a></td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
+                % (
+                    _escape_html(run_id),
+                    _escape_html(run_id),
+                    _escape_html(str(row.get("library") or "-")),
+                    _escape_html(str(row.get("success_count") or 0)),
+                    _escape_html(_format_saved_bytes(row.get("saved_bytes") or 0)),
+                    _escape_html(str(row.get("ts") or "-")),
+                )
+            )
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
+  <thead><tr><th style="text-align:left; padding:0.35rem;">Run ID</th><th style="text-align:left; padding:0.35rem;">Library</th><th style="text-align:left; padding:0.35rem;">Files Optimized</th><th style="text-align:left; padding:0.35rem;">Saved</th><th style="text-align:left; padding:0.35rem;">Date</th></tr></thead>
+  <tbody>%s</tbody>
+</table>""" % "".join(body)
+
+    def _smart_optimization_summary_html(self, summary: Dict[str, str]) -> str:
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
+  <tbody>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Best Next Library</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Estimated Reclaimable Space</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Highest Potential Files</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem;">Most Effective Library Recently</th><td style="border-bottom:1px solid #ddd; padding:0.35rem;">%s</td></tr>
+    <tr><th style="text-align:left; padding:0.35rem;">Most Effective Recent Run</th><td style="padding:0.35rem;">%s</td></tr>
+  </tbody>
+</table>""" % (
+            _escape_html(summary.get("best_next_library", "-")),
+            _escape_html(summary.get("estimated_reclaimable_space", "-")),
+            _escape_html(summary.get("highest_potential_files", "-")),
+            _escape_html(summary.get("most_effective_library_recently", "-")),
+            _escape_html(summary.get("most_effective_recent_run", "-")),
+        )
+
+    def _preview_summary(self, rows: List[Dict[str, object]]) -> Dict[str, object]:
+        files_evaluated = len(rows)
+        candidates = 0
+        original_total = 0
+        estimated_total = 0
+        for row in rows:
+            original = row.get("original_size")
+            estimated = row.get("estimated_size")
+            try:
+                original_int = int(original or 0)
+            except Exception:
+                original_int = 0
+            try:
+                estimated_int = int(estimated or 0)
+            except Exception:
+                estimated_int = 0
+            if original_int > 0:
+                original_total += original_int
+            if estimated_int > 0:
+                estimated_total += estimated_int
+            decision = str(row.get("decision", "") or "").strip().lower()
+            if decision == "encode":
+                candidates += 1
+
+        estimated_saved = max(0, original_total - estimated_total)
+        estimated_pct = None
+        if original_total > 0:
+            estimated_pct = (float(estimated_saved) / float(original_total)) * 100.0
+        return {
+            "files_evaluated": files_evaluated,
+            "candidates_found": candidates,
+            "estimated_original_total": original_total,
+            "estimated_encoded_total": estimated_total,
+            "estimated_total_savings": estimated_saved,
+            "estimated_savings_percent": estimated_pct,
+        }
+
+    def _preview_summary_html(self, summary: Dict[str, object]) -> str:
+        pct = summary.get("estimated_savings_percent")
+        pct_label = "-" if pct is None else "%.1f%%" % float(pct)
+        return """<div style="border:1px solid #d7e2f4; background:#f8fbff; padding:0.45rem; margin-bottom:0.5rem;">
+  <div style="font-weight:600; margin-bottom:0.25rem;">Preview Summary</div>
+  <div><strong>Files Evaluated:</strong> <span id="runtime-preview-files-evaluated">%s</span></div>
+  <div><strong>Candidates Found:</strong> <span id="runtime-preview-candidates-found">%s</span></div>
+  <div><strong>Estimated Original Total Size:</strong> <span id="runtime-preview-estimated-original">%s</span></div>
+  <div><strong>Estimated Encoded Total Size:</strong> <span id="runtime-preview-estimated-encoded">%s</span></div>
+  <div><strong>Estimated Total Savings:</strong> <span id="runtime-preview-estimated-saved">%s</span></div>
+  <div><strong>Estimated Savings Percent:</strong> <span id="runtime-preview-estimated-pct">%s</span></div>
+</div>""" % (
+            _escape_html(str(summary.get("files_evaluated", 0))),
+            _escape_html(str(summary.get("candidates_found", 0))),
+            _escape_html(_format_saved_bytes(summary.get("estimated_original_total", 0))),
+            _escape_html(_format_saved_bytes(summary.get("estimated_encoded_total", 0))),
+            _escape_html(_format_saved_bytes(summary.get("estimated_total_savings", 0))),
+            _escape_html(pct_label),
+        )
+
     def run_detail_page_html(self, run_id: str) -> tuple:
         run = self._run_detail(run_id)
         if run is None:
@@ -1498,6 +1987,8 @@ class ChonkService:
             "housekeeping_enabled": self._housekeeping_config()["enabled"],
             "housekeeping_schedule": self._housekeeping_config()["schedule"],
             "next_housekeeping_run": self._next_housekeeping_run_label(),
+            "preview_summary": self._preview_summary(snapshot.get("preview_results", [])),
+            "dashboard_summary": self._analytics_overall_summary(),
             "scheduler": scheduler_health,
         }
 
@@ -1658,6 +2149,7 @@ class ChonkService:
     def _render_shell_html(self, title: str, content_html: str) -> str:
         nav_items = [
             ("Dashboard", "/dashboard"),
+            ("Analytics", "/analytics"),
             ("Runs", "/runs"),
             ("History", "/history"),
             ("Activity", "/activity"),
@@ -2895,6 +3387,8 @@ class ChonkService:
             _escape_html(preview_library or "-"),
             _escape_html(preview_generated_at or "-"),
         )
+        preview_summary = self._preview_summary(rows)
+        summary_html = self._preview_summary_html(preview_summary)
         body_rows = []
         for row in rows[:25]:
             savings_pct = row.get("estimated_savings_pct", "")
@@ -2911,7 +3405,7 @@ class ChonkService:
             )
         if not body_rows:
             body_rows.append('<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>')
-        return """<div id="runtime-preview-results" style="margin-top:0.8rem;"><div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.35rem;"><div style="font-weight:600;">Preview Results</div><button id="runtime-clear-preview-button" type="button" style="font-size:0.85rem;">Clear Preview Results</button></div><div style="border:1px solid #d7e2f4; background:#f8fbff; padding:0.45rem; margin-bottom:0.5rem;">%s</div><table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;"><thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Estimated Size</th><th style="text-align:left; padding:0.35rem;">Savings %%</th><th style="text-align:left; padding:0.35rem;">Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div>""" % (details, "".join(body_rows))
+        return """<div id="runtime-preview-results" style="margin-top:0.8rem;"><div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.35rem;"><div style="font-weight:600;">Preview Results</div><button id="runtime-clear-preview-button" type="button" style="font-size:0.85rem;">Clear Preview Results</button></div><div style="border:1px solid #d7e2f4; background:#f8fbff; padding:0.45rem; margin-bottom:0.5rem;">%s</div>%s<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;"><thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Estimated Size</th><th style="text-align:left; padding:0.35rem;">Savings %%</th><th style="text-align:left; padding:0.35rem;">Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div>""" % (details, summary_html, "".join(body_rows))
 
     def clear_preview_results(self) -> Dict[str, str]:
         with self._job_state_lock:
@@ -4157,6 +4651,7 @@ class ChonkService:
                     self.manual_run_payload,
                     self.request_cancel_active_run,
                     self.clear_preview_results,
+                    analytics_html_fn=self.analytics_page_html,
                 )
         finally:
             with self._job_condition:
@@ -4905,6 +5400,7 @@ def _run_simple_http_server(
     manual_run_fn: Callable[[str, bool], tuple],
     cancel_run_fn: Optional[Callable[[], Dict[str, str]]] = None,
     clear_preview_fn: Optional[Callable[[], Dict[str, str]]] = None,
+    analytics_html_fn: Optional[Callable[[], str]] = None,
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -4945,6 +5441,19 @@ def _run_simple_http_server(
 
             if request_path == "/history":
                 payload = history_html_fn().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if request_path == "/analytics":
+                if not callable(analytics_html_fn):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                payload = analytics_html_fn().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))
