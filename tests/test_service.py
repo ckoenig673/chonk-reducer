@@ -5194,4 +5194,7 @@ def test_system_page_renders_housekeeping_next_run_and_scheduler_summary(monkeyp
     assert "Housekeeping Enabled" in body
     assert "Housekeeping Schedule" in body
     assert "Next Housekeeping Run" in body
-    assert "Save Housekeeping" in body
+    assert "Log Retention Days" in body
+    assert "Save Housekeeping" not in body
+    assert "Generated cron" not in body
+    assert "Enable housekeeping scheduler" not in body
