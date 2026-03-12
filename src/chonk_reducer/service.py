@@ -63,7 +63,8 @@ from . import secrets
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "dev") or "dev").strip() or "dev"
+APP_VERSION = (os.getenv("APP_VERSION", "1.42.0") or "1.42.0").strip() or "1.42.0"
+HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
 _ENV_RUNTIME_DEPTH = 0
@@ -163,6 +164,18 @@ EDITABLE_SETTINGS = {
         "label": "Log Retention Days",
         "description": "Retention window for log cleanup.",
     },
+    "housekeeping_enabled": {
+        "env": "HOUSEKEEPING_ENABLED",
+        "default": "1",
+        "label": "Housekeeping Enabled",
+        "description": "Enable or disable scheduled housekeeping cleanup runs.",
+    },
+    "housekeeping_schedule": {
+        "env": "HOUSEKEEPING_SCHEDULE",
+        "default": "0 2 * * *",
+        "label": "Housekeeping Schedule",
+        "description": "Housekeeping cron schedule. Default is daily at 02:00.",
+    },
     "bak_retention_days": {
         "env": "BAK_RETENTION_DAYS",
         "default": "60",
@@ -214,7 +227,12 @@ LIBRARY_SETTINGS_HELP = {
     "raw_cron": "Raw cron expression for advanced scheduling.",
 }
 
-CHECKBOX_SETTINGS = {"enable_run_complete_notifications", "enable_run_failure_notifications", "fail_fast", "log_skips"}
+CHECKBOX_SETTINGS = {
+    "enable_run_complete_notifications",
+    "enable_run_failure_notifications",
+    "fail_fast",
+    "log_skips",
+}
 SECRET_SETTINGS = {"discord_webhook_url", "generic_webhook_url"}
 SECRET_PLACEHOLDER_VALUES = {"set (hidden)", "configured (hidden)", "********", "******"}
 
@@ -358,6 +376,15 @@ class _FallbackScheduler:
 
     def get_jobs(self):
         return list(self._jobs)
+
+    def get_job(self, job_id):
+        for job in self._jobs:
+            if job.id == job_id:
+                return job
+        return None
+
+    def remove_job(self, job_id):
+        self._jobs = [job for job in self._jobs if job.id != job_id]
 
     def start(self):
         return None
@@ -1087,6 +1114,8 @@ class ChonkService:
         libraries = self.list_libraries()
         rows = []
         for key in EDITABLE_SETTINGS:
+            if key in {"housekeeping_enabled", "housekeeping_schedule"}:
+                continue
             meta = EDITABLE_SETTINGS[key]
             value = self._editable_settings.get(key, "")
             label = meta.get("label", key.replace("_", " ").title())
@@ -1185,16 +1214,58 @@ class ChonkService:
 <p style="margin-top: 1rem; color: #555;">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
 </section>
 <section style="margin-top: 2rem;">
+<h2>Housekeeping</h2>
+<p>Configure daily cleanup schedule for logs and backups.</p>
+%s
+</section>
+<section style="margin-top: 2rem;">
 <h2>Libraries</h2>
 <p>Configured media library roots for future dynamic scheduling.</p>
 %s
 %s
 </section>""" % (
             "".join(rows),
+            self._housekeeping_settings_form_html(),
             self._libraries_table_html(libraries),
             self._library_create_form_html(),
         )
         return self._render_shell_html("Settings", content)
+
+    def _housekeeping_settings_form_html(self) -> str:
+        config = self._housekeeping_config()
+        parsed = _parse_housekeeping_form_values({"housekeeping_schedule": config["schedule"]})
+        options = []
+        for value in _simple_schedule_time_options():
+            selected = " selected" if value == parsed["time"] else ""
+            options.append('<option value="%s"%s>%s</option>' % (_escape_html(value), selected, _escape_html(value)))
+        weekday_options = []
+        selected_days = set(parsed["days"])
+        for label, day_value in WEEKDAY_CHOICES:
+            checked = " checked" if day_value in selected_days else ""
+            weekday_options.append(
+                '<label style="display:inline-block; margin-right: 0.55rem;"><input type="checkbox" name="housekeeping_day_%s" value="1"%s /> %s</label>'
+                % (_escape_html(day_value), checked, _escape_html(label))
+            )
+        enabled_checked = " checked" if config["enabled"] == "1" else ""
+        return """<form method="post" action="/settings">
+  <input type="hidden" name="housekeeping_form" value="1" />
+  <label style="display:block; margin-top: 0.5rem;"><input type="checkbox" name="housekeeping_enabled" value="1"%s /> Enable housekeeping scheduler</label>
+  <input type="hidden" name="housekeeping_schedule" value="%s" />
+  <label style="display:block; margin-top: 0.75rem;">%s</label>
+  <div style="margin-top: 0.35rem;">%s</div>
+  <label for="housekeeping_time" style="display:block; margin-top: 0.75rem;">%s</label>
+  <select id="housekeeping_time" name="housekeeping_time" style="width: 100%%; max-width: 180px;">%s</select>
+  <div style="margin-top: 0.35rem; color:#555;">Generated cron: <code>%s</code></div>
+  <div style="margin-top: 0.8rem;"><button type="submit">Save Housekeeping</button></div>
+</form>""" % (
+            enabled_checked,
+            _escape_html(config["schedule"]),
+            self._label_with_help("Days", "Select weekdays for housekeeping runs.", "housekeeping-days"),
+            "".join(weekday_options),
+            self._label_with_help("Time", "Run time used with selected housekeeping days.", "housekeeping-time"),
+            "".join(options),
+            _escape_html(_build_simple_cron(str(parsed["time"]), list(parsed["days"]))),
+        )
 
     def settings_saved_message(self, updates: Dict[str, str]) -> str:
         if any(key in RESTART_REQUIRED_SETTINGS for key in updates):
@@ -1219,6 +1290,10 @@ class ChonkService:
                 continue
             normalized[key] = raw_value
 
+        housekeeping_form = str(normalized.get("housekeeping_form", "")).strip() == "1"
+        if housekeeping_form and "housekeeping_enabled" not in normalized:
+            normalized["housekeeping_enabled"] = "0"
+
         for key in ("retry_count", "retry_backoff_seconds", "top_candidates"):
             if key not in normalized:
                 continue
@@ -1230,7 +1305,67 @@ class ChonkService:
             if parsed < 0:
                 parsed = 0
             normalized[key] = str(parsed)
+
+        if "housekeeping_schedule" in normalized:
+            parsed_housekeeping = _parse_housekeeping_form_values(normalized)
+            schedule = _build_simple_cron(str(parsed_housekeeping["time"]), list(parsed_housekeeping["days"]))
+            if schedule:
+                normalized["housekeeping_schedule"] = schedule
         return normalized
+
+    def _housekeeping_config(self) -> Dict[str, str]:
+        enabled = "1" if _env_bool_text(self._editable_settings.get("housekeeping_enabled", "1")) else "0"
+        schedule = _normalize_schedule_for_scheduler(self._editable_settings.get("housekeeping_schedule", "0 2 * * *"))
+        if not schedule:
+            schedule = "0 2 * * *"
+        return {"enabled": enabled, "schedule": schedule}
+
+    def _next_housekeeping_run_label(self) -> str:
+        get_job = getattr(self.scheduler, "get_job", None)
+        if not callable(get_job):
+            return "-"
+        try:
+            job = get_job(HOUSEKEEPING_JOB_ID)
+        except Exception:
+            return "-"
+        if job is None:
+            return "-"
+        raw_next = _coerce_scheduler_datetime(getattr(job, "next_run_time", None))
+        if raw_next is not None:
+            return _format_scheduler_datetime(raw_next)
+        trigger = getattr(job, "trigger", None)
+        if hasattr(trigger, "get_next_fire_time"):
+            timezone = _cron_trigger_timezone()
+            now = datetime.now(timezone) if hasattr(timezone, "utcoffset") else datetime.utcnow()
+            try:
+                computed = trigger.get_next_fire_time(None, now)
+            except Exception:
+                computed = None
+            computed_value = _coerce_scheduler_datetime(computed)
+            if computed_value is not None:
+                return _format_scheduler_datetime(computed_value)
+        return "-"
+
+    def _housekeeping_summary_html(self) -> str:
+        config = self._housekeeping_config()
+        parsed = _parse_housekeeping_form_values({"housekeeping_schedule": config["schedule"]})
+        days = list(parsed["days"])
+        day_labels = [label for label, value in WEEKDAY_CHOICES if value in days]
+        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
+  <tbody>
+    <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Housekeeping Enabled</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+    <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Housekeeping Schedule</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;"><code>%s</code> (%s at %s)</td></tr>
+    <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next Housekeeping Run</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+    <tr><th style="text-align: left; padding: 0.35rem;">Log Retention Days</th><td style="padding: 0.35rem;">%s</td></tr>
+  </tbody>
+</table>""" % (
+            "Yes" if config["enabled"] == "1" else "No",
+            _escape_html(config["schedule"]),
+            _escape_html(", ".join(day_labels) if day_labels else "No days"),
+            _escape_html(str(parsed["time"])),
+            _escape_html(self._next_housekeeping_run_label()),
+            _escape_html(self._editable_settings.get("log_retention_days", "30")),
+        )
 
     def activity_page_html(self) -> str:
         rows = self._recent_activity(limit=25)
@@ -1266,80 +1401,67 @@ class ChonkService:
 
     def system_page_html(self) -> str:
         service_mode = "Enabled" if self.settings.enabled else "Disabled"
-        scheduler_running = self._scheduler_running_label()
-
+        scheduler_snapshot = self._scheduler_status_snapshot()
         enabled_libraries = self.enabled_runtime_libraries()
-        schedule_rows = []
-        for library in enabled_libraries:
-            schedule_rows.append(
-                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">%s Schedule</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;"><code>%s</code></td></tr>'
-                % (_escape_html(library.name), _escape_html(library.schedule.strip() or "Not set"))
-            )
-            schedule_rows.append(
-                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next %s Run</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>'
-                % (_escape_html(library.name), _escape_html(self._next_run_label(library)))
-            )
-        if not schedule_rows:
-            schedule_rows.append(
-                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Libraries</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">No enabled libraries</td></tr>'
-            )
-
         work_root = (_env("WORK_ROOT", "") or "").strip() or "Not set"
         now_label = self._current_time_label()
+        housekeeping = self._housekeeping_config()
 
         content = """
   <h1>System</h1>
   <p>Operator-facing service and scheduler status for this instance.</p>
 
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Service / Scheduler Summary</h2>
+  <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
+    <tbody>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">App Version</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">Chonk Reducer v%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Scheduler Status</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Scheduler Started</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next Scheduled Job</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next Scheduled Time</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; padding: 0.35rem;">Queue Depth</th><td style="padding: 0.35rem;">%s</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Housekeeping</h2>
+  %s
+  <div style="margin-top: 0.75rem;">%s</div>
+
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
-
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Service Information</h2>
-  <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
-    <tbody>
-      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Version</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
-      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Service Mode</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
-      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Service Host</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
-      <tr><th style="text-align: left; padding: 0.35rem;">Service Port</th><td style="padding: 0.35rem;">%s</td></tr>
-    </tbody>
-  </table>
-
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Scheduler Information</h2>
-  <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
-    <tbody>
-      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Scheduler Status</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
-      %s
-    </tbody>
-  </table>
 
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Runtime / Storage Information</h2>
   <table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
     <tbody>
-      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Stats Database Path</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Service Mode</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Service Host</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Service Port</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
+      <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Stats Database Path</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
       <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Work / Log Path</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
       <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Enabled Library Roots</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
       <tr><th style="text-align: left; padding: 0.35rem;">Current Time</th><td style="padding: 0.35rem;">%s</td></tr>
     </tbody>
   </table>
 
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
-  %s
-
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Settings Source Information</h2>
   <p>Schedules and paths shown above are loaded from SQLite-backed settings and libraries, with environment/compose values used only for compatibility defaults.</p>
 """ % (
-            self._runtime_status_html(),
             _escape_html(APP_VERSION),
+            _escape_html(scheduler_snapshot["status"]),
+            _escape_html(_format_readable_timestamp(scheduler_snapshot["started_at"])),
+            _escape_html(scheduler_snapshot["next_job"]),
+            _escape_html(scheduler_snapshot["next_time"]),
+            _escape_html(self.current_job_status()["queue_depth"]),
+            self._housekeeping_summary_html(),
+            self._housekeeping_settings_form_html(),
+            self._runtime_job_status_html(),
             _escape_html(service_mode),
             _escape_html(self.settings.host),
             _escape_html(str(self.settings.port)),
-            _escape_html(scheduler_running),
-            "".join(schedule_rows),
             _escape_html(str(self._settings_db_path)),
             _escape_html(work_root),
             _escape_html(self._enabled_library_roots_label(enabled_libraries)),
             _escape_html(now_label),
-            self._runtime_job_status_html(),
         )
         return self._render_shell_html("System", content)
 
@@ -1379,6 +1501,9 @@ class ChonkService:
             "scheduler_started_at": scheduler_snapshot["started_at"],
             "next_scheduled_job": scheduler_snapshot["next_job"],
             "next_scheduled_time": scheduler_snapshot["next_time"],
+            "housekeeping_enabled": self._housekeeping_config()["enabled"],
+            "housekeeping_schedule": self._housekeeping_config()["schedule"],
+            "next_housekeeping_run": self._next_housekeeping_run_label(),
             "scheduler": scheduler_health,
         }
 
@@ -1610,6 +1735,7 @@ class ChonkService:
         if not updates:
             return
         updates = self._normalize_settings_updates(updates)
+        changed_keys = set()
         conn = _connect_settings_db(self._settings_db_path)
         with conn:
             for key in EDITABLE_SETTINGS:
@@ -1629,7 +1755,11 @@ class ChonkService:
                     (key, value, _utc_timestamp()),
                 )
                 self._editable_settings[key] = value
+                changed_keys.add(key)
         conn.close()
+
+        if "housekeeping_enabled" in changed_keys or "housekeeping_schedule" in changed_keys:
+            self._refresh_housekeeping_job()
 
     def _bootstrap_libraries(self) -> None:
         conn = _connect_settings_db(self._settings_db_path)
@@ -2256,14 +2386,34 @@ class ChonkService:
             self._register_library_job(library)
         self._register_housekeeping_job()
 
+    def _remove_housekeeping_job(self) -> None:
+        remove_job = getattr(self.scheduler, "remove_job", None)
+        if not callable(remove_job):
+            return
+        try:
+            remove_job(HOUSEKEEPING_JOB_ID)
+        except Exception:
+            return
+
     def _register_housekeeping_job(self) -> None:
+        config = self._housekeeping_config()
+        if config["enabled"] != "1":
+            self._remove_housekeeping_job()
+            LOGGER.info("Housekeeping schedule disabled")
+            return
+
+        schedule = config["schedule"]
         if CronTrigger is not None:
-            trigger = _build_scheduler_cron_trigger("0 2 * * *", timezone=_cron_trigger_timezone())
+            try:
+                trigger = _build_scheduler_cron_trigger(schedule, timezone=_cron_trigger_timezone())
+            except ValueError:
+                trigger = _build_scheduler_cron_trigger("0 2 * * *", timezone=_cron_trigger_timezone())
+                schedule = "0 2 * * *"
         else:
-            trigger = "0 2 * * *"
+            trigger = schedule
         add_job_kwargs = {
             "trigger": trigger,
-            "id": "housekeeping-daily",
+            "id": HOUSEKEEPING_JOB_ID,
             "coalesce": True,
             "max_instances": 1,
             "replace_existing": True,
@@ -2276,12 +2426,15 @@ class ChonkService:
             **add_job_kwargs,
         )
 
+    def _refresh_housekeeping_job(self) -> None:
+        self._register_housekeeping_job()
+
     def run_housekeeping_once(self) -> None:
         with self._job_condition:
             if self._current_job is not None or len(self._job_queue) > 0:
                 LOGGER.info("Skipping housekeeping while jobs are active")
                 return
-        self._record_activity(event_type="housekeeping_started", message="Daily housekeeping started")
+        self._record_activity(event_type="housekeeping_started", message="Housekeeping started")
         logger = Logger(str(self._settings_db_path.parent / "housekeeping.log"))
         try:
             work_root = Path(_env("WORK_ROOT", "/work"))
@@ -2289,7 +2442,7 @@ class ChonkService:
             retention_days = _env_int("LOG_RETENTION_DAYS", 30)
             cleanup_logs(log_dir, retention_days, logger)
         finally:
-            self._record_activity(event_type="housekeeping_completed", message="Daily housekeeping completed")
+            self._record_activity(event_type="housekeeping_completed", message="Housekeeping completed")
 
     def _register_library_job(self, library: RuntimeLibrary) -> None:
         raw_schedule = str(library.schedule or "").strip()
@@ -4375,6 +4528,30 @@ def _schedule_form_state(schedule: str) -> Dict[str, object]:
         "raw": raw,
         "preview": preview,
     }
+
+
+def _parse_housekeeping_form_values(values: Dict[str, str]) -> Dict[str, object]:
+    raw_schedule = _normalize_schedule_for_scheduler(str(values.get("housekeeping_schedule", "0 2 * * *") or ""))
+    parsed = _parse_simple_cron(raw_schedule)
+    default_days = [day for _, day in WEEKDAY_CHOICES]
+    default_time = "02:00"
+    base_days = list(parsed["days"]) if parsed is not None else default_days
+    base_time = str(parsed["time"]) if parsed is not None else default_time
+
+    selected_days = [day for _, day in WEEKDAY_CHOICES if str(values.get("housekeeping_day_%s" % day, "")).strip()]
+    if selected_days:
+        base_days = selected_days
+
+    selected_time = str(values.get("housekeeping_time", "")).strip()
+    if selected_time:
+        candidate = _build_simple_cron(selected_time, ["mon"])
+        if candidate:
+            base_time = selected_time
+
+    if not base_days:
+        base_days = default_days
+
+    return {"days": base_days, "time": base_time}
 
 
 def _is_valid_crontab(expr: str) -> bool:
