@@ -1414,9 +1414,32 @@ class ChonkService:
 
     def runs_page_html(self) -> str:
         rows = self._run_history(limit=50)
-        content = "<h1>Runs</h1><p>Recent run history from SQLite.</p>"
+        content = "<h1>Runs</h1><p>Completed and recorded runs from SQLite.</p>"
+        content += self._runs_active_run_banner_html()
         content += self._runs_history_html(rows)
         return self._render_shell_html("Runs", content)
+
+
+    def _runs_active_run_banner_html(self) -> str:
+        snapshot = self._runtime_status_snapshot()
+        if snapshot.get("status") not in {"Running", "Cancelling"}:
+            return ""
+        library = str(snapshot.get("current_library") or "").strip() or "Unknown Library"
+        current_file = str(snapshot.get("current_file") or "").strip()
+        if current_file:
+            file_name = os.path.basename(current_file)
+            if "." in file_name:
+                file_name = file_name.rsplit(".", 1)[0]
+            active_label = "%s — %s" % (library, file_name)
+        else:
+            active_label = library
+        return (
+            '<div style="margin: 0.75rem 0; padding: 0.6rem; border: 1px solid #bcd6f3; '
+            'background: #f4f8ff; color: #173a5e;">'
+            '<strong>Active Run:</strong> %s<br />Live run details are shown on the '
+            '<a href="/dashboard">Dashboard</a>. See Dashboard for live progress.'
+            "</div>"
+        ) % _escape_html(active_label)
 
     def history_page_html(self) -> str:
         rows = self._recent_encode_history(limit=200)

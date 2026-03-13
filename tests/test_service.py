@@ -2132,7 +2132,7 @@ def test_runs_page_renders_history_table_with_expected_columns(tmp_path, monkeyp
 
     assert status_code == 200
     assert "<h1>Runs</h1>" in body
-    assert "Recent run history from SQLite" in body
+    assert "Completed and recorded runs from SQLite" in body
     for heading in (
         "Time",
         "Library",
@@ -2354,6 +2354,41 @@ def test_runs_page_shows_empty_state_when_no_rows(tmp_path, monkeypatch):
 
     assert status_code == 200
     assert "No runs recorded yet" in body
+
+
+def test_runs_page_shows_active_run_banner_when_run_is_live(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00")
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+    with service._job_condition:
+        service._current_job = RuntimeJob(library_id=1, library_name="TV", trigger="manual", priority=1)
+        service._current_run_snapshot = {"current_file": "/tv/True Detective S02E01.mkv"}
+
+    status_code, body, _ = _call_get(service, "/runs")
+
+    assert status_code == 200
+    assert "Active Run:</strong> TV — True Detective S02E01" in body
+    assert 'href="/dashboard"' in body
+    assert "See Dashboard for live progress." in body
+
+
+def test_runs_page_hides_active_run_banner_when_no_live_run(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    _seed_run(db_path, library="movies", ts_end="2026-01-02T08:00:00")
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    status_code, body, _ = _call_get(service, "/runs")
+
+    assert status_code == 200
+    assert "Active Run:</strong>" not in body
 
 
 @pytest.mark.parametrize(
