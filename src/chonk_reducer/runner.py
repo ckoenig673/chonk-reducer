@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import logging
 import sys
 import time
 import uuid
@@ -21,12 +22,19 @@ from .skip_policy import evaluate_skip
 from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path, get_policy_skip_cache, upsert_policy_skip_cache, delete_policy_skip_cache
 
 
+LOGGER = logging.getLogger("chonk_reducer.runner")
+
+
 def _fmt_hms(seconds: float) -> str:
     s = int(seconds)
     hh = s // 3600
     mm = (s % 3600) // 60
     ss = s % 60
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+
+def _display_name(src: Path) -> str:
+    return src.stem or src.name
 
 
 def _validate_config(cfg, logger: Logger) -> bool:
@@ -285,6 +293,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 cached_pct = float(cached.get("savings_percent") or 0.0)
                 if threshold <= cached_pct:
                     prefiltered_policy_cache += 1
+                    LOGGER.info(
+                        "Skipping cached policy decision: file='%s' reason='%s' stored_savings=%.1f%% threshold=%.1f%%",
+                        _display_name(cand),
+                        "max_savings",
+                        cached_pct,
+                        threshold,
+                    )
                     if cfg.log_skips:
                         logger.log(
                             f"CANDIDATE SKIP(max_savings:cached): {cached_pct:.1f}% > {threshold:.1f}% :: {cand}"
@@ -389,6 +404,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 threshold = float(getattr(cfg, "max_savings_percent", 0) or 0)
                 if threshold and threshold <= cached_pct:
                     skipped_max_savings += 1
+                    LOGGER.info(
+                        "Skipping cached policy decision: file='%s' reason='%s' stored_savings=%.1f%% threshold=%.1f%%",
+                        _display_name(src),
+                        "max_savings",
+                        cached_pct,
+                        threshold,
+                    )
                     if cfg.log_skips:
                         logger.log(
                             f"SKIP(max_savings:cached): {cached_pct:.1f}% > {threshold:.1f}% :: {src}"
@@ -474,6 +496,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                         src=src,
                         skip_reason="max_savings",
                         savings_percent=float(estimated_savings_pct),
+                    )
+                    LOGGER.info(
+                        "Caching policy skip: file='%s' reason='%s' savings=%.1f%%",
+                        _display_name(src),
+                        "max_savings",
+                        float(estimated_savings_pct),
                     )
                     decision = "Skip (above max savings threshold)"
                 else:
@@ -598,6 +626,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                                 src=src,
                                 skip_reason="max_savings",
                                 savings_percent=float(pct_tmp),
+                            )
+                            LOGGER.info(
+                                "Caching policy skip: file='%s' reason='%s' savings=%.1f%%",
+                                _display_name(src),
+                                "max_savings",
+                                float(pct_tmp),
                             )
                             record_skip(
                                 cfg,
