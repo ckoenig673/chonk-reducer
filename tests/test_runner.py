@@ -548,7 +548,7 @@ def test_run_marks_file_failed_after_retry_exhaustion(tmp_path, monkeypatch):
     assert src.with_suffix(src.suffix + ".failed").exists()
 
 
-def test_max_savings_skip_is_cached_and_reused_until_threshold_increases(tmp_path, monkeypatch):
+def test_max_savings_skip_is_cached_and_reused_until_threshold_increases(tmp_path, monkeypatch, caplog):
     db_path = tmp_path / "chonk.db"
     cfg = _base_cfg(
         tmp_path,
@@ -582,6 +582,8 @@ def test_max_savings_skip_is_cached_and_reused_until_threshold_increases(tmp_pat
 
     monkeypatch.setattr(runner, "encode_qsv", fake_encode)
 
+    caplog.set_level("INFO", logger="chonk_reducer.runner")
+
     assert runner.run() == 0
     assert calls["encode"] == 1
 
@@ -599,12 +601,41 @@ def test_max_savings_skip_is_cached_and_reused_until_threshold_increases(tmp_pat
     assert runner.run() == 0
     assert calls["encode"] == 1
 
+    reused_messages = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Skipping cached policy decision:" in rec.getMessage()
+    ]
+    assert len(reused_messages) == 1
+
     # Lower threshold: still skip from cache, no re-evaluation.
     cfg.max_savings_percent = 60.0
     assert runner.run() == 0
     assert calls["encode"] == 1
 
+    reused_messages = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Skipping cached policy decision:" in rec.getMessage()
+    ]
+    assert len(reused_messages) == 2
+
     # Raise threshold above cached measurement: allow re-evaluation.
     cfg.max_savings_percent = 70.0
     assert runner.run() == 0
     assert calls["encode"] == 2
+
+    cached_messages = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Caching policy skip:" in rec.getMessage()
+    ]
+    assert len(cached_messages) == 1
+    assert "file='movie'" in cached_messages[0]
+    assert "reason='max_savings'" in cached_messages[0]
+    assert "savings=67.6%" in cached_messages[0]
+
+    assert "file='movie'" in reused_messages[0]
+    assert "reason='max_savings'" in reused_messages[0]
+    assert "stored_savings=67.6%" in reused_messages[0]
+    assert "threshold=65.0%" in reused_messages[0]
