@@ -18,7 +18,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .skip_policy import evaluate_skip
-from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path
+from .stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path, get_policy_skip_cache, upsert_policy_skip_cache, delete_policy_skip_cache
 
 
 def _fmt_hms(seconds: float) -> str:
@@ -202,6 +202,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
     skipped_codec = 0
     skipped_resolution = 0
     skipped_dry_run = 0
+    prefiltered_policy_cache = 0
 
     bytes_before_total = 0
     bytes_after_total = 0
@@ -271,6 +272,29 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         # Discovery (returns candidates + ignored folder counts)
         cands, ignored_folders, recent_skipped = gather_candidates(cfg, logger)
         skipped_recent = len(recent_skipped)
+
+        # Candidate pre-filter: skip cached max_savings policy rows that still apply.
+        if getattr(cfg, "max_savings_percent", 0):
+            threshold = float(cfg.max_savings_percent)
+            filtered_candidates: list[Path] = []
+            for cand in cands:
+                cached = get_policy_skip_cache(cfg, logger, src=cand, skip_reason="max_savings")
+                if cached is None:
+                    filtered_candidates.append(cand)
+                    continue
+                cached_pct = float(cached.get("savings_percent") or 0.0)
+                if threshold <= cached_pct:
+                    prefiltered_policy_cache += 1
+                    if cfg.log_skips:
+                        logger.log(
+                            f"CANDIDATE SKIP(max_savings:cached): {cached_pct:.1f}% > {threshold:.1f}% :: {cand}"
+                        )
+                    continue
+                # Threshold was raised; this cached policy no longer applies.
+                delete_policy_skip_cache(cfg, logger, src=cand, skip_reason="max_savings")
+                filtered_candidates.append(cand)
+            cands = filtered_candidates
+
         logger.log(f"Found {len(cands)} candidates")
         _progress(candidates_found=len(cands), current_file="", files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=0, files_failed=failed, bytes_saved=saved_bytes_run)
         _progress(mode="Preview" if cfg.preview else "Live")
@@ -358,6 +382,32 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 break
 
 
+            # Policy skip cache (reason-aware): only max_savings is currently cached.
+            cached_max_savings = get_policy_skip_cache(cfg, logger, src=src, skip_reason="max_savings")
+            if cached_max_savings is not None:
+                cached_pct = float(cached_max_savings.get("savings_percent") or 0.0)
+                threshold = float(getattr(cfg, "max_savings_percent", 0) or 0)
+                if threshold and threshold <= cached_pct:
+                    skipped_max_savings += 1
+                    if cfg.log_skips:
+                        logger.log(
+                            f"SKIP(max_savings:cached): {cached_pct:.1f}% > {threshold:.1f}% :: {src}"
+                        )
+                    record_skip(
+                        cfg,
+                        logger,
+                        run_id=run_id,
+                        mode=mode.lower(),
+                        skip_reason='max_savings',
+                        src=src,
+                        before_bytes=int(before_bytes or 0),
+                        detail=f"cached {cached_pct:.1f}% > {threshold:.1f}%",
+                    )
+                    done += 1
+                    continue
+                # Threshold is now more permissive; force fresh evaluation by removing stale cache row.
+                delete_policy_skip_cache(cfg, logger, src=src, skip_reason="max_savings")
+
             stamp2 = make_run_stamp()
             encoded = src.parent / f"{src.name}.{stamp2}.encoded.mkv"
 
@@ -418,6 +468,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     decision = "Skip (below savings threshold)"
                 elif getattr(cfg, "max_savings_percent", 0) and estimated_savings_pct > float(cfg.max_savings_percent):
                     skipped_max_savings += 1
+                    upsert_policy_skip_cache(
+                        cfg,
+                        logger,
+                        src=src,
+                        skip_reason="max_savings",
+                        savings_percent=float(estimated_savings_pct),
+                    )
                     decision = "Skip (above max savings threshold)"
                 else:
                     decision = "Encode"
@@ -535,6 +592,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                             except Exception:
                                 pass
                             skipped_max_savings += 1
+                            upsert_policy_skip_cache(
+                                cfg,
+                                logger,
+                                src=src,
+                                skip_reason="max_savings",
+                                savings_percent=float(pct_tmp),
+                            )
                             record_skip(
                                 cfg,
                                 logger,
@@ -715,7 +779,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
 
         logger.log("===== SUMMARY =====")
         ignored_files = sum(ignored_folders.values()) if ignored_folders else 0
-        prefiltered = skipped_marker + skipped_backup + skipped_recent
+        prefiltered = skipped_marker + skipped_backup + skipped_recent + prefiltered_policy_cache
         skipped_policy = skipped_codec + skipped_resolution + skipped_min_savings + skipped_max_savings + skipped_dry_run
         _progress(files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=skipped_policy, files_failed=failed, bytes_saved=saved_bytes_run)
         logger.log(f"Candidates found:     {len(cands)}")
@@ -728,6 +792,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         logger.log(f"Pre-filtered (marker):     {skipped_marker}")
         logger.log(f"Pre-filtered (backup):     {skipped_backup}")
         logger.log(f"Pre-filtered (recent):     {skipped_recent}")
+        logger.log(f"Pre-filtered (policy cache): {prefiltered_policy_cache}")
         logger.log(f"Skipped (codec):      {skipped_codec}")
         logger.log(f"Skipped (resolution): {skipped_resolution}")
         logger.log(f"Skipped (min savings): {skipped_min_savings}")

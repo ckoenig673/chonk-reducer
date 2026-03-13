@@ -6,6 +6,7 @@ import types
 from pathlib import Path
 
 import chonk_reducer.runner as runner
+import pytest
 
 
 def _base_cfg(tmp_path: Path, **overrides):
@@ -545,3 +546,65 @@ def test_run_marks_file_failed_after_retry_exhaustion(tmp_path, monkeypatch):
     assert attempts["count"] == 3
     assert failure_calls["count"] == 1
     assert src.with_suffix(src.suffix + ".failed").exists()
+
+
+def test_max_savings_skip_is_cached_and_reused_until_threshold_increases(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    cfg = _base_cfg(
+        tmp_path,
+        max_files=1,
+        stats_enabled=True,
+        stats_path=db_path,
+        max_savings_percent=65.0,
+        min_savings_percent=1.0,
+    )
+    src = cfg.media_root / "movie.mkv"
+    src.write_bytes(b"x" * 10_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 8_000_000})
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+
+    calls = {"encode": 0}
+
+    def fake_encode(_src, encoded, *_args, **_kwargs):
+        calls["encode"] += 1
+        # 67.6% savings => skipped when max_savings_percent is 65.0
+        encoded.write_bytes(b"x" * 3_240)
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    assert runner.run() == 0
+    assert calls["encode"] == 1
+
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT path, library, skip_reason, savings_percent FROM policy_skip_cache"
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row[0] == str(src)
+    assert row[2] == "max_savings"
+    assert float(row[3]) == pytest.approx(67.6, abs=0.001)
+
+    # Same threshold: skip from cache, no re-evaluation.
+    assert runner.run() == 0
+    assert calls["encode"] == 1
+
+    # Lower threshold: still skip from cache, no re-evaluation.
+    cfg.max_savings_percent = 60.0
+    assert runner.run() == 0
+    assert calls["encode"] == 1
+
+    # Raise threshold above cached measurement: allow re-evaluation.
+    cfg.max_savings_percent = 70.0
+    assert runner.run() == 0
+    assert calls["encode"] == 2

@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS encodes (
 CREATE INDEX IF NOT EXISTS idx_encodes_ts ON encodes(ts);
 CREATE INDEX IF NOT EXISTS idx_encodes_library_ts ON encodes(library, ts);
 CREATE INDEX IF NOT EXISTS idx_encodes_status_ts ON encodes(status, ts);
+
+CREATE TABLE IF NOT EXISTS policy_skip_cache (
+    library TEXT NOT NULL,
+    path TEXT NOT NULL,
+    skip_reason TEXT NOT NULL,
+    savings_percent REAL NOT NULL,
+    ts_cached TEXT NOT NULL,
+    PRIMARY KEY (library, path, skip_reason)
+);
+CREATE INDEX IF NOT EXISTS idx_policy_skip_cache_reason ON policy_skip_cache(skip_reason);
 """
 
 
@@ -141,6 +151,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.executescript(SCHEMA)
     _ensure_runs_columns(conn)
+    _ensure_policy_skip_cache_columns(conn)
     return conn
 
 
@@ -152,6 +163,22 @@ def _ensure_runs_columns(conn: sqlite3.Connection) -> None:
     for col, col_type in RUNS_COUNTER_COLUMNS.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
+
+
+def _ensure_policy_skip_cache_columns(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS policy_skip_cache (
+            library TEXT NOT NULL,
+            path TEXT NOT NULL,
+            skip_reason TEXT NOT NULL,
+            savings_percent REAL NOT NULL,
+            ts_cached TEXT NOT NULL,
+            PRIMARY KEY (library, path, skip_reason)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_policy_skip_cache_reason ON policy_skip_cache(skip_reason)")
 
 
 def _legacy_stats_path(cfg: Config, db_path: Path) -> Path:
@@ -616,3 +643,88 @@ def fetch_run_summaries(db_path: Path) -> List[Dict[str, Any]]:
     out = [dict(r) for r in cur.fetchall()]
     conn.close()
     return out
+
+
+def upsert_policy_skip_cache(
+    cfg: Config,
+    logger: Logger,
+    *,
+    src: Path,
+    skip_reason: str,
+    savings_percent: float,
+) -> None:
+    if not getattr(cfg, "stats_enabled", False):
+        return
+    try:
+        db_path = ensure_database(cfg, logger)
+        conn = _connect(db_path)
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO policy_skip_cache (library, path, skip_reason, savings_percent, ts_cached)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(library, path, skip_reason) DO UPDATE SET
+                    savings_percent = excluded.savings_percent,
+                    ts_cached = excluded.ts_cached
+                """,
+                (
+                    infer_library(cfg),
+                    str(src),
+                    str(skip_reason or "").strip().lower(),
+                    float(savings_percent),
+                    _iso_ts(),
+                ),
+            )
+        conn.close()
+    except Exception as e:
+        logger.log(f"WARN: policy skip cache upsert failed: {cfg.stats_path} ({e})")
+
+
+def get_policy_skip_cache(
+    cfg: Config,
+    logger: Logger,
+    *,
+    src: Path,
+    skip_reason: str,
+) -> Optional[Dict[str, Any]]:
+    if not getattr(cfg, "stats_enabled", False):
+        return None
+    try:
+        db_path = ensure_database(cfg, logger)
+        conn = _connect(db_path)
+        row = conn.execute(
+            """
+            SELECT library, path, skip_reason, savings_percent, ts_cached
+            FROM policy_skip_cache
+            WHERE library = ? AND path = ? AND skip_reason = ?
+            LIMIT 1
+            """,
+            (infer_library(cfg), str(src), str(skip_reason or "").strip().lower()),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row is not None else None
+    except Exception as e:
+        logger.log(f"WARN: policy skip cache lookup failed: {cfg.stats_path} ({e})")
+        return None
+
+
+def delete_policy_skip_cache(
+    cfg: Config,
+    logger: Logger,
+    *,
+    src: Path,
+    skip_reason: str,
+) -> None:
+    if not getattr(cfg, "stats_enabled", False):
+        return
+    try:
+        db_path = ensure_database(cfg, logger)
+        conn = _connect(db_path)
+        with conn:
+            conn.execute(
+                "DELETE FROM policy_skip_cache WHERE library = ? AND path = ? AND skip_reason = ?",
+                (infer_library(cfg), str(src), str(skip_reason or "").strip().lower()),
+            )
+        conn.close()
+    except Exception as e:
+        logger.log(f"WARN: policy skip cache delete failed: {cfg.stats_path} ({e})")
