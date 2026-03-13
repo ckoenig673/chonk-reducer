@@ -225,7 +225,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 |---|---|---|---|---|
 | `min_file_age_minutes` | Global | SQLite `settings` | Skip very recent files newer than this age. | `10` minutes bootstrap default. |
 | `min_savings_percent` | Global | SQLite `settings` | Minimum required savings percent before swap. | `15` bootstrap default. |
-| `max_savings_percent` | Global | SQLite `settings` | Optional upper savings guard; above this can be skipped. | `0` means disabled. |
+| `max_savings_percent` | Global | SQLite `settings` | Optional upper savings guard; above this can be skipped. Policy skips for this reason are cached per file in SQLite and reused until the threshold is raised above the cached savings value. | `0` means disabled. |
 | `min_media_free_gb` | Global | SQLite `settings` | Minimum free space safety threshold for media volume. | `0` (disabled unless set). |
 | `max_gb_per_run` | Global | SQLite `settings` | Optional cap on total GB processed per run. | `0` means no cap. |
 | `fail_fast` | Global | SQLite `settings` | Stop early on failure conditions instead of continuing. | `0` (off). |
