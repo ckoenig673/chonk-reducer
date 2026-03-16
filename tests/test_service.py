@@ -2938,6 +2938,9 @@ def test_settings_route_renders_and_shows_editable_fields(tmp_path, monkeypatch)
     assert "name=\"qsv_quality\"" in body
     assert "name=\"qsv_preset\"" in body
     assert "name=\"min_savings_percent\"" in body
+    assert "name=\"max_savings_percent\"" in body
+    assert "Savings Policy" in body
+    assert "If unset, this value inherits the global setting." in body
     assert "help-tooltip-trigger" in body
     assert "Minimum File Age (Minutes)" in body
 
@@ -2958,6 +2961,7 @@ def test_settings_tooltip_metadata_is_defined_for_global_and_library_fields():
         "qsv_quality",
         "qsv_preset",
         "min_savings_percent",
+        "max_savings_percent",
         "skip_codecs",
         "skip_min_height",
         "skip_resolution_tags",
@@ -2983,7 +2987,7 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT name, path, enabled, schedule, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries ORDER BY id ASC"
+        "SELECT name, path, enabled, schedule, qsv_quality, qsv_preset, min_savings_percent, max_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries ORDER BY id ASC"
     ).fetchall()
     conn.close()
 
@@ -2995,6 +2999,7 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert int(rows[0]["qsv_quality"]) == 22
     assert int(rows[0]["qsv_preset"]) == 5
     assert float(rows[0]["min_savings_percent"]) == 13.0
+    assert rows[0]["max_savings_percent"] is None
     assert rows[0]["skip_codecs"] == ""
     assert int(rows[0]["skip_min_height"]) == 0
     assert rows[0]["skip_resolution_tags"] == ""
@@ -3005,6 +3010,7 @@ def test_libraries_table_created_and_bootstrapped_from_env(tmp_path, monkeypatch
     assert int(rows[1]["qsv_quality"]) == 22
     assert int(rows[1]["qsv_preset"]) == 5
     assert float(rows[1]["min_savings_percent"]) == 13.0
+    assert rows[1]["max_savings_percent"] is None
     assert rows[1]["skip_codecs"] == ""
     assert int(rows[1]["skip_min_height"]) == 0
     assert rows[1]["skip_resolution_tags"] == ""
@@ -3059,6 +3065,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "qsv_quality": "20",
             "qsv_preset": "7",
             "min_savings_percent": "12.5",
+            "max_savings_percent": "70",
             "skip_codecs": "HEVC, av1",
             "skip_min_height": "1080",
             "skip_resolution_tags": "2160p, 4K",
@@ -3070,7 +3077,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     anime = conn.execute(
-        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE name = 'Anime'"
+        "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, max_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE name = 'Anime'"
     ).fetchone()
     assert anime is not None
     library_id = int(anime["id"])
@@ -3083,6 +3090,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert int(anime["qsv_quality"]) == 20
     assert int(anime["qsv_preset"]) == 7
     assert float(anime["min_savings_percent"]) == 12.5
+    assert float(anime["max_savings_percent"]) == 70.0
     assert anime["skip_codecs"] == "hevc,av1"
     assert int(anime["skip_min_height"]) == 1080
     assert anime["skip_resolution_tags"] == "2160p,4k"
@@ -3103,6 +3111,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
             "qsv_quality": "23",
             "qsv_preset": "8",
             "min_savings_percent": "10",
+            "max_savings_percent": "",
             "skip_codecs": "mpeg2",
             "skip_min_height": "720",
             "skip_resolution_tags": "uhd",
@@ -3114,7 +3123,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     updated = conn.execute(
-        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE id = ?",
+        "SELECT name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, max_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries WHERE id = ?",
         (library_id,),
     ).fetchone()
     assert updated is not None
@@ -3128,6 +3137,7 @@ def test_create_edit_delete_and_toggle_library(tmp_path, monkeypatch):
     assert int(updated["qsv_quality"]) == 23
     assert int(updated["qsv_preset"]) == 8
     assert float(updated["min_savings_percent"]) == 10.0
+    assert updated["max_savings_percent"] is None
     assert updated["skip_codecs"] == "mpeg2"
     assert int(updated["skip_min_height"]) == 720
     assert updated["skip_resolution_tags"] == "uhd"
@@ -3725,8 +3735,8 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
 
     conn = sqlite3.connect(str(db_path))
     conn.execute(
-        "UPDATE libraries SET min_size_gb = ?, max_files = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ?, skip_codecs = ?, skip_min_height = ?, skip_resolution_tags = ? WHERE name = ?",
-        (2.5, 4, 20, 8, 12.0, "h264,av1", 1080, "2160p,uhd", "Movies"),
+        "UPDATE libraries SET min_size_gb = ?, max_files = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ?, max_savings_percent = ?, skip_codecs = ?, skip_min_height = ?, skip_resolution_tags = ? WHERE name = ?",
+        (2.5, 4, 20, 8, 12.0, 70.0, "h264,av1", 1080, "2160p,uhd", "Movies"),
     )
     conn.commit()
     conn.close()
@@ -3743,6 +3753,7 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
         captured["qsv_quality"] = os.getenv("QSV_QUALITY")
         captured["qsv_preset"] = os.getenv("QSV_PRESET")
         captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
+        captured["max_savings_percent"] = os.getenv("MAX_SAVINGS_PERCENT")
         captured["skip_codecs"] = os.getenv("SKIP_CODECS")
         captured["skip_min_height"] = os.getenv("SKIP_MIN_HEIGHT")
         captured["skip_resolution_tags"] = os.getenv("SKIP_RESOLUTION_TAGS")
@@ -3761,6 +3772,7 @@ def test_run_uses_db_backed_library_and_editable_settings(tmp_path, monkeypatch)
     assert captured["qsv_quality"] == "20"
     assert captured["qsv_preset"] == "8"
     assert captured["min_savings_percent"] == "12.0"
+    assert captured["max_savings_percent"] == "70.0"
     assert captured["skip_codecs"] == "h264,av1"
     assert captured["skip_min_height"] == "1080"
     assert captured["skip_resolution_tags"] == "2160p,uhd"
@@ -3800,6 +3812,7 @@ def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_pat
     monkeypatch.setenv("QSV_QUALITY", "26")
     monkeypatch.setenv("QSV_PRESET", "4")
     monkeypatch.setenv("MIN_SAVINGS_PERCENT", "9")
+    monkeypatch.setenv("MAX_SAVINGS_PERCENT", "75")
 
     service = ChonkService(
         ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
@@ -3807,7 +3820,7 @@ def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_pat
 
     conn = sqlite3.connect(str(db_path))
     conn.execute(
-        "UPDATE libraries SET qsv_quality = NULL, qsv_preset = NULL, min_savings_percent = NULL WHERE name = ?",
+        "UPDATE libraries SET qsv_quality = NULL, qsv_preset = NULL, min_savings_percent = NULL, max_savings_percent = NULL WHERE name = ?",
         ("Movies",),
     )
     conn.commit()
@@ -3819,6 +3832,7 @@ def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_pat
         captured["qsv_quality"] = os.getenv("QSV_QUALITY")
         captured["qsv_preset"] = os.getenv("QSV_PRESET")
         captured["min_savings_percent"] = os.getenv("MIN_SAVINGS_PERCENT")
+        captured["max_savings_percent"] = os.getenv("MAX_SAVINGS_PERCENT")
         captured["skip_codecs"] = os.getenv("SKIP_CODECS")
         captured["skip_min_height"] = os.getenv("SKIP_MIN_HEIGHT")
         captured["skip_resolution_tags"] = os.getenv("SKIP_RESOLUTION_TAGS")
@@ -3831,6 +3845,7 @@ def test_run_falls_back_to_defaults_when_library_encode_settings_missing(tmp_pat
     assert captured["qsv_quality"] == "26"
     assert captured["qsv_preset"] == "4"
     assert captured["min_savings_percent"] == "9.0"
+    assert captured["max_savings_percent"] == "75"
 
 
 def test_settings_route_renders_notification_fields(tmp_path, monkeypatch):
