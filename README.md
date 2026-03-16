@@ -152,7 +152,7 @@ Service UI routes:
 
 - Global Settings form (DB-backed)
 - Library CRUD (name/path/schedule/enabled + per-library processing/encoding fields)
-- Per-library **Ignored Folders** management (create/remove `.chonkignore` files under the library root)
+- Per-library **Ignored Folders** management (create/remove `.chonkignore` files under the library root), including a Browse picker that lists only directories under the selected library root and auto-fills library-relative paths
 - Send Test Notification action
 - Inline help tooltips (`?`) beside each global and library setting label, with operator-focused descriptions aligned to the settings mapping table
 
@@ -262,7 +262,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `skip_codecs` | Per-library | SQLite `libraries` | Comma-separated codecs to skip (normalized). | Bootstrapped from legacy `SKIP_CODECS` default when missing. |
 | `skip_min_height` | Per-library | SQLite `libraries` | Skip files at or above this vertical resolution. | Bootstrapped from legacy `SKIP_MIN_HEIGHT` default when missing. |
 | `skip_resolution_tags` | Per-library | SQLite `libraries` | Comma-separated filename tags to skip (normalized). | Bootstrapped from legacy `SKIP_RESOLUTION_TAGS` default when missing. |
-| `ignored folders` | Per-library filesystem | `.chonkignore` marker files | Managed in Settings as library-relative paths; manual filesystem markers are auto-discovered in UI. | No DB persistence; scanner ignore behavior remains unchanged. |
+| `ignored folders` | Per-library filesystem | `.chonkignore` marker files | Managed in Settings as library-relative paths; Browse picker is root-restricted to the library path and auto-fills relative folder selections; manual filesystem markers are auto-discovered in UI. | No DB persistence; scanner ignore behavior remains unchanged. |
 
 ### Deployment / Environment Settings
 

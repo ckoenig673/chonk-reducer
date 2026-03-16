@@ -63,7 +63,7 @@ from . import secrets
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.45.0") or "1.45.0").strip() or "1.45.0"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.0") or "1.46.0").strip() or "1.46.0"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -617,6 +617,16 @@ class ChonkService:
         async def remove_ignored_folder(request: Request = None):  # type: ignore[assignment]
             values = await self._request_form_values(request)
             return self._html_response(self.settings_page_html(self.remove_ignored_folder(values)))
+
+        @self.app.get("/api/library/{library_id}/folders")
+        def api_library_folders(library_id: int, request: Request = None):
+            relative_path = ""
+            if request is not None and hasattr(request, "query_params"):
+                relative_path = str(request.query_params.get("path", ""))
+            payload, status_code = self.library_folders_payload(int(library_id), relative_path)
+            if JSONResponse is not None:
+                return JSONResponse(content=payload, status_code=status_code)
+            return payload
 
         @self.app.get("/health")
         def health() -> dict:
@@ -2831,9 +2841,107 @@ class ChonkService:
   <form method="post" action="/settings/libraries/ignored/add">
     <input type="hidden" name="library_id" value="{library_id}" />
     <label for="ignored-folder-{library_id}"><strong>Add Ignored Folder (library-relative path)</strong></label><br />
-    <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" style="width: 100%;" />
+    <div style="display: flex; gap: 0.4rem; align-items: center;">
+      <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" style="width: 100%;" />
+      <button type="button" id="ignored-folder-browse-button-{library_id}">Browse</button>
+    </div>
+    <div id="ignored-folder-browser-{library_id}" style="display: none; margin-top: 0.45rem; border: 1px solid #ddd; padding: 0.5rem; border-radius: 4px; background: #fafafa;">
+      <div style="font-size: 0.9rem; margin-bottom: 0.35rem;"><strong>Folder browser</strong>: <code id="ignored-folder-browser-path-{library_id}">.</code></div>
+      <div id="ignored-folder-browser-actions-{library_id}" style="margin-bottom: 0.35rem;"></div>
+      <ul id="ignored-folder-browser-list-{library_id}" style="margin: 0; padding-left: 1.2rem;"></ul>
+    </div>
     <div style="margin-top: 0.4rem;"><button type="submit">Add Ignored Folder</button></div>
   </form>
+  <script>
+  (function() {{
+    const libraryId = {library_id};
+    const input = document.getElementById("ignored-folder-" + libraryId);
+    const toggleButton = document.getElementById("ignored-folder-browse-button-" + libraryId);
+    const browserBox = document.getElementById("ignored-folder-browser-" + libraryId);
+    const pathLabel = document.getElementById("ignored-folder-browser-path-" + libraryId);
+    const actions = document.getElementById("ignored-folder-browser-actions-" + libraryId);
+    const folderList = document.getElementById("ignored-folder-browser-list-" + libraryId);
+    if (!input || !toggleButton || !browserBox || !pathLabel || !actions || !folderList) {{
+      return;
+    }}
+
+    let currentPath = "";
+
+    function normalize(path) {{
+      const raw = String(path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      return raw === "." ? "" : raw;
+    }}
+
+    function render(folders) {{
+      const safePath = normalize(currentPath);
+      pathLabel.textContent = safePath || ".";
+      actions.innerHTML = "";
+      if (safePath) {{
+        const upButton = document.createElement("button");
+        upButton.type = "button";
+        upButton.textContent = "Up";
+        upButton.addEventListener("click", function() {{
+          const parts = safePath.split("/").filter(Boolean);
+          parts.pop();
+          load(parts.join("/"));
+        }});
+        actions.appendChild(upButton);
+      }}
+
+      folderList.innerHTML = "";
+      const folderNames = Array.isArray(folders) ? folders : [];
+      if (!folderNames.length) {{
+        const emptyItem = document.createElement("li");
+        emptyItem.textContent = "No subfolders";
+        folderList.appendChild(emptyItem);
+        return;
+      }}
+
+      folderNames.forEach(function(name) {{
+        const selectedPath = normalize(safePath ? (safePath + "/" + name) : name);
+        const item = document.createElement("li");
+        const openButton = document.createElement("button");
+        openButton.type = "button";
+        openButton.textContent = "Open";
+        openButton.style.marginRight = "0.35rem";
+        openButton.addEventListener("click", function() {{
+          load(selectedPath);
+        }});
+
+        const selectButton = document.createElement("button");
+        selectButton.type = "button";
+        selectButton.textContent = name;
+        selectButton.addEventListener("click", function() {{
+          input.value = selectedPath;
+        }});
+
+        item.appendChild(openButton);
+        item.appendChild(selectButton);
+        folderList.appendChild(item);
+      }});
+    }}
+
+    async function load(path) {{
+      const targetPath = normalize(path);
+      const response = await fetch("/api/library/" + libraryId + "/folders?path=" + encodeURIComponent(targetPath));
+      if (!response.ok) {{
+        folderList.innerHTML = "<li>Unable to load folders</li>";
+        return;
+      }}
+      const payload = await response.json();
+      currentPath = normalize(payload.path || "");
+      render(payload.folders || []);
+    }}
+
+    toggleButton.addEventListener("click", function() {{
+      const isHidden = browserBox.style.display === "none";
+      browserBox.style.display = isHidden ? "block" : "none";
+      if (isHidden) {{
+        load(input.value || "");
+      }}
+    }});
+  }})();
+  </script>
 </fieldset>""".format(
             ignored_folders_label=self._label_with_help(
                 "Ignored folders are backed by .chonkignore files.",
@@ -2883,6 +2991,36 @@ class ChonkService:
         except ValueError:
             return None, "Ignored folder update failed: path must stay inside the library root."
         return target, ""
+
+    def library_folders_payload(self, library_id: int, relative_path: str) -> tuple[Dict[str, object], int]:
+        library = self._library_record_by_id(int(library_id))
+        if library is None:
+            return {"path": "", "folders": [], "error": "Library not found."}, 404
+        root = Path(str(library.path or "").strip()).resolve()
+        if not root.exists() or not root.is_dir():
+            return {"path": "", "folders": [], "error": "Library path is missing or not a directory."}, 400
+
+        normalized = str(relative_path or "").strip().replace("\\", "/").strip("/")
+        if normalized in {"", "."}:
+            target = root
+            normalized = ""
+        else:
+            target, message = self._resolve_library_relative_folder(str(root), normalized)
+            if target is None:
+                return {"path": "", "folders": [], "error": message}, 400
+            normalized = target.relative_to(root).as_posix()
+
+        if not target.exists() or not target.is_dir():
+            return {"path": normalized, "folders": [], "error": "Folder does not exist under the library root."}, 404
+
+        folders: List[str] = []
+        try:
+            for child in target.iterdir():
+                if child.is_dir():
+                    folders.append(child.name)
+        except OSError:
+            return {"path": normalized, "folders": [], "error": "Unable to read folders from library path."}, 500
+        return {"path": normalized, "folders": sorted(folders, key=lambda item: item.lower())}, 200
 
     def add_ignored_folder(self, values: Dict[str, str]) -> str:
         library_id = str(values.get("library_id", "")).strip()
@@ -4879,6 +5017,7 @@ class ChonkService:
                     self.toggle_library,
                     self.add_ignored_folder,
                     self.remove_ignored_folder,
+                    self.library_folders_payload,
                     self.manual_run_payload,
                     self.request_cancel_active_run,
                     self.clear_preview_results,
@@ -5637,6 +5776,7 @@ def _run_simple_http_server(
     toggle_library_fn: Callable[[Dict[str, str]], str],
     add_ignored_folder_fn: Callable[[Dict[str, str]], str],
     remove_ignored_folder_fn: Callable[[Dict[str, str]], str],
+    library_folders_fn: Callable[[int, str], tuple[Dict[str, object], int]],
     manual_run_fn: Callable[[str, bool], tuple],
     cancel_run_fn: Optional[Callable[[], Dict[str, str]]] = None,
     clear_preview_fn: Optional[Callable[[], Dict[str, str]]] = None,
@@ -5738,6 +5878,26 @@ def _run_simple_http_server(
                 self.end_headers()
                 self.wfile.write(payload)
                 return
+
+            if request_path.startswith("/api/library/") and request_path.endswith("/folders"):
+                parts = [part for part in request_path.split("/") if part]
+                if len(parts) == 4 and parts[0] == "api" and parts[1] == "library" and parts[3] == "folders":
+                    try:
+                        library_id = int(parts[2])
+                    except ValueError:
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    parsed = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    relative_path = str(parsed.get("path", [""])[-1])
+                    payload_data, status_code = library_folders_fn(library_id, relative_path)
+                    payload = json.dumps(payload_data).encode("utf-8")
+                    self.send_response(status_code)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
 
             if request_path != "/health":
                 self.send_response(404)
