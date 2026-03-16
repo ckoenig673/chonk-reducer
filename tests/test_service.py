@@ -5421,6 +5421,31 @@ def test_ignored_folders_discovered_and_displayed_as_relative_paths(tmp_path, mo
     assert service._library_record_by_id(library_id) is not None
 
 
+def test_ignored_folder_forms_are_not_nested_inside_library_update_form(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    library_root = tmp_path / "media"
+    (library_root / "Anime" / "Seasonal").mkdir(parents=True)
+    (library_root / "Anime" / "Seasonal" / ".chonkignore").write_text("1")
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET path = ? WHERE name = ?", (str(library_root), "Movies"))
+    conn.commit()
+    conn.close()
+
+    status_code, body, _ = _call_get(service, "/settings")
+    assert status_code == 200
+
+    update_form_start = body.index('<form method="post" action="/settings/libraries/update"')
+    update_form_end = body.index("</form>", update_form_start)
+    update_form_html = body[update_form_start:update_form_end]
+
+    assert '/settings/libraries/ignored/add' not in update_form_html
+    assert '/settings/libraries/ignored/remove' not in update_form_html
+
+
 def test_ignored_folder_add_and_remove_manage_chonkignore_files(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     library_root = tmp_path / "media"

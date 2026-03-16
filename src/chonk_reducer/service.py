@@ -2740,12 +2740,12 @@ class ChonkService:
           <input name="skip_resolution_tags" value="{skip_resolution_tags}" style="width: 100%;" /><br />
           <small>Comma-separated filename tags to skip, such as 2160p,4k,uhd.</small><br />
         </fieldset>
-        {ignored_folders_html}
         {schedule_fields}
         <label>{enabled_label}</label>
         <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
         <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Save Library</button></div>
       </form>
+      {ignored_folders_html}
     </details>
   </td>
 </tr>""".format(
