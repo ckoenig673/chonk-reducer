@@ -5476,6 +5476,8 @@ def test_ignored_folder_browser_ui_and_api_listing(tmp_path, monkeypatch):
     assert f'id="ignored-folder-browse-button-{library_id}"' in body
     assert f'id="ignored-folder-browser-{library_id}"' in body
     assert f'fetch("/api/library/" + libraryId + "/folders?path=" + encodeURIComponent(targetPath))' in body
+    assert 'replace(/\\\\/g, "/")' in body
+    assert 'replace(/\\/g, "/")' not in body
 
     status_code, body, payload = _call_get(service, f"/api/library/{library_id}/folders")
     assert status_code == 200

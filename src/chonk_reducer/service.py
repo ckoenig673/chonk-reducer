@@ -2700,7 +2700,7 @@ class ChonkService:
       <form method=\"post\" action=\"/settings/libraries/update\" style=\"margin-top: 0.5rem;\">
         <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
         <label>{name_label}</label><br />
-        <input name=\"name\" value=\"{name}\" style=\"width: 100%%; max-width: 420px;\" /><br />
+        <input name=\"name\" value=\"{name}\" style=\"width: 100%; max-width: 420px;\" /><br />
         <label>{path_label}</label><br />
         <input name="path" value="{path}" style="width: 100%; max-width: 420px;" /><br />
         <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
@@ -2868,7 +2868,7 @@ class ChonkService:
     let currentPath = "";
 
     function normalize(path) {{
-      const raw = String(path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      const raw = String(path || "").replace(/\\\\/g, "/").replace(/^\/+|\/+$/g, "");
       return raw === "." ? "" : raw;
     }}
 
