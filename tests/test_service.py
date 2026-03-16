@@ -118,6 +118,10 @@ def _call_post(service, path, data=None, follow_redirects=True):
                 return 200, service.settings_page_html(service.delete_library(data))
             if path == "/settings/libraries/toggle" and data is not None:
                 return 200, service.settings_page_html(service.toggle_library(data))
+            if path == "/settings/libraries/ignored/add" and data is not None:
+                return 200, service.settings_page_html(service.add_ignored_folder(data))
+            if path == "/settings/libraries/ignored/remove" and data is not None:
+                return 200, service.settings_page_html(service.remove_ignored_folder(data))
             if path == "/settings/test-notification":
                 result = service_module.notifications.send_test_notification(settings_db_path=str(service._settings_db_path))
                 return 200, service.settings_page_html(str(result.get("message", "")))
@@ -213,6 +217,10 @@ def _call_post(service, path, data=None, follow_redirects=True):
         return 200, service.settings_page_html(service.delete_library(data))
     if path == "/settings/libraries/toggle":
         return 200, service.settings_page_html(service.toggle_library(data))
+    if path == "/settings/libraries/ignored/add":
+        return 200, service.settings_page_html(service.add_ignored_folder(data))
+    if path == "/settings/libraries/ignored/remove":
+        return 200, service.settings_page_html(service.remove_ignored_folder(data))
 
     result = handler()
     if isinstance(result, dict):
@@ -910,6 +918,8 @@ def test_simple_http_server_handles_another_request_while_dashboard_request_is_b
             lambda values: "updated",
             lambda values: "deleted",
             lambda values: "toggled",
+            lambda values: "ignored add",
+            lambda values: "ignored remove",
             lambda library, preview=False: ({"status": "queued", "library": library, "library_id": 1}, 202),
         ),
         daemon=True,
@@ -978,6 +988,8 @@ def test_simple_http_server_uses_threading_http_server(monkeypatch):
         lambda values: "updated",
         lambda values: "deleted",
         lambda values: "toggled",
+        lambda values: "ignored add",
+        lambda values: "ignored remove",
         lambda library, preview=False: ({"status": "queued", "library": library, "library_id": 1}, 202),
     )
 
@@ -5344,3 +5356,93 @@ def test_dashboard_summary_widget_render(tmp_path, monkeypatch):
     assert "Compact dashboard summary" in body
     assert "runtime-dashboard-total-saved" in body
     assert "Saved This Week" in body
+
+
+def test_ignored_folders_discovered_and_displayed_as_relative_paths(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    library_root = tmp_path / "media"
+    (library_root / "Sports").mkdir(parents=True)
+    (library_root / "Reality TV").mkdir(parents=True)
+    (library_root / "Anime" / "Seasonal").mkdir(parents=True)
+    (library_root / "Sports" / ".chonkignore").write_text("1")
+    (library_root / "Reality TV" / ".chonkignore").write_text("1")
+    (library_root / "Anime" / "Seasonal" / ".chonkignore").write_text("1")
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET path = ? WHERE name = ?", (str(library_root), "Movies"))
+    conn.commit()
+    library_id = int(conn.execute("SELECT id FROM libraries WHERE name = ?", ("Movies",)).fetchone()[0])
+    conn.close()
+
+    status_code, body, _ = _call_get(service, "/settings")
+    assert status_code == 200
+    assert "Ignored Folders" in body
+    assert "Sports" in body
+    assert "Reality TV" in body
+    assert "Anime/Seasonal" in body
+    assert f'value="{library_root}/Sports"' not in body
+
+    ignore_list = service._discover_ignored_folders(str(library_root))
+    assert ignore_list == ["Anime/Seasonal", "Reality TV", "Sports"]
+    assert service._library_record_by_id(library_id) is not None
+
+
+def test_ignored_folder_add_and_remove_manage_chonkignore_files(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    library_root = tmp_path / "media"
+    target = library_root / "Anime" / "Seasonal"
+    target.mkdir(parents=True)
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET path = ? WHERE name = ?", (str(library_root), "Movies"))
+    conn.commit()
+    library_id = int(conn.execute("SELECT id FROM libraries WHERE name = ?", ("Movies",)).fetchone()[0])
+    conn.close()
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/ignored/add",
+        data={"library_id": str(library_id), "relative_path": "Anime/Seasonal"},
+    )
+    assert status_code == 200
+    assert "Ignored folder added: Anime/Seasonal" in body
+    assert (target / ".chonkignore").exists()
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/ignored/remove",
+        data={"library_id": str(library_id), "relative_path": "Anime/Seasonal"},
+    )
+    assert status_code == 200
+    assert "Ignored folder removed: Anime/Seasonal" in body
+    assert not (target / ".chonkignore").exists()
+
+
+def test_ignored_folder_rejects_paths_outside_library_root(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    library_root = tmp_path / "media"
+    library_root.mkdir()
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET path = ? WHERE name = ?", (str(library_root), "Movies"))
+    conn.commit()
+    library_id = int(conn.execute("SELECT id FROM libraries WHERE name = ?", ("Movies",)).fetchone()[0])
+    conn.close()
+
+    status_code, body = _call_post(
+        service,
+        "/settings/libraries/ignored/add",
+        data={"library_id": str(library_id), "relative_path": "../outside"},
+    )
+    assert status_code == 200
+    assert "path must stay inside the library root" in body
+    assert not (tmp_path / "outside" / ".chonkignore").exists()
