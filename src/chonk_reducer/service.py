@@ -235,6 +235,7 @@ LIBRARY_SETTINGS_HELP = {
     "qsv_quality": "QSV quality value for this library. Lower values generally mean higher quality and larger output.",
     "qsv_preset": "QSV preset for this library. Tune based on speed and quality needs.",
     "min_savings_percent": "Library-specific minimum savings percent required before swap.",
+    "max_savings_percent": "Library-specific maximum savings percent guard for policy skips. If unset, this value inherits the global setting.",
     "skip_codecs": "Comma-separated codecs to skip, such as hevc,av1.",
     "skip_min_height": "Skip files at or above this vertical resolution.",
     "skip_resolution_tags": "Comma-separated filename tags to skip, such as 2160p,4k,uhd.",
@@ -270,6 +271,7 @@ class LibraryRecord:
     qsv_quality: Optional[int]
     qsv_preset: Optional[int]
     min_savings_percent: Optional[float]
+    max_savings_percent: Optional[float] = None
     skip_codecs: str = ""
     skip_min_height: int = 0
     skip_resolution_tags: str = ""
@@ -287,6 +289,7 @@ class RuntimeLibrary:
     qsv_quality: Optional[int]
     qsv_preset: Optional[int]
     min_savings_percent: Optional[float]
+    max_savings_percent: Optional[float] = None
     skip_codecs: str = ""
     skip_min_height: int = 0
     skip_resolution_tags: str = ""
@@ -716,6 +719,7 @@ class ChonkService:
                 qsv_quality=library.qsv_quality,
                 qsv_preset=library.qsv_preset,
                 min_savings_percent=library.min_savings_percent,
+                max_savings_percent=library.max_savings_percent,
                 skip_codecs=library.skip_codecs,
                 skip_min_height=library.skip_min_height,
                 skip_resolution_tags=library.skip_resolution_tags,
@@ -2372,7 +2376,7 @@ class ChonkService:
     def list_libraries(self) -> List[LibraryRecord]:
         conn = _connect_settings_db(self._settings_db_path)
         rows = conn.execute(
-            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries ORDER BY id ASC"
+            "SELECT id, name, path, enabled, schedule, min_size_gb, max_files, priority, qsv_quality, qsv_preset, min_savings_percent, max_savings_percent, skip_codecs, skip_min_height, skip_resolution_tags FROM libraries ORDER BY id ASC"
         ).fetchall()
         conn.close()
         return [
@@ -2388,6 +2392,7 @@ class ChonkService:
                 qsv_quality=int(row["qsv_quality"]) if row["qsv_quality"] is not None else None,
                 qsv_preset=int(row["qsv_preset"]) if row["qsv_preset"] is not None else None,
                 min_savings_percent=float(row["min_savings_percent"]) if row["min_savings_percent"] is not None else None,
+                max_savings_percent=float(row["max_savings_percent"]) if row["max_savings_percent"] is not None else None,
                 skip_codecs=str(row["skip_codecs"] or ""),
                 skip_min_height=max(0, int(row["skip_min_height"] or 0)),
                 skip_resolution_tags=str(row["skip_resolution_tags"] or ""),
@@ -2407,10 +2412,11 @@ class ChonkService:
                     INSERT INTO libraries(
                         name, path, enabled, schedule, min_size_gb, max_files, priority,
                         qsv_quality, qsv_preset, min_savings_percent,
+                        max_savings_percent,
                         skip_codecs, skip_min_height, skip_resolution_tags,
                         created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         normalized["name"],
@@ -2423,6 +2429,7 @@ class ChonkService:
                         int(normalized["qsv_quality"]),
                         int(normalized["qsv_preset"]),
                         float(normalized["min_savings_percent"]),
+                        normalized["max_savings_percent"],
                         str(normalized["skip_codecs"]),
                         int(normalized["skip_min_height"]),
                         str(normalized["skip_resolution_tags"]),
@@ -2449,7 +2456,7 @@ class ChonkService:
                 cursor = conn.execute(
                     """
                     UPDATE libraries
-                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, priority = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ?, skip_codecs = ?, skip_min_height = ?, skip_resolution_tags = ?, updated_at = ?
+                    SET name = ?, path = ?, enabled = ?, schedule = ?, min_size_gb = ?, max_files = ?, priority = ?, qsv_quality = ?, qsv_preset = ?, min_savings_percent = ?, max_savings_percent = ?, skip_codecs = ?, skip_min_height = ?, skip_resolution_tags = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -2463,6 +2470,7 @@ class ChonkService:
                         int(normalized["qsv_quality"]),
                         int(normalized["qsv_preset"]),
                         float(normalized["min_savings_percent"]),
+                        normalized["max_savings_percent"],
                         str(normalized["skip_codecs"]),
                         int(normalized["skip_min_height"]),
                         str(normalized["skip_resolution_tags"]),
@@ -2582,6 +2590,18 @@ class ChonkService:
         if min_savings_percent < 0:
             return {}, "Library validation failed: minimum savings percent must be >= 0."
 
+        max_savings_raw = str(values.get("max_savings_percent", "")).strip()
+        max_savings_percent: Optional[float] = None
+        if max_savings_raw:
+            try:
+                max_savings_percent = float(max_savings_raw)
+            except ValueError:
+                return {}, "Library validation failed: maximum savings percent must be a number when set."
+            if max_savings_percent < 0:
+                return {}, "Library validation failed: maximum savings percent must be >= 0 when set."
+            if max_savings_percent > 100:
+                return {}, "Library validation failed: maximum savings percent must be <= 100 when set."
+
         skip_codecs = _normalize_csv_text(str(values.get("skip_codecs", _env_bootstrap("SKIP_CODECS", ""))))
         skip_resolution_tags = _normalize_csv_text(str(values.get("skip_resolution_tags", _env_bootstrap("SKIP_RESOLUTION_TAGS", ""))))
         skip_min_height_raw = str(values.get("skip_min_height", _env_bootstrap("SKIP_MIN_HEIGHT", "0"))).strip() or "0"
@@ -2619,6 +2639,7 @@ class ChonkService:
             "qsv_quality": qsv_quality,
             "qsv_preset": qsv_preset,
             "min_savings_percent": min_savings_percent,
+            "max_savings_percent": max_savings_percent,
             "skip_codecs": skip_codecs,
             "skip_min_height": skip_min_height,
             "skip_resolution_tags": skip_resolution_tags,
@@ -2677,8 +2698,14 @@ class ChonkService:
           <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality}" style="width: 100%;" /><br />
           <label>{qsv_preset_label}</label><br />
           <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset}" style="width: 100%;" /><br />
+        </fieldset>
+        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
+          <legend><strong>Savings Policy</strong></legend>
           <label>{min_savings_percent_label}</label><br />
           <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent}" style="width: 100%;" /><br />
+          <label>{max_savings_percent_label}</label><br />
+          <input name="max_savings_percent" type="number" step="0.1" min="0" max="100" value="{max_savings_percent}" style="width: 100%;" /><br />
+          <small>If unset, this value inherits the global setting.</small><br />
         </fieldset>
         <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
           <legend><strong>Skip Settings</strong></legend>
@@ -2710,6 +2737,7 @@ class ChonkService:
                     qsv_quality=_escape_html(str(library.qsv_quality if library.qsv_quality is not None else _env_bootstrap("QSV_QUALITY", "21"))),
                     qsv_preset=_escape_html(str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7"))),
                     min_savings_percent=_escape_html(str(library.min_savings_percent if library.min_savings_percent is not None else _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))),
+                    max_savings_percent=_escape_html(str(library.max_savings_percent) if library.max_savings_percent is not None else ""),
                     schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
                     name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-edit-%d" % library.id),
                     path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-edit-%d" % library.id),
@@ -2719,6 +2747,7 @@ class ChonkService:
                     qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-edit-%d" % library.id),
                     qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-edit-%d" % library.id),
                     min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-edit-%d" % library.id),
+                    max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-edit-%d" % library.id),
                     skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-edit-%d" % library.id),
                     skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-edit-%d" % library.id),
                     skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-edit-%d" % library.id),
@@ -2784,8 +2813,14 @@ class ChonkService:
     <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality_default}" style="width: 100%;" /><br />
     <label>{qsv_preset_label}</label><br />
     <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset_default}" style="width: 100%;" /><br />
+  </fieldset>
+  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
+    <legend><strong>Savings Policy</strong></legend>
     <label>{min_savings_percent_label}</label><br />
     <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent_default}" style="width: 100%;" /><br />
+    <label>{max_savings_percent_label}</label><br />
+    <input name="max_savings_percent" type="number" step="0.1" min="0" max="100" value="" style="width: 100%;" /><br />
+    <small>If unset, this value inherits the global setting.</small><br />
   </fieldset>
   <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
     <legend><strong>Skip Settings</strong></legend>
@@ -2820,6 +2855,7 @@ class ChonkService:
     qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
     qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
     min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
+    max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-create"),
     skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-create"),
     skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-create"),
     skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-create"),
@@ -3078,6 +3114,7 @@ class ChonkService:
                 qsv_quality=library.qsv_quality,
                 qsv_preset=library.qsv_preset,
                 min_savings_percent=library.min_savings_percent,
+                max_savings_percent=library.max_savings_percent,
                 skip_codecs=library.skip_codecs,
                 skip_min_height=library.skip_min_height,
                 skip_resolution_tags=library.skip_resolution_tags,
@@ -4728,6 +4765,7 @@ def library_runtime_environment(library: RuntimeLibrary) -> Iterator[None]:
             if library.min_savings_percent is not None
             else _env_bootstrap("MIN_SAVINGS_PERCENT", "15")
         ),
+        "MAX_SAVINGS_PERCENT": str(library.max_savings_percent) if library.max_savings_percent is not None else _env("MAX_SAVINGS_PERCENT", "0"),
         "SKIP_CODECS": _normalize_csv_text(library.skip_codecs),
         "SKIP_MIN_HEIGHT": str(max(0, int(library.skip_min_height))),
         "SKIP_RESOLUTION_TAGS": _normalize_csv_text(library.skip_resolution_tags),
@@ -4884,6 +4922,7 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
             qsv_quality INTEGER,
             qsv_preset INTEGER,
             min_savings_percent REAL,
+            max_savings_percent REAL,
             skip_codecs TEXT NOT NULL DEFAULT '',
             skip_min_height INTEGER NOT NULL DEFAULT 0,
             skip_resolution_tags TEXT NOT NULL DEFAULT '',
@@ -4905,6 +4944,8 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE libraries ADD COLUMN qsv_preset INTEGER")
     if "min_savings_percent" not in library_columns:
         conn.execute("ALTER TABLE libraries ADD COLUMN min_savings_percent REAL")
+    if "max_savings_percent" not in library_columns:
+        conn.execute("ALTER TABLE libraries ADD COLUMN max_savings_percent REAL")
     if "skip_codecs" not in library_columns:
         conn.execute("ALTER TABLE libraries ADD COLUMN skip_codecs TEXT NOT NULL DEFAULT ''")
     if "skip_min_height" not in library_columns:
@@ -4925,6 +4966,9 @@ def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
     conn.execute(
         "UPDATE libraries SET min_savings_percent = CASE WHEN min_savings_percent IS NULL OR min_savings_percent < 0 THEN ? ELSE min_savings_percent END",
         (_env_float("MIN_SAVINGS_PERCENT", 15.0),),
+    )
+    conn.execute(
+        "UPDATE libraries SET max_savings_percent = CASE WHEN max_savings_percent IS NOT NULL AND max_savings_percent < 0 THEN NULL ELSE max_savings_percent END"
     )
     conn.execute(
         "UPDATE libraries SET skip_codecs = CASE WHEN skip_codecs IS NULL OR trim(skip_codecs) = '' THEN ? ELSE skip_codecs END",

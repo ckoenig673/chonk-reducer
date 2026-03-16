@@ -257,6 +257,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `qsv_quality` | Per-library | SQLite `libraries` | QSV quality for this library. | Bootstrapped from env (`QSV_QUALITY`, fallback `21`). |
 | `qsv_preset` | Per-library | SQLite `libraries` | QSV preset for this library. | Bootstrapped from env (`QSV_PRESET`, fallback `7`). |
 | `min_savings_percent` | Per-library | SQLite `libraries` | Library-specific minimum savings threshold. | Bootstrapped from env (`MIN_SAVINGS_PERCENT`, fallback `15`). |
+| `max_savings_percent` | Per-library | SQLite `libraries` | Optional library-specific maximum savings threshold override. If unset, inherits global `max_savings_percent`. | Nullable; blank/unset means inherit global value. |
 | `skip_codecs` | Per-library | SQLite `libraries` | Comma-separated codecs to skip (normalized). | Bootstrapped from legacy `SKIP_CODECS` default when missing. |
 | `skip_min_height` | Per-library | SQLite `libraries` | Skip files at or above this vertical resolution. | Bootstrapped from legacy `SKIP_MIN_HEIGHT` default when missing. |
 | `skip_resolution_tags` | Per-library | SQLite `libraries` | Comma-separated filename tags to skip (normalized). | Bootstrapped from legacy `SKIP_RESOLUTION_TAGS` default when missing. |
