@@ -56,6 +56,22 @@ def _call_get(service, path):
             if hasattr(result, "status_code") and hasattr(result, "body"):
                 return int(result.status_code), result.body.decode("utf-8"), None
             return 200, result, None
+        if handler is None and path.startswith("/api/library/") and path.split("?", 1)[0].endswith("/folders"):
+            from urllib.parse import parse_qs, urlsplit
+
+            handler = service.app.routes["GET /api/library/{library_id}/folders"]
+            raw_id = path.split("/api/library/", 1)[1].split("/folders", 1)[0]
+            library_id = int(raw_id)
+            query_path = str(parse_qs(urlsplit(path).query, keep_blank_values=True).get("path", [""])[-1])
+
+            class _RequestStub:
+                def __init__(self, value):
+                    self.query_params = {"path": value}
+
+            result = handler(library_id, _RequestStub(query_path))
+            if hasattr(result, "status_code") and hasattr(result, "body"):
+                return int(result.status_code), result.body.decode("utf-8"), None
+            return 200, json.dumps(result), result
         result = handler()
     else:
         result = None
@@ -68,6 +84,19 @@ def _call_get(service, path):
             if route_path == "/runs/{run_id}" and path.startswith("/runs/") and "GET" in methods:
                 run_id = path.split("/runs/", 1)[1]
                 result = route.endpoint(run_id)
+                break
+            if route_path == "/api/library/{library_id}/folders" and path.startswith("/api/library/") and path.split("?", 1)[0].endswith("/folders") and "GET" in methods:
+                from urllib.parse import parse_qs, urlsplit
+
+                raw_id = path.split("/api/library/", 1)[1].split("/folders", 1)[0]
+                library_id = int(raw_id)
+                query_path = str(parse_qs(urlsplit(path).query, keep_blank_values=True).get("path", [""])[-1])
+
+                class _RequestStub:
+                    def __init__(self, value):
+                        self.query_params = {"path": value}
+
+                result = route.endpoint(library_id, _RequestStub(query_path))
                 break
         if result is None:
             raise KeyError("No GET route for %s" % path)
@@ -920,6 +949,7 @@ def test_simple_http_server_handles_another_request_while_dashboard_request_is_b
             lambda values: "toggled",
             lambda values: "ignored add",
             lambda values: "ignored remove",
+            lambda library_id, relative_path: ({"path": relative_path.strip("/"), "folders": []}, 200),
             lambda library, preview=False: ({"status": "queued", "library": library, "library_id": 1}, 202),
         ),
         daemon=True,
@@ -990,6 +1020,7 @@ def test_simple_http_server_uses_threading_http_server(monkeypatch):
         lambda values: "toggled",
         lambda values: "ignored add",
         lambda values: "ignored remove",
+        lambda library_id, relative_path: ({"path": relative_path.strip("/"), "folders": []}, 200),
         lambda library, preview=False: ({"status": "queued", "library": library, "library_id": 1}, 202),
     )
 
@@ -5422,6 +5453,59 @@ def test_ignored_folder_add_and_remove_manage_chonkignore_files(tmp_path, monkey
     assert status_code == 200
     assert "Ignored folder removed: Anime/Seasonal" in body
     assert not (target / ".chonkignore").exists()
+
+
+def test_ignored_folder_browser_ui_and_api_listing(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    library_root = tmp_path / "tv_shows"
+    (library_root / "Anime" / "Seasonal").mkdir(parents=True)
+    (library_root / "Anime" / "Naruto").mkdir(parents=True)
+    (library_root / "Outlander").mkdir(parents=True)
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET path = ? WHERE name = ?", (str(library_root), "Movies"))
+    conn.commit()
+    library_id = int(conn.execute("SELECT id FROM libraries WHERE name = ?", ("Movies",)).fetchone()[0])
+    conn.close()
+
+    status_code, body, _ = _call_get(service, "/settings")
+    assert status_code == 200
+    assert f'id="ignored-folder-browse-button-{library_id}"' in body
+    assert f'id="ignored-folder-browser-{library_id}"' in body
+    assert f'fetch("/api/library/" + libraryId + "/folders?path=" + encodeURIComponent(targetPath))' in body
+
+    status_code, body, payload = _call_get(service, f"/api/library/{library_id}/folders")
+    assert status_code == 200
+    parsed = payload if payload is not None else json.loads(body)
+    assert parsed == {"path": "", "folders": ["Anime", "Outlander"]}
+
+    status_code, body, payload = _call_get(service, f"/api/library/{library_id}/folders?path=Anime")
+    assert status_code == 200
+    parsed = payload if payload is not None else json.loads(body)
+    assert parsed == {"path": "Anime", "folders": ["Naruto", "Seasonal"]}
+
+
+def test_ignored_folder_browser_rejects_paths_outside_library_root(tmp_path, monkeypatch):
+    db_path = tmp_path / "chonk.db"
+    library_root = tmp_path / "tv_shows"
+    library_root.mkdir(parents=True)
+
+    monkeypatch.setenv("STATS_PATH", str(db_path))
+    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE libraries SET path = ? WHERE name = ?", (str(library_root), "Movies"))
+    conn.commit()
+    library_id = int(conn.execute("SELECT id FROM libraries WHERE name = ?", ("Movies",)).fetchone()[0])
+    conn.close()
+
+    status_code, body, payload = _call_get(service, f"/api/library/{library_id}/folders?path=../outside")
+    assert status_code == 400
+    parsed = payload if payload is not None else json.loads(body)
+    assert "path must stay inside the library root" in str(parsed.get("error", ""))
 
 
 def test_ignored_folder_rejects_paths_outside_library_root(tmp_path, monkeypatch):
