@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400">
 </p>
 
-**Current Version:** v1.43.3
+**Current Version:** v1.45.0
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
@@ -152,6 +152,7 @@ Service UI routes:
 
 - Global Settings form (DB-backed)
 - Library CRUD (name/path/schedule/enabled + per-library processing/encoding fields)
+- Per-library **Ignored Folders** management (create/remove `.chonkignore` files under the library root)
 - Send Test Notification action
 - Inline help tooltips (`?`) beside each global and library setting label, with operator-focused descriptions aligned to the settings mapping table
 
@@ -261,6 +262,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `skip_codecs` | Per-library | SQLite `libraries` | Comma-separated codecs to skip (normalized). | Bootstrapped from legacy `SKIP_CODECS` default when missing. |
 | `skip_min_height` | Per-library | SQLite `libraries` | Skip files at or above this vertical resolution. | Bootstrapped from legacy `SKIP_MIN_HEIGHT` default when missing. |
 | `skip_resolution_tags` | Per-library | SQLite `libraries` | Comma-separated filename tags to skip (normalized). | Bootstrapped from legacy `SKIP_RESOLUTION_TAGS` default when missing. |
+| `ignored folders` | Per-library filesystem | `.chonkignore` marker files | Managed in Settings as library-relative paths; manual filesystem markers are auto-discovered in UI. | No DB persistence; scanner ignore behavior remains unchanged. |
 
 ### Deployment / Environment Settings
 

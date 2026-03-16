@@ -63,7 +63,7 @@ from . import secrets
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.43.2") or "1.43.2").strip() or "1.43.2"
+APP_VERSION = (os.getenv("APP_VERSION", "1.45.0") or "1.45.0").strip() or "1.45.0"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -244,6 +244,7 @@ LIBRARY_SETTINGS_HELP = {
     "schedule_days": "Select weekdays for simple schedule mode.",
     "schedule_time": "Run time used with selected days in simple schedule mode.",
     "raw_cron": "Raw cron expression for advanced scheduling.",
+    "ignored_folders": "Manage filesystem-backed .chonkignore markers under this library root.",
 }
 
 CHECKBOX_SETTINGS = {
@@ -606,6 +607,16 @@ class ChonkService:
         async def toggle_library(request: Request = None):  # type: ignore[assignment]
             values = await self._request_form_values(request)
             return self._html_response(self.settings_page_html(self.toggle_library(values)))
+
+        @self.app.post("/settings/libraries/ignored/add")
+        async def add_ignored_folder(request: Request = None):  # type: ignore[assignment]
+            values = await self._request_form_values(request)
+            return self._html_response(self.settings_page_html(self.add_ignored_folder(values)))
+
+        @self.app.post("/settings/libraries/ignored/remove")
+        async def remove_ignored_folder(request: Request = None):  # type: ignore[assignment]
+            values = await self._request_form_values(request)
+            return self._html_response(self.settings_page_html(self.remove_ignored_folder(values)))
 
         @self.app.get("/health")
         def health() -> dict:
@@ -2719,6 +2730,7 @@ class ChonkService:
           <input name="skip_resolution_tags" value="{skip_resolution_tags}" style="width: 100%;" /><br />
           <small>Comma-separated filename tags to skip, such as 2160p,4k,uhd.</small><br />
         </fieldset>
+        {ignored_folders_html}
         {schedule_fields}
         <label>{enabled_label}</label>
         <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
@@ -2754,6 +2766,7 @@ class ChonkService:
                     skip_codecs=_escape_html(str(library.skip_codecs or "")),
                     skip_min_height=_escape_html(str(max(0, int(library.skip_min_height or 0)))),
                     skip_resolution_tags=_escape_html(str(library.skip_resolution_tags or "")),
+                    ignored_folders_html=self._ignored_folders_section_html(library),
                     enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-edit-%d" % library.id),
                     library_id=library.id,
                     enabled_yes="selected" if library.enabled else "",
@@ -2787,6 +2800,136 @@ class ChonkService:
   </thead>
   <tbody>%s</tbody>
 </table>""" % "".join(row_html)
+
+    def _ignored_folders_section_html(self, library: LibraryRecord) -> str:
+        ignored_paths = self._discover_ignored_folders(library.path)
+        if ignored_paths:
+            items = []
+            for rel_path in ignored_paths:
+                items.append(
+                    """<li style="margin-bottom: 0.25rem;">
+  <code>{display_path}</code>
+  <form method="post" action="/settings/libraries/ignored/remove" style="display: inline-block; margin-left: 0.5rem;">
+    <input type="hidden" name="library_id" value="{library_id}" />
+    <input type="hidden" name="relative_path" value="{relative_path}" />
+    <button type="submit">Remove</button>
+  </form>
+</li>""".format(
+                        display_path=_escape_html(rel_path),
+                        library_id=int(library.id),
+                        relative_path=_escape_html(rel_path),
+                    )
+                )
+            ignored_items = "".join(items)
+        else:
+            ignored_items = "<li>No ignored folders found.</li>"
+
+        return """<fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 520px;">
+  <legend><strong>Ignored Folders</strong></legend>
+  <label>{ignored_folders_label}</label>
+  <ul style="margin: 0.5rem 0; padding-left: 1.2rem;">{ignored_items}</ul>
+  <form method="post" action="/settings/libraries/ignored/add">
+    <input type="hidden" name="library_id" value="{library_id}" />
+    <label for="ignored-folder-{library_id}"><strong>Add Ignored Folder (library-relative path)</strong></label><br />
+    <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" style="width: 100%;" />
+    <div style="margin-top: 0.4rem;"><button type="submit">Add Ignored Folder</button></div>
+  </form>
+</fieldset>""".format(
+            ignored_folders_label=self._label_with_help(
+                "Ignored folders are backed by .chonkignore files.",
+                LIBRARY_SETTINGS_HELP["ignored_folders"],
+                "lib-ignored-folders-edit-%d" % library.id,
+            ),
+            ignored_items=ignored_items,
+            library_id=int(library.id),
+        )
+
+    def _discover_ignored_folders(self, library_root: str) -> List[str]:
+        root = Path(str(library_root or "").strip()).resolve()
+        if not root.exists() or not root.is_dir():
+            return []
+        matches: List[str] = []
+        try:
+            for marker in root.rglob(".chonkignore"):
+                folder = marker.parent.resolve()
+                try:
+                    rel_path = folder.relative_to(root)
+                except ValueError:
+                    continue
+                matches.append("." if str(rel_path) == "." else rel_path.as_posix())
+        except (OSError, RuntimeError):
+            return []
+        return sorted(set(matches), key=lambda item: item.lower())
+
+    def _library_record_by_id(self, library_id: int) -> Optional[LibraryRecord]:
+        for library in self.list_libraries():
+            if library.id == int(library_id):
+                return library
+        return None
+
+    def _resolve_library_relative_folder(self, library_root: str, relative_path: str) -> tuple[Optional[Path], str]:
+        root = Path(str(library_root or "").strip()).resolve()
+        if not root.exists() or not root.is_dir():
+            return None, "Ignored folder update failed: library path is missing or not a directory."
+        cleaned = str(relative_path or "").strip().replace("\\", "/")
+        if not cleaned:
+            return None, "Ignored folder update failed: relative path is required."
+        if cleaned in {".", "./"}:
+            target = root
+        else:
+            target = (root / cleaned).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None, "Ignored folder update failed: path must stay inside the library root."
+        return target, ""
+
+    def add_ignored_folder(self, values: Dict[str, str]) -> str:
+        library_id = str(values.get("library_id", "")).strip()
+        if not library_id:
+            return "Ignored folder add failed: missing library id."
+        try:
+            library = self._library_record_by_id(int(library_id))
+        except ValueError:
+            return "Ignored folder add failed: invalid library id."
+        if library is None:
+            return "Ignored folder add failed: library not found."
+        target_folder, message = self._resolve_library_relative_folder(library.path, str(values.get("relative_path", "")))
+        if target_folder is None:
+            return message
+        if not target_folder.exists() or not target_folder.is_dir():
+            return "Ignored folder add failed: folder does not exist under the library root."
+        marker = target_folder / ".chonkignore"
+        try:
+            marker.touch(exist_ok=True)
+        except OSError:
+            return "Ignored folder add failed: unable to create .chonkignore file."
+        rel = "." if target_folder == Path(library.path).resolve() else target_folder.relative_to(Path(library.path).resolve()).as_posix()
+        return "Ignored folder added: %s" % rel
+
+    def remove_ignored_folder(self, values: Dict[str, str]) -> str:
+        library_id = str(values.get("library_id", "")).strip()
+        if not library_id:
+            return "Ignored folder remove failed: missing library id."
+        try:
+            library = self._library_record_by_id(int(library_id))
+        except ValueError:
+            return "Ignored folder remove failed: invalid library id."
+        if library is None:
+            return "Ignored folder remove failed: library not found."
+        target_folder, message = self._resolve_library_relative_folder(library.path, str(values.get("relative_path", "")))
+        if target_folder is None:
+            return message.replace("update", "remove")
+        marker = target_folder / ".chonkignore"
+        if not marker.exists():
+            return "Ignored folder remove skipped: .chonkignore not found."
+        try:
+            marker.unlink()
+        except OSError:
+            return "Ignored folder remove failed: unable to delete .chonkignore file."
+        rel = "." if target_folder == Path(library.path).resolve() else target_folder.relative_to(Path(library.path).resolve()).as_posix()
+        return "Ignored folder removed: %s" % rel
+
     def _library_create_form_html(self) -> str:
         schedule_state = _schedule_form_state("")
         schedule_fields = self._schedule_fields_html(schedule_state, "create")
@@ -4734,6 +4877,8 @@ class ChonkService:
                     self.update_library,
                     self.delete_library,
                     self.toggle_library,
+                    self.add_ignored_folder,
+                    self.remove_ignored_folder,
                     self.manual_run_payload,
                     self.request_cancel_active_run,
                     self.clear_preview_results,
@@ -5490,6 +5635,8 @@ def _run_simple_http_server(
     update_library_fn: Callable[[Dict[str, str]], str],
     delete_library_fn: Callable[[Dict[str, str]], str],
     toggle_library_fn: Callable[[Dict[str, str]], str],
+    add_ignored_folder_fn: Callable[[Dict[str, str]], str],
+    remove_ignored_folder_fn: Callable[[Dict[str, str]], str],
     manual_run_fn: Callable[[str, bool], tuple],
     cancel_run_fn: Optional[Callable[[], Dict[str, str]]] = None,
     clear_preview_fn: Optional[Callable[[], Dict[str, str]]] = None,
@@ -5685,6 +5832,8 @@ def _run_simple_http_server(
                 "/settings/libraries/update",
                 "/settings/libraries/delete",
                 "/settings/libraries/toggle",
+                "/settings/libraries/ignored/add",
+                "/settings/libraries/ignored/remove",
             ):
                 content_length = int(self.headers.get("Content-Length", "0") or "0")
                 body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
@@ -5695,8 +5844,12 @@ def _run_simple_http_server(
                     message = update_library_fn(values)
                 elif self.path == "/settings/libraries/delete":
                     message = delete_library_fn(values)
-                else:
+                elif self.path == "/settings/libraries/toggle":
                     message = toggle_library_fn(values)
+                elif self.path == "/settings/libraries/ignored/add":
+                    message = add_ignored_folder_fn(values)
+                else:
+                    message = remove_ignored_folder_fn(values)
                 html = settings_html_fn(message)
                 encoded = html.encode("utf-8")
                 self.send_response(200)
