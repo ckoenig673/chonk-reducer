@@ -6,8 +6,10 @@ from ... import notifications
 
 
 def register_action_routes(service, Request, JSONResponse, RedirectResponse) -> None:
+    request_annotation = Request if Request is not None else object
+
     @service.app.post("/settings")
-    async def save_settings(request: Request = None):  # type: ignore[assignment]
+    async def save_settings(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         normalized = service._normalize_settings_updates(values)
         service.update_editable_settings(normalized)
@@ -23,37 +25,37 @@ def register_action_routes(service, Request, JSONResponse, RedirectResponse) -> 
         return service._html_response(service.settings_page_html(str(result.get("message", ""))))
 
     @service.app.post("/settings/libraries/create")
-    async def create_library(request: Request = None):  # type: ignore[assignment]
+    async def create_library(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         return service._html_response(service.settings_page_html(service.create_library(values)))
 
     @service.app.post("/settings/libraries/update")
-    async def update_library(request: Request = None):  # type: ignore[assignment]
+    async def update_library(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         return service._html_response(service.settings_page_html(service.update_library(values)))
 
     @service.app.post("/settings/libraries/delete")
-    async def delete_library(request: Request = None):  # type: ignore[assignment]
+    async def delete_library(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         return service._html_response(service.settings_page_html(service.delete_library(values)))
 
     @service.app.post("/settings/libraries/toggle")
-    async def toggle_library(request: Request = None):  # type: ignore[assignment]
+    async def toggle_library(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         return service._html_response(service.settings_page_html(service.toggle_library(values)))
 
     @service.app.post("/settings/libraries/ignored/add")
-    async def add_ignored_folder(request: Request = None):  # type: ignore[assignment]
+    async def add_ignored_folder(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         return service._html_response(service.settings_page_html(service.add_ignored_folder(values)))
 
     @service.app.post("/settings/libraries/ignored/remove")
-    async def remove_ignored_folder(request: Request = None):  # type: ignore[assignment]
+    async def remove_ignored_folder(request: request_annotation):  # type: ignore[valid-type]
         values = await service._request_form_values(request)
         return service._html_response(service.settings_page_html(service.remove_ignored_folder(values)))
 
     @service.app.get("/api/library/{library_id}/folders")
-    def api_library_folders(library_id: int, request: Request = None):
+    def api_library_folders(library_id: int, request: request_annotation):  # type: ignore[valid-type]
         relative_path = ""
         if request is not None and hasattr(request, "query_params"):
             relative_path = str(request.query_params.get("path", ""))
