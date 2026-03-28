@@ -60,10 +60,15 @@ from .logging_utils import Logger
 from .runner import run
 from . import notifications
 from . import secrets
+from .data.db import connect_settings_db
+from .web.app import build_web_app
+from .web.routers.pages import register_page_routes
+from .web.routers.api import register_action_routes
+from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.0") or "1.46.0").strip() or "1.46.0"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.4") or "1.46.4").strip() or "1.46.4"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -478,46 +483,24 @@ class ChonkService:
         self._configure_routes()
 
     def _build_scheduler(self):
-        if BackgroundScheduler is not None:
-            scheduler_class = BackgroundScheduler
-            LOGGER.info(
-                "Instantiating scheduler class: %s.%s",
-                getattr(scheduler_class, "__module__", "<unknown_module>"),
-                getattr(scheduler_class, "__qualname__", getattr(scheduler_class, "__name__", "<unknown_class>")),
-            )
-            LOGGER.info("APScheduler import status: available")
-            return scheduler_class(timezone=os.getenv("TZ", "UTC"))
-        reason = _APSCHEDULER_IMPORT_ERROR
-        if reason is not None:
-            LOGGER.warning(
-                "APScheduler import status: unavailable (%s: %s)",
-                type(reason).__name__,
-                reason,
-            )
-        else:
-            LOGGER.warning("APScheduler import status: unavailable (no import exception captured)")
-        LOGGER.info(
-            "Instantiating scheduler class: %s.%s",
-            _FallbackScheduler.__module__,
-            _FallbackScheduler.__qualname__,
+        return build_scheduler(
+            BackgroundScheduler,
+            _FallbackScheduler,
+            os.getenv("TZ", "UTC"),
+            _APSCHEDULER_IMPORT_ERROR,
         )
-        return _FallbackScheduler()
 
     def _build_app(self):
-        if FastAPI is not None:
-            return FastAPI(title="Chonk Reducer Service")
-        return _FallbackFastAPI()
+        return build_web_app(FastAPI, _FallbackFastAPI)
 
     def _attach_scheduler_listeners(self) -> None:
-        add_listener = getattr(self.scheduler, "add_listener", None)
-        if not callable(add_listener):
-            return
-        if EVENT_JOB_EXECUTED is None or EVENT_JOB_ERROR is None or EVENT_JOB_MISSED is None:
-            return
-        try:
-            add_listener(self._on_scheduler_event, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED)
-        except Exception:
-            LOGGER.warning("Unable to attach APScheduler event listeners", exc_info=True)
+        attach_scheduler_listeners(
+            self.scheduler,
+            self._on_scheduler_event,
+            EVENT_JOB_EXECUTED,
+            EVENT_JOB_ERROR,
+            EVENT_JOB_MISSED,
+        )
 
     def _on_scheduler_event(self, event) -> None:
         job_id = str(getattr(event, "job_id", "") or "")
@@ -540,178 +523,9 @@ class ChonkService:
         LOGGER.info("Scheduler event: job_executed job_id=%s", job_id)
 
     def _configure_routes(self) -> None:
-        @self.app.get("/")
-        def home():
-            return self._html_response(self.home_page_html())
+        register_page_routes(self)
+        register_action_routes(self, Request, JSONResponse, RedirectResponse)
 
-        @self.app.get("/dashboard")
-        def dashboard():
-            return self._html_response(self.home_page_html())
-
-        @self.app.get("/favicon.ico")
-        def favicon():
-            return self._no_content_response()
-
-        @self.app.get("/runs")
-        def runs_page():
-            return self._html_response(self.runs_page_html())
-
-        @self.app.get("/runs/{run_id}")
-        def run_detail_page(run_id: str):
-            html, status_code = self.run_detail_page_html(run_id)
-            return self._html_response(html, status_code=status_code)
-
-        @self.app.get("/activity")
-        def activity_page():
-            return self._html_response(self.activity_page_html())
-
-        @self.app.get("/history")
-        def history_page():
-            return self._html_response(self.history_page_html())
-
-        @self.app.get("/analytics")
-        def analytics_page():
-            return self._html_response(self.analytics_page_html())
-
-        @self.app.get("/system")
-        def system_page():
-            return self._html_response(self.system_page_html())
-
-        @self.app.get("/settings")
-        def settings_page():
-            return self._html_response(self.settings_page_html())
-
-        @self.app.post("/settings")
-        async def save_settings(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            normalized = self._normalize_settings_updates(values)
-            self.update_editable_settings(normalized)
-            return self._html_response(self.settings_page_html(self.settings_saved_message(normalized)))
-
-        @self.app.post("/settings/test-notification")
-        def test_notification():
-            result = notifications.send_test_notification(settings_db_path=str(self._settings_db_path))
-            if result.get("ok"):
-                self._record_activity("notification_test", str(result.get("message", "Test notification sent.")))
-            else:
-                self._record_activity("notification_test_failed", str(result.get("message", "Test notification failed.")))
-            return self._html_response(self.settings_page_html(str(result.get("message", ""))))
-
-        @self.app.post("/settings/libraries/create")
-        async def create_library(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            return self._html_response(self.settings_page_html(self.create_library(values)))
-
-        @self.app.post("/settings/libraries/update")
-        async def update_library(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            return self._html_response(self.settings_page_html(self.update_library(values)))
-
-        @self.app.post("/settings/libraries/delete")
-        async def delete_library(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            return self._html_response(self.settings_page_html(self.delete_library(values)))
-
-        @self.app.post("/settings/libraries/toggle")
-        async def toggle_library(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            return self._html_response(self.settings_page_html(self.toggle_library(values)))
-
-        @self.app.post("/settings/libraries/ignored/add")
-        async def add_ignored_folder(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            return self._html_response(self.settings_page_html(self.add_ignored_folder(values)))
-
-        @self.app.post("/settings/libraries/ignored/remove")
-        async def remove_ignored_folder(request: Request = None):  # type: ignore[assignment]
-            values = await self._request_form_values(request)
-            return self._html_response(self.settings_page_html(self.remove_ignored_folder(values)))
-
-        @self.app.get("/api/library/{library_id}/folders")
-        def api_library_folders(library_id: int, request: Request = None):
-            relative_path = ""
-            if request is not None and hasattr(request, "query_params"):
-                relative_path = str(request.query_params.get("path", ""))
-            payload, status_code = self.library_folders_payload(int(library_id), relative_path)
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=status_code)
-            return payload
-
-        @self.app.get("/health")
-        def health() -> dict:
-            return self.health_payload()
-
-        @self.app.get("/api/status")
-        def api_status() -> dict:
-            return self.current_job_status()
-
-        @self.app.post("/api/run/cancel")
-        def api_cancel_run():
-            payload = self.request_cancel_active_run()
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=200)
-            return payload
-
-        @self.app.post("/api/preview/clear")
-        def api_clear_preview():
-            payload = self.clear_preview_results()
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=200)
-            return payload
-
-        @self.app.post("/libraries/{library_id}/run")
-        def run_library(library_id: int):
-            payload, status_code = self.manual_run_payload_for_id(int(library_id))
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=status_code)
-            return payload
-
-        @self.app.post("/libraries/{library_id}/preview")
-        def preview_library(library_id: int):
-            payload, status_code = self.manual_preview_payload_for_id(int(library_id))
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=status_code)
-            return payload
-
-        @self.app.post("/dashboard/libraries/{library_id}/run")
-        def run_library_from_dashboard(library_id: int):
-            payload, _ = self.manual_run_payload_for_id(int(library_id))
-            location = "/dashboard"
-            if payload.get("status") in ("queued", "busy"):
-                location = "/dashboard?manual_run=%s&library_id=%s" % (
-                    quote(str(payload.get("status", ""))),
-                    quote(str(payload.get("library_id", ""))),
-                )
-            if RedirectResponse is not None:
-                return RedirectResponse(url=location, status_code=303)
-            return self._html_response(self.home_page_html())
-
-        @self.app.post("/dashboard/libraries/{library_id}/preview")
-        def preview_library_from_dashboard(library_id: int):
-            payload, _ = self.manual_preview_payload_for_id(int(library_id))
-            location = "/dashboard"
-            if payload.get("status") in ("queued", "busy"):
-                location = "/dashboard?manual_run=%s&library_id=%s" % (
-                    quote(str(payload.get("status", ""))),
-                    quote(str(payload.get("library_id", ""))),
-                )
-            if RedirectResponse is not None:
-                return RedirectResponse(url=location, status_code=303)
-            return self._html_response(self.home_page_html())
-
-        @self.app.post("/run/movies")
-        def run_movies():
-            payload, status_code = self.manual_run_payload("movies")
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=status_code)
-            return payload
-
-        @self.app.post("/run/tv")
-        def run_tv():
-            payload, status_code = self.manual_run_payload("tv")
-            if JSONResponse is not None:
-                return JSONResponse(content=payload, status_code=status_code)
-            return payload
 
     def _html_response(self, html: str, status_code: int = 200):
         if HTMLResponse is not None:
@@ -5192,116 +5006,16 @@ def _normalize_csv_text(value: str) -> str:
     return ",".join(parts)
 
 def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
+    return connect_settings_db(
+        db_path,
+        qsv_quality_default=_env_int("QSV_QUALITY", 21),
+        qsv_preset_default=_env_int("QSV_PRESET", 7),
+        min_savings_percent_default=_env_float("MIN_SAVINGS_PERCENT", 15.0),
+        skip_codecs_default=_normalize_csv_text(_env_bootstrap("SKIP_CODECS", "")),
+        skip_resolution_tags_default=_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", "")),
+        skip_min_height_default=max(0, _env_int("SKIP_MIN_HEIGHT", 0)),
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS libraries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            path TEXT NOT NULL UNIQUE,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            schedule TEXT NOT NULL DEFAULT '',
-            min_size_gb REAL NOT NULL DEFAULT 0.0,
-            max_files INTEGER NOT NULL DEFAULT 1,
-            priority INTEGER NOT NULL DEFAULT 100,
-            qsv_quality INTEGER,
-            qsv_preset INTEGER,
-            min_savings_percent REAL,
-            max_savings_percent REAL,
-            skip_codecs TEXT NOT NULL DEFAULT '',
-            skip_min_height INTEGER NOT NULL DEFAULT 0,
-            skip_resolution_tags TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    library_columns = {str(row[1]).strip().lower() for row in conn.execute("PRAGMA table_info(libraries)").fetchall()}
-    if "min_size_gb" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN min_size_gb REAL NOT NULL DEFAULT 0.0")
-    if "max_files" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN max_files INTEGER NOT NULL DEFAULT 1")
-    if "priority" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN priority INTEGER NOT NULL DEFAULT 100")
-    if "qsv_quality" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN qsv_quality INTEGER")
-    if "qsv_preset" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN qsv_preset INTEGER")
-    if "min_savings_percent" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN min_savings_percent REAL")
-    if "max_savings_percent" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN max_savings_percent REAL")
-    if "skip_codecs" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN skip_codecs TEXT NOT NULL DEFAULT ''")
-    if "skip_min_height" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN skip_min_height INTEGER NOT NULL DEFAULT 0")
-    if "skip_resolution_tags" not in library_columns:
-        conn.execute("ALTER TABLE libraries ADD COLUMN skip_resolution_tags TEXT NOT NULL DEFAULT ''")
-    conn.execute("UPDATE libraries SET min_size_gb = COALESCE(min_size_gb, 0.0)")
-    conn.execute("UPDATE libraries SET max_files = CASE WHEN max_files IS NULL OR max_files < 1 THEN 1 ELSE max_files END")
-    conn.execute("UPDATE libraries SET priority = COALESCE(priority, 100)")
-    conn.execute(
-        "UPDATE libraries SET qsv_quality = CASE WHEN qsv_quality IS NULL OR qsv_quality < 0 THEN ? ELSE qsv_quality END",
-        (_env_int("QSV_QUALITY", 21),),
-    )
-    conn.execute(
-        "UPDATE libraries SET qsv_preset = CASE WHEN qsv_preset IS NULL OR qsv_preset < 0 THEN ? ELSE qsv_preset END",
-        (_env_int("QSV_PRESET", 7),),
-    )
-    conn.execute(
-        "UPDATE libraries SET min_savings_percent = CASE WHEN min_savings_percent IS NULL OR min_savings_percent < 0 THEN ? ELSE min_savings_percent END",
-        (_env_float("MIN_SAVINGS_PERCENT", 15.0),),
-    )
-    conn.execute(
-        "UPDATE libraries SET max_savings_percent = CASE WHEN max_savings_percent IS NOT NULL AND max_savings_percent < 0 THEN NULL ELSE max_savings_percent END"
-    )
-    conn.execute(
-        "UPDATE libraries SET skip_codecs = CASE WHEN skip_codecs IS NULL OR trim(skip_codecs) = '' THEN ? ELSE skip_codecs END",
-        (_normalize_csv_text(_env_bootstrap("SKIP_CODECS", "")),),
-    )
-    conn.execute(
-        "UPDATE libraries SET skip_resolution_tags = CASE WHEN skip_resolution_tags IS NULL OR trim(skip_resolution_tags) = '' THEN ? ELSE skip_resolution_tags END",
-        (_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", "")),),
-    )
-    conn.execute(
-        "UPDATE libraries SET skip_min_height = CASE WHEN skip_min_height IS NULL OR skip_min_height < 0 THEN ? ELSE skip_min_height END",
-        (max(0, _env_int("SKIP_MIN_HEIGHT", 0)),),
-    )
-    rows = conn.execute("SELECT id, skip_codecs, skip_resolution_tags FROM libraries").fetchall()
-    for row in rows:
-        conn.execute(
-            "UPDATE libraries SET skip_codecs = ?, skip_resolution_tags = ? WHERE id = ?",
-            (
-                _normalize_csv_text(str(row["skip_codecs"] or "")),
-                _normalize_csv_text(str(row["skip_resolution_tags"] or "")),
-                int(row["id"]),
-            ),
-        )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS activity_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            level TEXT NOT NULL,
-            library TEXT,
-            run_id TEXT,
-            event_type TEXT NOT NULL,
-            message TEXT NOT NULL
-        )
-        """
-    )
-    return conn
+
 
 
 def _simple_schedule_time_options() -> List[str]:
