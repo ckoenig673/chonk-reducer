@@ -4813,12 +4813,27 @@ def test_scheduler_event_listener_records_missed_and_error_events(caplog):
         code = service_module.EVENT_JOB_ERROR
         job_id = "library-2-schedule"
         exception = RuntimeError("boom")
+        traceback = None
 
     service._on_scheduler_event(MissedEvent())
     service._on_scheduler_event(ErrorEvent())
 
     assert "Scheduler event: job_missed job_id=library-1-schedule" in caplog.text
     assert "Scheduler event: job_error job_id=library-2-schedule" in caplog.text
+    assert "error=boom" in caplog.text
+
+
+def test_lifetime_savings_returns_none_when_sqlite_connection_fails(monkeypatch):
+    service = ChonkService(
+        ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule="")
+    )
+
+    def _raise_connect_error(*_args, **_kwargs):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(service_module.sqlite3, "connect", _raise_connect_error)
+
+    assert service._lifetime_savings() is None
 
 
 def test_scheduler_event_listener_records_library_schedule_execution(caplog):

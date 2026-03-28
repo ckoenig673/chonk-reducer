@@ -394,7 +394,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
 
                 skipped_dry_run += 1
                 done += 1
-                break
+                continue
 
 
             # Policy skip cache (reason-aware): only max_savings is currently cached.
