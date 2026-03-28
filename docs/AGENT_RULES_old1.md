@@ -55,17 +55,17 @@ Run: pytest -q
 
 14. Always increment the application version when code changes.
 
-Update: src/chonk_reducer/__init__.py
+Update: src/chonk_reducer/**init**.py
 
 compose.yaml may expose an APP_VERSION value used by the container.
 
 Semantic versioning:
 
-patch -> bug fixes
-minor -> new features
-major -> breaking changes
+patch -\> bug fixes\
+minor -\> new features\
+major -\> breaking changes
 
-Version strings should be consistent.
+Version strings should be consistent.\
 Preferred canonical format inside Python code:
 
 1.39.3
@@ -79,7 +79,7 @@ display.
 
 15. If new dependencies are required update:
 
-requirements.txt
+requirements.txt\
 requirements-dev.txt
 
 16. Development-only tools belong in requirements-dev.txt.
@@ -170,11 +170,11 @@ Compose should contain deployment/runtime concerns only:
 
 Examples:
 
-CHONK_SECRET_KEY
-TZ
-WORK_ROOT
-STATS_PATH
-SERVICE_HOST
+CHONK_SECRET_KEY\
+TZ\
+WORK_ROOT\
+STATS_PATH\
+SERVICE_HOST\
 SERVICE_PORT
 
 Operational tuning settings should not live in compose.
@@ -277,9 +277,9 @@ CHONK_SECRET_KEY
 
 45. Typical deployment workflow:
 
-git pull
-pytest
-docker compose build
+git pull\
+pytest\
+docker compose build\
 docker compose up -d
 
 46. The config directory must persist:
@@ -295,28 +295,6 @@ docker compose up -d
 48. Historical run records must never be lost.
 49. Encode statistics must remain historically accurate.
 50. Activity logs must remain reliable.
-
-------------------------------------------------------------------------
-
-# Refactor Rules
-
-51. Preserve behavior exactly unless explicitly instructed otherwise.
-52. Prefer moving code over rewriting code.
-53. Separate bug fixes from refactors when practical.
-54. Do not introduce heavy architecture patterns, DI frameworks, or
-    unnecessary abstraction layers.
-55. Keep SQLite with simple data-access or repository modules; do not
-    introduce an ORM unless explicitly requested.
-56. Keep APScheduler behavior unchanged unless the task is specifically
-    scheduler-related.
-57. During structural refactors, do not redesign the UI; only move
-    inline assets into templates or static files if needed.
-58. Preserve existing routes and operator workflows unless explicitly
-    instructed otherwise.
-59. Refactors should be incremental and easy to review, not a broad
-    rewrite.
-60. Any user-visible behavior change must be called out explicitly in
-    the implementation summary.
 
 ------------------------------------------------------------------------
 
@@ -340,7 +318,6 @@ These rules ensure:
 -   reliable metrics
 -   maintainable architecture
 
-------------------------------------------------------------------------
 
 # Configuration Consistency Rule
 
