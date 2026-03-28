@@ -524,7 +524,7 @@ class ChonkService:
 
     def _configure_routes(self) -> None:
         register_page_routes(self)
-        register_action_routes(self, Request, JSONResponse, RedirectResponse)
+        register_action_routes(self, JSONResponse, RedirectResponse)
 
 
     def _html_response(self, html: str, status_code: int = 200):
@@ -4650,6 +4650,17 @@ class ChonkService:
                 original_stats_path = os.environ.get("STATS_PATH")
                 run_stats_path = str(self._settings_db_path)
                 os.environ["STATS_PATH"] = run_stats_path
+                original_work_root = os.environ.get("WORK_ROOT")
+                run_work_root = str(original_work_root or "").strip()
+                if not run_work_root:
+                    candidate_root = "/work"
+                    try:
+                        (Path(candidate_root) / "logs").mkdir(parents=True, exist_ok=True)
+                        run_work_root = candidate_root
+                    except PermissionError:
+                        run_work_root = "/tmp/chonk-reducer-work"
+                        (Path(run_work_root) / "logs").mkdir(parents=True, exist_ok=True)
+                    os.environ["WORK_ROOT"] = run_work_root
                 LOGGER.info("Starting %s %s run", trigger, library_record.name)
                 try:
                     try:
@@ -4679,6 +4690,9 @@ class ChonkService:
                             os.environ.pop("STATS_PATH", None)
                         else:
                             os.environ["STATS_PATH"] = original_stats_path
+                    if not str(original_work_root or "").strip():
+                        if os.environ.get("WORK_ROOT") == run_work_root:
+                            os.environ.pop("WORK_ROOT", None)
                 LOGGER.info("Finished %s %s run with exit code %s", trigger, library_record.name, rc)
 
         was_cancelled = self._is_cancel_requested()
