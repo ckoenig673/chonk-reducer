@@ -143,6 +143,33 @@ def test_run_dry_run_mode_skips_encode(tmp_path, monkeypatch):
     assert called["dry"] == 1
 
 
+def test_run_dry_run_mode_processes_all_candidates_until_max_files(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, dry_run=True, max_files=2)
+    src1 = cfg.media_root / "movie1.mkv"
+    src2 = cfg.media_root / "movie2.mkv"
+    src1.write_bytes(b"x" * 5000)
+    src2.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2], {}, []))
+
+    called = {"encode": 0, "dry": 0}
+    monkeypatch.setattr(runner, "encode_qsv", lambda *a, **k: called.__setitem__("encode", called["encode"] + 1))
+    monkeypatch.setattr(runner, "record_dry_run", lambda *a, **k: called.__setitem__("dry", called["dry"] + 1))
+
+    rc = runner.run()
+
+    assert rc == 0
+    assert called["encode"] == 0
+    assert called["dry"] == 2
+
+
 def test_run_stops_after_max_files(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, max_files=1)
     src1 = cfg.media_root / "a.mkv"

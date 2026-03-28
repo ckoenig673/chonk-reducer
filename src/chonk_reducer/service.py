@@ -526,7 +526,16 @@ class ChonkService:
             LOGGER.warning("Scheduler event: job_missed job_id=%s", job_id)
             return
         if exception is not None:
-            LOGGER.error("Scheduler event: job_error job_id=%s", job_id)
+            traceback = getattr(event, "traceback", None)
+            if traceback is not None:
+                LOGGER.error(
+                    "Scheduler event: job_error job_id=%s error=%s",
+                    job_id,
+                    exception,
+                    exc_info=(type(exception), exception, traceback),
+                )
+            else:
+                LOGGER.error("Scheduler event: job_error job_id=%s error=%s", job_id, exception)
             return
         LOGGER.info("Scheduler event: job_executed job_id=%s", job_id)
 
@@ -4604,6 +4613,7 @@ class ChonkService:
         if not db_path.exists():
             return None
 
+        conn = None
         try:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
@@ -4619,8 +4629,10 @@ class ChonkService:
                 """
             ).fetchone()
         except Exception:
-            conn.close()
             return None
+        finally:
+            if conn is not None:
+                conn.close()
 
         if row is None:
             return None

@@ -177,6 +177,10 @@ Preview mode (`trigger=preview`):
 
 Preview snapshots are kept in service memory for Dashboard display until replaced or cleared.
 
+## Dry Run Mode
+
+Dry run mode (`dry_run=true`) scans candidate files and logs what would be encoded/swapped without running ffmpeg or modifying media files. It now evaluates each candidate up to `max_files` (instead of stopping after the first dry-run candidate).
+
 ---
 
 ## Notifications
