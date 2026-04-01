@@ -1345,8 +1345,12 @@ def test_dashboard_includes_live_status_polling_script():
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert 'fetch("/api/status"' in body
-    assert "window.setInterval(fetchStatus, 3000);" in body
+    assert '<script src="/static/js/dashboard_runtime.js"></script>' in body
+
+    script_status, script_body, _ = _call_get(service, "/static/js/dashboard_runtime.js")
+    assert script_status == 200
+    assert 'fetch("/api/status"' in script_body
+    assert "window.setInterval(fetchStatus, 3000);" in script_body
 
 
 def test_library_environment_sets_expected_values(monkeypatch):

@@ -2,6 +2,14 @@ from __future__ import annotations
 
 
 def register_page_routes(service) -> None:
+    @service.app.get("/static/css/base.css")
+    def static_base_css():
+        return service._static_asset_response("css/base.css", media_type="text/css")
+
+    @service.app.get("/static/js/dashboard_runtime.js")
+    def static_dashboard_runtime_js():
+        return service._static_asset_response("js/dashboard_runtime.js", media_type="application/javascript")
+
     @service.app.get("/")
     def home():
         return service._html_response(service.home_page_html())
