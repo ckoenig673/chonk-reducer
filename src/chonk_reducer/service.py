@@ -568,6 +568,10 @@ class ChonkService:
         recent_runs = self._recent_runs(limit=10)
         lifetime_savings = self._lifetime_savings()
         library_totals = self._library_lifetime_totals()
+        dashboard_library_template = self._load_template("partials/dashboard_library_card.html")
+        dashboard_empty_template = self._load_template("partials/dashboard_libraries_empty.html")
+        dashboard_status_template = self._load_template("partials/dashboard_system_status.html")
+        dashboard_page_template = self._load_template("dashboard.html")
         library_sections = []
         for library in libraries:
             status = self._latest_run_status(library.name)
@@ -601,75 +605,39 @@ class ChonkService:
                 processed_label = str(status.get("processed_count") or 0)
                 savings_label = _format_saved_bytes(status.get("saved_bytes"))
             library_sections.append(
-                """
-  <section style="border: 1px solid #ddd; padding: 0.75rem; margin-bottom: 0.75rem; background: #fff;">
-    <h2 style="margin-top: 0; margin-bottom: 0.5rem;">%s</h2>
-    <div><strong>Path:</strong> %s</div>
-    <div><strong>Status:</strong> %s</div>
-    <div><strong>Priority:</strong> %s</div>
-    <div><strong>Last Run:</strong> %s</div>
-    <div><strong>Next Run:</strong> %s</div>
-    <div><strong>Files Optimized:</strong> %s</div>
-    <div><strong>Total Saved:</strong> %s</div>
-    <div><strong>Recent Savings:</strong> %s across %s files</div>
-    %s
-    <form method="post" action="/dashboard/libraries/%d/run" style="margin-top: 0.75rem;">
-      <button type="submit">Run Now</button>
-      <button type="submit" formaction="/dashboard/libraries/%d/preview" style="margin-left: 0.45rem;">Preview Run</button>
-    </form>
-  </section>
-"""
-                % (
-                    _escape_html(library.name),
-                    _escape_html(library.path),
-                    _escape_html(runtime_status),
-                    _escape_html(str(library.priority)),
-                    _escape_html(last_run_label),
-                    _escape_html(self._next_run_label(library)),
-                    _escape_html(str(totals["files_optimized"])),
-                    _escape_html(_format_saved_bytes(totals["total_saved"])),
-                    _escape_html(savings_label),
-                    _escape_html(processed_label),
-                    runtime_summary,
-                    library.id,
-                    library.id,
+                dashboard_library_template.format(
+                    library_name=_escape_html(library.name),
+                    library_path=_escape_html(library.path),
+                    runtime_status=_escape_html(runtime_status),
+                    library_priority=_escape_html(str(library.priority)),
+                    last_run_label=_escape_html(last_run_label),
+                    next_run_label=_escape_html(self._next_run_label(library)),
+                    files_optimized=_escape_html(str(totals["files_optimized"])),
+                    total_saved=_escape_html(_format_saved_bytes(totals["total_saved"])),
+                    recent_savings=_escape_html(savings_label),
+                    processed_count=_escape_html(processed_label),
+                    runtime_summary=runtime_summary,
+                    library_id=library.id,
                 )
             )
 
         if not library_sections:
-            library_sections.append('<div style="padding: 0.5rem; border: 1px solid #ddd;">No enabled libraries configured.</div>')
+            library_sections.append(dashboard_empty_template)
 
-        content = """
-  <h1>Dashboard</h1>
-  <p>Manual run controls for troubleshooting and operational checks.</p>
-  <section style="border: 1px solid #ddd; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; background: #fff; max-width: 620px;">
-    <h3 style="margin: 0 0 0.45rem 0;">System Status</h3>
-    <div style="font-size:0.92rem; color:#1f3f5b; margin-bottom:0.25rem;">Compact dashboard summary</div>
-    <div><strong>Total Saved:</strong> <span id="runtime-dashboard-total-saved">%s</span></div>
-    <div><strong>Files Optimized:</strong> <span id="runtime-dashboard-files-optimized">%s</span></div>
-    <div><strong>Saved This Week:</strong> <span id="runtime-dashboard-saved-week">%s</span></div>
-    <div><strong>Saved This Month:</strong> <span id="runtime-dashboard-saved-month">%s</span></div>
-    <div style="margin-top:0.45rem;"><strong>Scheduler:</strong> <span id="runtime-system-scheduler">%s</span></div>
-    <div><strong>Next Library Run:</strong> <span id="runtime-system-next-library-run">%s</span></div>
-    <div><strong>Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">%s</span></div>
-  </section>
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Libraries</h2>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
-  %s
-  %s
-  <script src="/static/js/dashboard_runtime.js"></script>
-""" % (
-            _escape_html(_format_saved_bytes((lifetime_savings or {}).get("total_saved", 0))),
-            _escape_html(str((lifetime_savings or {}).get("files_optimized", 0))),
-            _escape_html(_format_saved_bytes(self._analytics_overall_summary().get("saved_this_week", 0))),
-            _escape_html(_format_saved_bytes(self._analytics_overall_summary().get("saved_this_month", 0))),
-            self._scheduler_running_label(),
-            self._next_global_scheduled_job_label(),
-            self._next_housekeeping_run_label(),
-            "".join(library_sections),
-            self._runtime_status_html(include_preview=False),
-            self._preview_results_html(self._runtime_status_snapshot()),
+        system_status_html = dashboard_status_template.format(
+            total_saved=_escape_html(_format_saved_bytes((lifetime_savings or {}).get("total_saved", 0))),
+            files_optimized=_escape_html(str((lifetime_savings or {}).get("files_optimized", 0))),
+            saved_this_week=_escape_html(_format_saved_bytes(self._analytics_overall_summary().get("saved_this_week", 0))),
+            saved_this_month=_escape_html(_format_saved_bytes(self._analytics_overall_summary().get("saved_this_month", 0))),
+            scheduler_label=self._scheduler_running_label(),
+            next_library_run=self._next_global_scheduled_job_label(),
+            next_housekeeping_run=self._next_housekeeping_run_label(),
+        )
+        content = dashboard_page_template.format(
+            system_status_html=system_status_html,
+            library_sections_html="".join(library_sections),
+            runtime_status_html=self._runtime_status_html(include_preview=False),
+            preview_results_html=self._preview_results_html(self._runtime_status_snapshot()),
         )
         return self._render_shell_html("Dashboard", content)
 
@@ -704,13 +672,10 @@ class ChonkService:
             progress_label = "%s / %s files" % (files_processed, candidates_found)
         else:
             progress_label = "%s files" % files_processed
-        return (
-            '<div style="margin-top: 0.4rem; padding: 0.4rem; border: 1px solid #e3ebf6; background: #f7faff;">'
-            '<strong>Active:</strong> %s<br /><strong>Progress:</strong> %s'
-            "</div>"
-        ) % (
-            _escape_html(current_file),
-            _escape_html(progress_label),
+        runtime_summary_template = self._load_template("partials/dashboard_runtime_summary.html")
+        return runtime_summary_template.format(
+            current_file=_escape_html(current_file),
+            progress_label=_escape_html(progress_label),
         )
 
     def _label_with_help(self, label: str, help_text: str, token: str) -> str:

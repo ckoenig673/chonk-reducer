@@ -1,0 +1,16 @@
+  <section class="dashboard-library-card">
+    <h2 class="dashboard-library-title">{library_name}</h2>
+    <div><strong>Path:</strong> {library_path}</div>
+    <div><strong>Status:</strong> {runtime_status}</div>
+    <div><strong>Priority:</strong> {library_priority}</div>
+    <div><strong>Last Run:</strong> {last_run_label}</div>
+    <div><strong>Next Run:</strong> {next_run_label}</div>
+    <div><strong>Files Optimized:</strong> {files_optimized}</div>
+    <div><strong>Total Saved:</strong> {total_saved}</div>
+    <div><strong>Recent Savings:</strong> {recent_savings} across {processed_count} files</div>
+    {runtime_summary}
+    <form method="post" action="/dashboard/libraries/{library_id}/run" class="dashboard-library-actions">
+      <button type="submit">Run Now</button>
+      <button type="submit" formaction="/dashboard/libraries/{library_id}/preview" class="dashboard-library-preview-btn">Preview Run</button>
+    </form>
+  </section>
