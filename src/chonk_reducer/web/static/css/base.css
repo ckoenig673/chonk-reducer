@@ -76,3 +76,62 @@
 }
 .help-tooltip-wrap:hover .help-tooltip-bubble,
 .help-tooltip-wrap:focus-within .help-tooltip-bubble { display: block; }
+
+.dashboard-section-title {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.dashboard-system-status {
+  border: 1px solid #ddd;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: #fff;
+  max-width: 620px;
+}
+
+.dashboard-system-status-title {
+  margin: 0 0 0.45rem 0;
+}
+
+.dashboard-system-status-subtitle {
+  font-size: 0.92rem;
+  color: #1f3f5b;
+  margin-bottom: 0.25rem;
+}
+
+.dashboard-system-status-scheduler {
+  margin-top: 0.45rem;
+}
+
+.dashboard-library-card {
+  border: 1px solid #ddd;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: #fff;
+}
+
+.dashboard-library-title {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.dashboard-library-actions {
+  margin-top: 0.75rem;
+}
+
+.dashboard-library-preview-btn {
+  margin-left: 0.45rem;
+}
+
+.dashboard-empty-state {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+}
+
+.dashboard-runtime-summary {
+  margin-top: 0.4rem;
+  padding: 0.4rem;
+  border: 1px solid #e3ebf6;
+  background: #f7faff;
+}
