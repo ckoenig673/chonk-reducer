@@ -68,7 +68,7 @@ from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.4") or "1.46.4").strip() or "1.46.4"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.5") or "1.46.5").strip() or "1.46.5"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -84,6 +84,9 @@ WEEKDAY_CHOICES = [
     ("Sa", "sat"),
 ]
 
+WEB_ROOT = Path(__file__).resolve().parent / "web"
+WEB_TEMPLATES_ROOT = WEB_ROOT / "templates"
+WEB_STATIC_ROOT = WEB_ROOT / "static"
 
 
 def _display_version(version: str) -> str:
@@ -537,6 +540,22 @@ class ChonkService:
             return Response(status_code=204)
         return ""
 
+    def _static_asset_response(self, relative_path: str, media_type: str = "text/plain"):
+        path = (WEB_STATIC_ROOT / relative_path).resolve()
+        static_root = WEB_STATIC_ROOT.resolve()
+        if not str(path).startswith(str(static_root)) or not path.exists() or not path.is_file():
+            if Response is not None:
+                return Response(status_code=404)
+            return ""
+        content = path.read_text(encoding="utf-8")
+        if Response is not None:
+            return Response(content=content, media_type=media_type)
+        return content
+
+    def _load_template(self, relative_path: str) -> str:
+        path = WEB_TEMPLATES_ROOT / relative_path
+        return path.read_text(encoding="utf-8")
+
     async def _request_form_values(self, request: Request = None) -> Dict[str, str]:
         values: Dict[str, str] = {}
         if request is not None and hasattr(request, "form"):
@@ -639,290 +658,7 @@ class ChonkService:
   <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Current Job Status</h2>
   %s
   %s
-  <script>
-    (function () {
-      function textValue(value, placeholder) {
-        if (value === null || value === undefined || String(value).trim() === "") {
-          return placeholder;
-        }
-        return String(value);
-      }
-
-      function setText(id, value, placeholder) {
-        var node = document.getElementById(id);
-        if (!node) {
-          return;
-        }
-        node.textContent = textValue(value, placeholder);
-      }
-
-      function savedBytesLabel(rawValue) {
-        var parsed = parseInt(rawValue, 10);
-        if (isNaN(parsed) || parsed <= 0) {
-          return "-";
-        }
-        var units = ["B", "KB", "MB", "GB", "TB"];
-        var scaled = parsed;
-        var index = 0;
-        while (scaled >= 1024 && index < units.length - 1) {
-          scaled = scaled / 1024;
-          index += 1;
-        }
-        if (index === 0) {
-          return String(parsed) + " B";
-        }
-        return scaled.toFixed(1) + " " + units[index];
-      }
-
-      function schedulerTimestampLabel(rawValue) {
-        var text = String(rawValue || "").trim();
-        if (!text || text === "-") {
-          return "-";
-        }
-        if (text.indexOf("T") !== -1) {
-          text = text.replace("T", " ");
-        }
-        if (text.endsWith("Z")) {
-          text = text.slice(0, -1);
-        }
-        if (text.length >= 16) {
-          return text.slice(0, 16);
-        }
-        return text;
-      }
-
-      function triggerLabel(trigger) {
-        var value = String(trigger || "").trim().toLowerCase();
-        if (value === "manual") {
-          return "Manual";
-        }
-        if (value === "schedule" || value === "scheduled") {
-          return "Scheduled";
-        }
-        return textValue(trigger, "-");
-      }
-
-      function parseCount(value) {
-        var parsed = parseInt(value, 10);
-        if (isNaN(parsed) || parsed < 0) {
-          return 0;
-        }
-        return parsed;
-      }
-
-      function formatEtaSeconds(rawValue) {
-        var seconds = parseInt(rawValue, 10);
-        if (isNaN(seconds) || seconds < 0) {
-          return "-";
-        }
-        if (seconds < 60) {
-          return String(seconds) + "s";
-        }
-        var minutes = Math.floor(seconds / 60);
-        var rem = seconds %% 60;
-        return String(minutes) + "m " + String(rem) + "s";
-      }
-
-      function progressMarkup(snapshot) {
-        if (String(snapshot.status || "") !== "Running") {
-          return "";
-        }
-        var processed = parseCount(snapshot.files_processed);
-        var candidates = parseCount(snapshot.candidates_found);
-        var ratio = 0;
-        var progressLabel = "";
-        if (candidates > 0) {
-          ratio = Math.min(1, processed / candidates);
-          progressLabel = String(processed) + " / " + String(candidates) + " files processed";
-        } else {
-          ratio = processed > 0 ? 1 : 0;
-          progressLabel = String(processed) + " files processed";
-        }
-        var pctLabel = String(Math.round(ratio * 100)) + "%%";
-        var encodePercent = parseFloat(snapshot.encode_percent);
-        if (!isNaN(encodePercent)) {
-          pctLabel = String(Math.round(Math.max(0, Math.min(100, encodePercent)))) + "%%";
-        }
-        var currentFile = textValue(snapshot.current_file, "Waiting for first file");
-        var encodeSpeed = textValue(snapshot.encode_speed, "-");
-        var encodeEta = formatEtaSeconds(snapshot.encode_eta);
-        var retryAttempt = parseInt(snapshot.retry_attempt, 10);
-        var retryMax = parseInt(snapshot.retry_max, 10);
-        var retryMarkup = '';
-        if (!isNaN(retryAttempt) && !isNaN(retryMax) && retryAttempt > 0 && retryAttempt <= retryMax) {
-          retryMarkup = '<div><strong>Retry Attempt:</strong> ' + String(retryAttempt) + ' / ' + String(retryMax) + '</div>';
-        }
-        return '' +
-          '<div style="margin-top:0.75rem; padding:0.6rem; border:1px solid #d7e2f4; background:#f8fbff;">' +
-          '<div style="font-weight:600; margin-bottom:0.35rem;">Run Progress</div>' +
-          '<div style="border:1px solid #c8d8f0; background:#eef4ff; width:100%%; height:18px;">' +
-          '<div style="background:#2a6fd6; width:' + pctLabel + '; height:100%%;"></div>' +
-          '</div>' +
-          '<div style="margin-top:0.35rem;">' + progressLabel + ' (' + pctLabel + ')</div>' +
-          '<div style="margin-top:0.35rem;"><strong>Percent Complete:</strong> ' + pctLabel + '</div>' +
-          '<div><strong>Speed:</strong> ' + encodeSpeed + '</div>' +
-          '<div><strong>ETA:</strong> ' + encodeEta + '</div>' +
-          retryMarkup +
-          '<div style="margin-top:0.55rem;"><strong>Current Library:</strong> ' + textValue(snapshot.current_library, "-") + '</div>' +
-          '<div><strong>Current File:</strong> ' + currentFile + '</div>' +
-          '<div style="margin-top:0.4rem;"><strong>Files Evaluated:</strong> ' + String(parseCount(snapshot.files_evaluated)) + '</div>' +
-          '<div><strong>Files Processed:</strong> ' + String(processed) + '</div>' +
-          '<div><strong>Files Skipped:</strong> ' + String(parseCount(snapshot.files_skipped)) + '</div>' +
-          '<div><strong>Files Failed:</strong> ' + String(parseCount(snapshot.files_failed)) + '</div>' +
-          '<div><strong>Total Saved:</strong> ' + textValue(savedBytesLabel(snapshot.bytes_saved), "0 B") + '</div>' +
-          '</div>';
-      }
-
-      function schedulerStateLabel(snapshot) {
-        var scheduler = snapshot.scheduler || {};
-        if (scheduler.paused) {
-          return "Paused";
-        }
-        return scheduler.running ? "Running" : "Stopped";
-      }
-
-      function nextLibraryRunLabel(snapshot) {
-        var library = String(snapshot.next_scheduled_job || "").trim();
-        var time = String(snapshot.next_scheduled_time || "").trim();
-        if (!library || library === "-" || !time || time === "-") {
-          return "-";
-        }
-        return library + " — " + time;
-      }
-
-      function updateFromSnapshot(snapshot) {
-        setText("runtime-app-version", snapshot.version, "dev");
-        setText("runtime-status", snapshot.status, "Idle");
-        setText("runtime-mode", snapshot.mode, "-");
-        setText("runtime-library", snapshot.current_library, "-");
-        setText("runtime-trigger", triggerLabel(snapshot.trigger), "-");
-        setText("runtime-scheduler-status", snapshot.scheduler_status, "-");
-        setText("runtime-scheduler-started", schedulerTimestampLabel(snapshot.scheduler_started_at), "-");
-        setText("runtime-next-scheduled-job", snapshot.next_scheduled_job, "-");
-        setText("runtime-next-scheduled-time", snapshot.next_scheduled_time, "-");
-        setText("runtime-queue-depth", snapshot.queue_depth, "0");
-        setText("runtime-run-id", snapshot.run_id, "-");
-        setText("runtime-started-at", snapshot.started_at, "-");
-        var currentFilePlaceholder = String(snapshot.status || "") === "Running" ? "Waiting for first file" : "-";
-        setText("runtime-current-file", snapshot.current_file, currentFilePlaceholder);
-        setText("runtime-candidates-found", snapshot.candidates_found, "-");
-        setText("runtime-files-evaluated", snapshot.files_evaluated, "-");
-        setText("runtime-files-processed", snapshot.files_processed, "-");
-        setText("runtime-files-skipped", snapshot.files_skipped, "-");
-        setText("runtime-files-failed", snapshot.files_failed, "-");
-        setText("runtime-bytes-saved", savedBytesLabel(snapshot.bytes_saved), "-");
-        setText("runtime-system-scheduler", schedulerStateLabel(snapshot), "-");
-        setText("runtime-system-next-library-run", nextLibraryRunLabel(snapshot), "-");
-        setText("runtime-system-next-housekeeping-run", snapshot.next_housekeeping_run, "-");
-        var dashboardSummary = snapshot.dashboard_summary || {};
-        setText("runtime-dashboard-total-saved", savedBytesLabel(dashboardSummary.total_saved), "-");
-        setText("runtime-dashboard-files-optimized", dashboardSummary.files_optimized, "0");
-        setText("runtime-dashboard-saved-week", savedBytesLabel(dashboardSummary.saved_this_week), "-");
-        setText("runtime-dashboard-saved-month", savedBytesLabel(dashboardSummary.saved_this_month), "-");
-        setText("runtime-preview-library", snapshot.preview_library, "-");
-        setText("runtime-preview-generated-at", snapshot.preview_generated_at, "-");
-        setPreviewResults(snapshot.preview_results || [], snapshot.preview_summary || {});
-        var progress = document.getElementById("runtime-progress-section");
-        if (progress) {
-          progress.innerHTML = progressMarkup(snapshot);
-        }
-        updateStopButton(snapshot);
-      }
-
-      function setPreviewResults(rows, summary) {
-        var body = document.getElementById("runtime-preview-results-body");
-        if (!body) {
-          return;
-        }
-        var summaryValue = summary || {};
-        setText("runtime-preview-files-evaluated", summaryValue.files_evaluated, "0");
-        setText("runtime-preview-candidates-found", summaryValue.candidates_found, "0");
-        setText("runtime-preview-estimated-original", savedBytesLabel(summaryValue.estimated_original_total), "-");
-        setText("runtime-preview-estimated-encoded", savedBytesLabel(summaryValue.estimated_encoded_total), "-");
-        setText("runtime-preview-estimated-saved", savedBytesLabel(summaryValue.estimated_total_savings), "-");
-        var pctValue = summaryValue.estimated_savings_percent;
-        var pctLabel = "-";
-        if (pctValue !== null && pctValue !== undefined && String(pctValue).trim() !== "") {
-          pctLabel = Number(pctValue).toFixed(1) + "%%";
-        }
-        setText("runtime-preview-estimated-pct", pctLabel, "-");
-        if (!rows || !rows.length) {
-          body.innerHTML = '<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>';
-          return;
-        }
-        var html = '';
-        for (var i = 0; i < rows.length; i += 1) {
-          var row = rows[i] || {};
-          html += '<tr>' +
-            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.file, '-') + '</td>' +
-            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.original_size) + '</td>' +
-            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.estimated_size) + '</td>' +
-            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.estimated_savings_pct, '-') + '%%</td>' +
-            '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.decision, '-') + '</td>' +
-          '</tr>';
-        }
-        body.innerHTML = html;
-      }
-
-      function requestStopRun() {
-        return fetch("/api/run/cancel", { method: "POST" }).catch(function () { return null; });
-      }
-
-      function requestClearPreviewResults() {
-        return fetch("/api/preview/clear", { method: "POST" })
-          .then(function (response) {
-            if (!response.ok) {
-              throw new Error("preview clear failed");
-            }
-            return response.json();
-          })
-          .catch(function () {
-            return null;
-          });
-      }
-
-      function updateStopButton(snapshot) {
-        var button = document.getElementById("runtime-stop-button");
-        if (!button) {
-          return;
-        }
-        var running = String(snapshot.status || "") === "Running" || String(snapshot.status || "") === "Cancelling";
-        button.style.display = running ? "inline-block" : "none";
-        button.disabled = String(snapshot.status || "") === "Cancelling";
-      }
-
-      function fetchStatus() {
-        fetch("/api/status", { cache: "no-store" })
-          .then(function (response) {
-            if (!response.ok) {
-              throw new Error("status request failed");
-            }
-            return response.json();
-          })
-          .then(updateFromSnapshot)
-          .catch(function () {
-            return null;
-          });
-      }
-
-      var stopButton = document.getElementById("runtime-stop-button");
-      if (stopButton) {
-        stopButton.addEventListener("click", function () {
-          requestStopRun().then(fetchStatus);
-        });
-      }
-
-      var clearPreviewButton = document.getElementById("runtime-clear-preview-button");
-      if (clearPreviewButton) {
-        clearPreviewButton.addEventListener("click", function () {
-          requestClearPreviewResults().then(fetchStatus);
-        });
-      }
-
-      fetchStatus();
-      window.setInterval(fetchStatus, 3000);
-    })();
-  </script>
+  <script src="/static/js/dashboard_runtime.js"></script>
 """ % (
             _escape_html(_format_saved_bytes((lifetime_savings or {}).get("total_saved", 0))),
             _escape_html(str((lifetime_savings or {}).get("files_optimized", 0))),
@@ -1048,40 +784,6 @@ class ChonkService:
                 )
 
         content = """
-<style>
-.help-label { display: inline-flex; align-items: center; gap: 0.35rem; }
-.help-tooltip-wrap { position: relative; display: inline-flex; align-items: center; }
-.help-tooltip-trigger {
-  width: 1rem;
-  height: 1rem;
-  border-radius: 999px;
-  border: 1px solid #8da0b4;
-  background: #eef4fb;
-  color: #1f3f5b;
-  font-size: 0.75rem;
-  line-height: 1rem;
-  text-align: center;
-  cursor: help;
-}
-.help-tooltip-trigger:focus { outline: 2px solid #2d6aa0; outline-offset: 1px; }
-.help-tooltip-bubble {
-  display: none;
-  position: absolute;
-  left: 1.3rem;
-  top: -0.2rem;
-  min-width: 220px;
-  max-width: 320px;
-  padding: 0.45rem 0.55rem;
-  border-radius: 4px;
-  background: #1f3f5b;
-  color: #fff;
-  font-size: 0.82rem;
-  line-height: 1.3;
-  z-index: 10;
-}
-.help-tooltip-wrap:hover .help-tooltip-bubble,
-.help-tooltip-wrap:focus-within .help-tooltip-bubble { display: block; }
-</style>
 <h1>Settings</h1>
 """
         if message:
@@ -2055,28 +1757,18 @@ class ChonkService:
         ]
         nav = []
         for item_title, href in nav_items:
-            active = "font-weight: bold;" if item_title == title else ""
+            active_class = " active" if item_title == title else ""
             nav.append(
-                '<li style="margin: 0.5rem 0;"><a href="%s" style="text-decoration:none; color:#1f3f5b; %s">%s</a></li>'
-                % (href, active, item_title)
+                '<li class="app-nav-item"><a href="%s" class="app-nav-link%s">%s</a></li>'
+                % (href, active_class, item_title)
             )
-        return """<!doctype html>
-<html lang=\"en\">
-<head>
-  <meta charset=\"utf-8\" />
-  <title>Chonk Reducer</title>
-</head>
-<body style=\"font-family: sans-serif; margin: 0; background: #f6f8fb;\">
-  <div style=\"display: flex; min-height: 100vh;\">
-    <aside style=\"width: 210px; background: #e6edf4; padding: 1rem; border-right: 1px solid #ccd7e3;\">
-      <h2 style=\"margin-top: 0;\">Chonk Reducer %s</h2>
-      <ul style=\"list-style: none; padding: 0; margin: 0;\">%s</ul>
-    </aside>
-    <main style=\"flex: 1; padding: 1.25rem 1.5rem;\">%s</main>
-  </div>
-</body>
-</html>
-""" % (_escape_html(_display_version(APP_VERSION)), "".join(nav), content_html)
+        nav_html = "".join(nav)
+        shell_template = self._load_template("shell.html")
+        return shell_template.format(
+            app_version=_escape_html(_display_version(APP_VERSION)),
+            nav_html=nav_html,
+            content_html=content_html,
+        )
 
     def health_payload(self) -> dict:
         return {"status": "ok"}
