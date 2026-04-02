@@ -76,6 +76,7 @@ from .core.display_formatting import (
     duration_seconds_from_run as _duration_seconds_from_run,
     format_duration_seconds as _format_duration_seconds,
     format_eta_seconds as _format_eta_seconds,
+    format_optional_percent as _format_optional_percent,
     format_readable_timestamp as _format_readable_timestamp,
     format_savings_pct as _format_savings_pct,
     format_saved_bytes as _format_saved_bytes,
@@ -86,7 +87,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.13") or "1.46.13").strip() or "1.46.13"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.14") or "1.46.14").strip() or "1.46.14"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -557,6 +558,10 @@ class ChonkService:
     def _load_template(self, relative_path: str) -> str:
         path = WEB_TEMPLATES_ROOT / relative_path
         return path.read_text(encoding="utf-8")
+
+    def _bordered_message_html(self, message: str) -> str:
+        template = self._load_template("partials/common_bordered_message.html")
+        return template.format(message=_escape_html(message))
 
     async def _request_form_values(self, request: Request = None) -> Dict[str, str]:
         values: Dict[str, str] = {}
@@ -1184,8 +1189,7 @@ class ChonkService:
         }
 
     def _analytics_summary_html(self, summary: Dict[str, object]) -> str:
-        avg = summary.get("average_savings_percent")
-        avg_label = "-" if avg is None else "%.1f%%" % float(avg)
+        avg_label = _format_optional_percent(summary.get("average_savings_percent"), decimals=1, default="-")
         return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
   <tbody>
     <tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:0.35rem; width:280px;">Total Files Optimized</th><td style="border-bottom:1px solid #ddd; padding:0.35rem; font-weight:800; font-size:1.1rem; color:#111827;">%s</td></tr>
@@ -1204,47 +1208,42 @@ class ChonkService:
 
     def _analytics_period_table_html(self, rows: List[Dict[str, object]], empty_message: str) -> str:
         if not rows:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">%s</div>' % _escape_html(empty_message)
+            return self._bordered_message_html(empty_message)
+        row_template = self._load_template("partials/analytics_period_row.html")
+        table_template = self._load_template("partials/analytics_period_table.html")
         body = []
         for row in rows:
             body.append(
-                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
-                % (
-                    _escape_html(str(row.get("period") or "-")),
-                    _escape_html(str(row.get("files_optimized") or 0)),
-                    _escape_html(_format_saved_bytes(row.get("total_saved") or 0)),
+                row_template.format(
+                    period=_escape_html(str(row.get("period") or "-")),
+                    files_optimized=_escape_html(str(row.get("files_optimized") or 0)),
+                    total_saved=_escape_html(_format_saved_bytes(row.get("total_saved") or 0)),
                 )
             )
-        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
-  <thead><tr><th style="text-align:left; padding:0.35rem;">Period</th><th style="text-align:left; padding:0.35rem;">Files Optimized</th><th style="text-align:left; padding:0.35rem;">Saved</th></tr></thead>
-  <tbody>%s</tbody>
-</table>""" % "".join(body)
+        return table_template.format(rows_html="".join(body))
 
     def _analytics_library_breakdown_html(self, rows: List[Dict[str, object]]) -> str:
         if not rows:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No per-library savings recorded yet.</div>'
+            return self._bordered_message_html("No per-library savings recorded yet.")
+        row_template = self._load_template("partials/analytics_library_breakdown_row.html")
+        table_template = self._load_template("partials/analytics_library_breakdown_table.html")
         body = []
         for row in rows:
-            avg = row.get("average_savings_percent")
-            avg_label = "-" if avg is None else "%.1f%%" % float(avg)
+            avg_label = _format_optional_percent(row.get("average_savings_percent"), decimals=1, default="-")
             body.append(
-                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>'
-                % (
-                    _escape_html(str(row.get("library") or "Unknown")),
-                    _escape_html(str(row.get("files_optimized") or 0)),
-                    _escape_html(_format_saved_bytes(row.get("total_saved") or 0)),
-                    _escape_html(avg_label),
-                    _escape_html(_format_saved_bytes(row.get("recent_saved") or 0)),
+                row_template.format(
+                    library=_escape_html(str(row.get("library") or "Unknown")),
+                    files_optimized=_escape_html(str(row.get("files_optimized") or 0)),
+                    total_saved=_escape_html(_format_saved_bytes(row.get("total_saved") or 0)),
+                    average_savings_percent=_escape_html(avg_label),
+                    recent_saved=_escape_html(_format_saved_bytes(row.get("recent_saved") or 0)),
                 )
             )
-        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background:#fff;">
-  <thead><tr><th style="text-align:left; padding:0.35rem;">Library</th><th style="text-align:left; padding:0.35rem;">Files Optimized</th><th style="text-align:left; padding:0.35rem;">Total Saved</th><th style="text-align:left; padding:0.35rem;">Average Savings %%</th><th style="text-align:left; padding:0.35rem;">Recent Savings</th></tr></thead>
-  <tbody>%s</tbody>
-</table>""" % "".join(body)
+        return table_template.format(rows_html="".join(body))
 
     def _analytics_top_files_html(self, rows: List[Dict[str, object]]) -> str:
         if not rows:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No optimized files recorded yet.</div>'
+            return self._bordered_message_html("No optimized files recorded yet.")
         body = []
         for row in rows:
             full_path = str(row.get("file") or "-")
@@ -1269,7 +1268,7 @@ class ChonkService:
 
     def _analytics_top_runs_html(self, rows: List[Dict[str, object]]) -> str:
         if not rows:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No runs recorded yet.</div>'
+            return self._bordered_message_html("No runs recorded yet.")
         body = []
         for row in rows:
             run_id = str(row.get("run_id") or "-")
@@ -1357,8 +1356,7 @@ class ChonkService:
         }
 
     def _preview_summary_html(self, summary: Dict[str, object]) -> str:
-        pct = summary.get("estimated_savings_percent")
-        pct_label = "-" if pct is None else "%.1f%%" % float(pct)
+        pct_label = _format_optional_percent(summary.get("estimated_savings_percent"), decimals=1, default="-")
         template = self._load_template("partials/preview_summary.html")
         return template.format(
             files_evaluated=_escape_html(str(summary.get("files_evaluated", 0))),
@@ -3540,13 +3538,12 @@ class ChonkService:
         )
 
     def _key_value_table_html(self, rows: List[tuple]) -> str:
+        row_template = self._load_template("partials/common_key_value_row.html")
+        table_template = self._load_template("partials/common_key_value_table.html")
         row_html = []
         for label, value in rows:
-            row_html.append(
-                '<tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">%s</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>'
-                % (label, value)
-            )
-        return '<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;"><tbody>%s</tbody></table>' % "".join(row_html)
+            row_html.append(row_template.format(label=label, value=value))
+        return table_template.format(rows_html="".join(row_html))
 
     def _related_run_info_html(self, run: Dict[str, str]) -> str:
         raw_log_path = str(run.get("raw_log_path") or "").strip()

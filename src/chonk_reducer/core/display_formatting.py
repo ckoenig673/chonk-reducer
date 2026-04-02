@@ -119,6 +119,16 @@ def format_eta_seconds(value) -> str:
     return "%sm %ss" % (minutes, remainder)
 
 
+def format_optional_percent(value: object, decimals: int = 1, default: str = "-") -> str:
+    if value is None:
+        return default
+    try:
+        numeric = float(value)
+    except Exception:
+        return default
+    return ("%%.%df%%%%" % int(decimals)) % numeric
+
+
 def display_trigger(trigger: str) -> str:
     value = str(trigger or "").strip().lower()
     if value == "manual":
