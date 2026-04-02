@@ -223,6 +223,15 @@
   padding: 0.35rem;
   border-bottom: 1px solid #ddd;
 }
+.libraries-table-cell {
+  padding: 0.35rem;
+  border-bottom: 1px solid #eee;
+}
+.libraries-table-detail-cell {
+  padding: 0.35rem 0.35rem 0.75rem 0.35rem;
+  border-bottom: 1px solid #ddd;
+  background: #fafcff;
+}
 
 .settings-subsection-title {
   margin-top: 1rem;
@@ -258,4 +267,106 @@
 
 .libraries-inline-form-spaced {
   margin-right: 0.4rem;
+}
+
+.settings-housekeeping-enabled {
+  display: block;
+  margin-top: 0.5rem;
+}
+.settings-housekeeping-label {
+  display: block;
+  margin-top: 0.75rem;
+}
+.settings-housekeeping-weekdays {
+  margin-top: 0.35rem;
+}
+.settings-housekeeping-weekday {
+  display: inline-block;
+  margin-right: 0.55rem;
+}
+.settings-housekeeping-time {
+  width: 100%;
+  max-width: 180px;
+}
+.settings-housekeeping-cron {
+  margin-top: 0.35rem;
+  color: #555;
+}
+.settings-housekeeping-actions {
+  margin-top: 0.8rem;
+}
+
+.library-schedule-fieldset {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+}
+.library-schedule-mode-option-spaced {
+  margin-right: 1rem;
+}
+.library-schedule-simple,
+.library-schedule-advanced {
+  margin-top: 0.5rem;
+}
+.library-schedule-weekday {
+  margin-right: 0.5rem;
+}
+.library-schedule-time {
+  width: 100%;
+  max-width: 180px;
+}
+.library-schedule-generated-cron {
+  margin-top: 0.35rem;
+  color: #555;
+}
+
+.libraries-ignored-fieldset {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  max-width: 520px;
+}
+.libraries-ignored-list {
+  margin: 0.5rem 0;
+  padding-left: 1.2rem;
+}
+.libraries-ignored-item {
+  margin-bottom: 0.25rem;
+}
+.libraries-ignored-remove-form {
+  display: inline-block;
+  margin-left: 0.5rem;
+}
+.libraries-ignored-add-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.libraries-ignored-input {
+  width: 100%;
+}
+.libraries-ignored-browser {
+  display: none;
+  margin-top: 0.45rem;
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+  border-radius: 4px;
+  background: #fafafa;
+}
+.libraries-ignored-browser-label {
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+.libraries-ignored-browser-actions {
+  margin-bottom: 0.35rem;
+}
+.libraries-ignored-browser-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.libraries-ignored-submit-row {
+  margin-top: 0.4rem;
+}
+.libraries-ignored-open-button {
+  margin-right: 0.35rem;
 }

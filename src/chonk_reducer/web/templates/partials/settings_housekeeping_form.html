@@ -1,0 +1,11 @@
+<form method="post" action="/settings">
+  <input type="hidden" name="housekeeping_form" value="1" />
+  <label class="settings-housekeeping-enabled"><input type="checkbox" name="housekeeping_enabled" value="1"{enabled_checked} /> Enable housekeeping scheduler</label>
+  <input type="hidden" name="housekeeping_schedule" value="{schedule}" />
+  <label class="settings-housekeeping-label">{days_label}</label>
+  <div class="settings-housekeeping-weekdays">{weekday_options}</div>
+  <label for="housekeeping_time" class="settings-housekeeping-label">{time_label}</label>
+  <select id="housekeeping_time" name="housekeeping_time" class="settings-housekeeping-time">{time_options}</select>
+  <div class="settings-housekeeping-cron">Generated cron: <code>{generated_cron}</code></div>
+  <div class="settings-housekeeping-actions"><button type="submit">Save Housekeeping</button></div>
+</form>
