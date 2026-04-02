@@ -929,9 +929,11 @@ class ChonkService:
 
     def runs_page_html(self) -> str:
         rows = self._run_history(limit=50)
-        content = "<h1>Runs</h1><p>Completed and recorded runs from SQLite.</p>"
-        content += self._runs_active_run_banner_html()
-        content += self._runs_history_html(rows)
+        runs_template = self._load_template("runs.html")
+        content = runs_template.format(
+            active_run_banner_html=self._runs_active_run_banner_html(),
+            runs_history_html=self._runs_history_html(rows),
+        )
         return self._render_shell_html("Runs", content)
 
 
@@ -948,13 +950,8 @@ class ChonkService:
             active_label = "%s — %s" % (library, file_name)
         else:
             active_label = library
-        return (
-            '<div style="margin: 0.75rem 0; padding: 0.6rem; border: 1px solid #bcd6f3; '
-            'background: #f4f8ff; color: #173a5e;">'
-            '<strong>Active Run:</strong> %s<br />Live run details are shown on the '
-            '<a href="/dashboard">Dashboard</a>. See Dashboard for live progress.'
-            "</div>"
-        ) % _escape_html(active_label)
+        runs_banner_template = self._load_template("partials/runs_active_run_banner.html")
+        return runs_banner_template.format(active_label=_escape_html(active_label))
 
     def history_page_html(self) -> str:
         rows = self._recent_encode_history(limit=200)
@@ -972,35 +969,16 @@ class ChonkService:
         top_run_rows = self._analytics_top_savings_runs(limit=10)
         smart = self._smart_optimization_summary(library_rows, top_file_rows, top_run_rows)
 
-        content = """
-  <h1>Analytics</h1>
-  <p>Operator-facing savings intelligence from SQLite run and encode history.</p>
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Overall Summary</h2>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Savings Over Time</h2>
-  <h3 style="margin: 0.5rem 0;">Daily</h3>
-  %s
-  <h3 style="margin: 0.75rem 0 0.5rem 0;">Weekly</h3>
-  %s
-  <h3 style="margin: 0.75rem 0 0.5rem 0;">Monthly</h3>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Per-Library Breakdown</h2>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Top Savings Files</h2>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Top Savings Runs</h2>
-  %s
-  <h2 style="margin-top: 1rem; margin-bottom: 0.5rem;">Best Next Opportunities</h2>
-  %s
-""" % (
-            self._analytics_summary_html(summary),
-            self._analytics_period_table_html(daily_rows, "No daily savings data yet."),
-            self._analytics_period_table_html(weekly_rows, "No weekly savings data yet."),
-            self._analytics_period_table_html(monthly_rows, "No monthly savings data yet."),
-            self._analytics_library_breakdown_html(library_rows),
-            self._analytics_top_files_html(top_file_rows),
-            self._analytics_top_runs_html(top_run_rows),
-            self._smart_optimization_summary_html(smart),
+        analytics_template = self._load_template("analytics.html")
+        content = analytics_template.format(
+            analytics_summary_html=self._analytics_summary_html(summary),
+            analytics_daily_html=self._analytics_period_table_html(daily_rows, "No daily savings data yet."),
+            analytics_weekly_html=self._analytics_period_table_html(weekly_rows, "No weekly savings data yet."),
+            analytics_monthly_html=self._analytics_period_table_html(monthly_rows, "No monthly savings data yet."),
+            analytics_library_breakdown_html=self._analytics_library_breakdown_html(library_rows),
+            analytics_top_files_html=self._analytics_top_files_html(top_file_rows),
+            analytics_top_runs_html=self._analytics_top_runs_html(top_run_rows),
+            smart_optimization_summary_html=self._smart_optimization_summary_html(smart),
         )
         return self._render_shell_html("Analytics", content)
 
@@ -1445,11 +1423,12 @@ class ChonkService:
             return self._render_shell_html("Runs", content), 404
 
         encodes = self._encodes_for_run(run_id)
-        content = "<h1>Run Detail</h1><p>Operator-facing summary for this run from SQLite.</p>"
-        content += self._run_summary_html(run)
-        content += self._related_run_info_html(run)
-        content += '<h2 style="margin-top: 1rem;">File-Level Entries</h2>'
-        content += self._run_encodes_html(encodes)
+        run_detail_template = self._load_template("run_detail.html")
+        content = run_detail_template.format(
+            run_summary_html=self._run_summary_html(run),
+            related_run_info_html=self._related_run_info_html(run),
+            run_encodes_html=self._run_encodes_html(encodes),
+        )
         return self._render_shell_html("Runs", content), 200
 
     def system_page_html(self) -> str:
