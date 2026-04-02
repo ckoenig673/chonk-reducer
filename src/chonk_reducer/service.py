@@ -68,7 +68,7 @@ from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.8") or "1.46.8").strip() or "1.46.8"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.9") or "1.46.9").strip() or "1.46.9"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -701,6 +701,9 @@ class ChonkService:
     def settings_page_html(self, message: str = "") -> str:
         libraries = self.list_libraries()
         settings_template = self._load_template("settings.html")
+        checkbox_row_template = self._load_template("partials/settings_global_row_checkbox.html")
+        secret_row_template = self._load_template("partials/settings_global_row_secret.html")
+        text_row_template = self._load_template("partials/settings_global_row_text.html")
         rows = []
         for key in EDITABLE_SETTINGS:
             if key in {"housekeeping_enabled", "housekeeping_schedule"}:
@@ -716,8 +719,7 @@ class ChonkService:
             if key in CHECKBOX_SETTINGS:
                 checked = "checked" if _env_bool_text(value) else ""
                 rows.append(
-                    """<label for="{key}" class="settings-input-label">{label_html}{restart_badge}</label>
-  <input id="{key}" name="{key}" type="checkbox" value="1" {checked} />""".format(
+                    checkbox_row_template.format(
                         key=key,
                         label_html=label_html,
                         restart_badge=restart_badge,
@@ -728,10 +730,7 @@ class ChonkService:
                 configured = bool(str(value or "").strip())
                 status = "Configured (hidden)" if configured else "Not configured"
                 rows.append(
-                    """<label for="{key}" class="settings-input-label">{label_html}{restart_badge}</label>
-  <input id="{key}" name="{key}" value="" placeholder="Set (hidden)" class="settings-input-control" autocomplete="off" />
-  <div class="settings-secret-status">{status}</div>
-  <label class="settings-secret-clear"><input type="checkbox" name="clear_{key}" value="1" /> Clear stored secret</label>""".format(
+                    secret_row_template.format(
                         key=key,
                         label_html=label_html,
                         restart_badge=restart_badge,
@@ -740,8 +739,7 @@ class ChonkService:
                 )
             else:
                 rows.append(
-                    """<label for="{key}" class="settings-input-label">{label_html}{restart_badge}</label>
-  <input id="{key}" name="{key}" value="{value}" class="settings-input-control" />""".format(
+                    text_row_template.format(
                         key=key,
                         label_html=label_html,
                         restart_badge=restart_badge,
@@ -2111,6 +2109,8 @@ class ChonkService:
     def _libraries_table_html(self, libraries: List[LibraryRecord]) -> str:
         empty_template = self._load_template("partials/libraries_empty.html")
         table_template = self._load_template("partials/libraries_table.html")
+        common_sections_template = self._load_template("partials/library_form_common_sections.html")
+        table_actions_template = self._load_template("partials/library_table_row_actions.html")
         if not libraries:
             return empty_template
 
@@ -2122,64 +2122,24 @@ class ChonkService:
             toggle_label = "Disable" if library.enabled else "Enable"
             row_html.append(
                 """<tr>
-  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{name}</td>
-  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\"><code>{path}</code></td>
-  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{enabled}</td>
-  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{priority}</td>
-  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\"><code>{schedule}</code></td>
-  <td style=\"padding: 0.35rem; border-bottom: 1px solid #eee;\">{actions}</td>
+  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{name}</td>
+  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;"><code>{path}</code></td>
+  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{enabled}</td>
+  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{priority}</td>
+  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;"><code>{schedule}</code></td>
+  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{actions}</td>
 </tr>
 <tr>
-  <td colspan=\"6\" style=\"padding: 0.35rem 0.35rem 0.75rem 0.35rem; border-bottom: 1px solid #ddd; background: #fafcff;\">
+  <td colspan="6" style="padding: 0.35rem 0.35rem 0.75rem 0.35rem; border-bottom: 1px solid #ddd; background: #fafcff;">
     <details>
       <summary>Edit {name}</summary>
-      <form method=\"post\" action=\"/settings/libraries/update\" style=\"margin-top: 0.5rem;\">
-        <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
+      <form method="post" action="/settings/libraries/update" class="library-edit-form">
+        <input type="hidden" name="library_id" value="{library_id}" />
         <label>{name_label}</label><br />
-        <input name=\"name\" value=\"{name}\" style=\"width: 100%; max-width: 420px;\" /><br />
+        <input name="name" value="{name}" class="library-form-input-wide" /><br />
         <label>{path_label}</label><br />
-        <input name="path" value="{path}" style="width: 100%; max-width: 420px;" /><br />
-        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-          <legend><strong>Processing Settings</strong></legend>
-          <label>{min_size_gb_label}</label><br />
-          <input name="min_size_gb" type="number" step="0.1" min="0" value="{min_size_gb}" style="width: 100%;" /><br />
-          <label>{max_files_label}</label><br />
-          <input name="max_files" type="number" step="1" min="1" value="{max_files}" style="width: 100%;" /><br />
-          <label>{priority_label}</label><br />
-          <input name="priority" type="number" step="1" value="{priority}" style="width: 100%;" /><br />
-          <small>Higher numbers run first when multiple libraries are queued.</small><br />
-        </fieldset>
-        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-          <legend><strong>Encoding Settings</strong></legend>
-          <label>{qsv_quality_label}</label><br />
-          <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality}" style="width: 100%;" /><br />
-          <label>{qsv_preset_label}</label><br />
-          <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset}" style="width: 100%;" /><br />
-        </fieldset>
-        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-          <legend><strong>Savings Policy</strong></legend>
-          <label>{min_savings_percent_label}</label><br />
-          <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent}" style="width: 100%;" /><br />
-          <label>{max_savings_percent_label}</label><br />
-          <input name="max_savings_percent" type="number" step="0.1" min="0" max="100" value="{max_savings_percent}" style="width: 100%;" /><br />
-          <small>If unset, this value inherits the global setting.</small><br />
-        </fieldset>
-        <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-          <legend><strong>Skip Settings</strong></legend>
-          <label>{skip_codecs_label}</label><br />
-          <input name="skip_codecs" value="{skip_codecs}" style="width: 100%;" /><br />
-          <small>Comma-separated codecs to skip, such as hevc,av1.</small><br />
-          <label>{skip_min_height_label}</label><br />
-          <input name="skip_min_height" type="number" step="1" min="0" value="{skip_min_height}" style="width: 100%;" /><br />
-          <small>Skip files at or above this vertical resolution.</small><br />
-          <label>{skip_resolution_tags_label}</label><br />
-          <input name="skip_resolution_tags" value="{skip_resolution_tags}" style="width: 100%;" /><br />
-          <small>Comma-separated filename tags to skip, such as 2160p,4k,uhd.</small><br />
-        </fieldset>
-        {schedule_fields}
-        <label>{enabled_label}</label>
-        <select name=\"enabled\"><option value=\"1\" {enabled_yes}>Yes</option><option value=\"0\" {enabled_no}>No</option></select>
-        <div style=\"margin-top: 0.5rem;\"><button type=\"submit\">Save Library</button></div>
+        <input name="path" value="{path}" class="library-form-input-wide" /><br />
+        {common_sections_html}
       </form>
       {ignored_folders_html}
     </details>
@@ -2188,45 +2148,40 @@ class ChonkService:
                     name=_escape_html(library.name),
                     path=_escape_html(library.path),
                     enabled=enabled_label,
-                    schedule=_escape_html(library.schedule),
-                    min_size_gb=_escape_html("%s" % library.min_size_gb),
-                    max_files=_escape_html(str(library.max_files)),
                     priority=_escape_html(str(library.priority)),
-                    qsv_quality=_escape_html(str(library.qsv_quality if library.qsv_quality is not None else _env_bootstrap("QSV_QUALITY", "21"))),
-                    qsv_preset=_escape_html(str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7"))),
-                    min_savings_percent=_escape_html(str(library.min_savings_percent if library.min_savings_percent is not None else _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))),
-                    max_savings_percent=_escape_html(str(library.max_savings_percent) if library.max_savings_percent is not None else ""),
-                    schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
+                    schedule=_escape_html(library.schedule),
                     name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-edit-%d" % library.id),
                     path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-edit-%d" % library.id),
-                    min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-edit-%d" % library.id),
-                    max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-edit-%d" % library.id),
-                    priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-edit-%d" % library.id),
-                    qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-edit-%d" % library.id),
-                    qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-edit-%d" % library.id),
-                    min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-edit-%d" % library.id),
-                    max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-edit-%d" % library.id),
-                    skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-edit-%d" % library.id),
-                    skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-edit-%d" % library.id),
-                    skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-edit-%d" % library.id),
-                    skip_codecs=_escape_html(str(library.skip_codecs or "")),
-                    skip_min_height=_escape_html(str(max(0, int(library.skip_min_height or 0)))),
-                    skip_resolution_tags=_escape_html(str(library.skip_resolution_tags or "")),
+                    common_sections_html=common_sections_template.format(
+                        min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-edit-%d" % library.id),
+                        max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-edit-%d" % library.id),
+                        priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-edit-%d" % library.id),
+                        qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-edit-%d" % library.id),
+                        qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-edit-%d" % library.id),
+                        min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-edit-%d" % library.id),
+                        max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-edit-%d" % library.id),
+                        skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-edit-%d" % library.id),
+                        skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-edit-%d" % library.id),
+                        skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-edit-%d" % library.id),
+                        min_size_gb=_escape_html("%s" % library.min_size_gb),
+                        max_files=_escape_html(str(library.max_files)),
+                        priority=_escape_html(str(library.priority)),
+                        qsv_quality=_escape_html(str(library.qsv_quality if library.qsv_quality is not None else _env_bootstrap("QSV_QUALITY", "21"))),
+                        qsv_preset=_escape_html(str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7"))),
+                        min_savings_percent=_escape_html(str(library.min_savings_percent if library.min_savings_percent is not None else _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))),
+                        max_savings_percent=_escape_html(str(library.max_savings_percent) if library.max_savings_percent is not None else ""),
+                        skip_codecs=_escape_html(str(library.skip_codecs or "")),
+                        skip_min_height=_escape_html(str(max(0, int(library.skip_min_height or 0)))),
+                        skip_resolution_tags=_escape_html(str(library.skip_resolution_tags or "")),
+                        schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
+                        enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-edit-%d" % library.id),
+                        enabled_yes="selected" if library.enabled else "",
+                        enabled_no="selected" if not library.enabled else "",
+                        submit_text="Save Library",
+                    ),
                     ignored_folders_html=self._ignored_folders_section_html(library),
-                    enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-edit-%d" % library.id),
                     library_id=library.id,
-                    enabled_yes="selected" if library.enabled else "",
-                    enabled_no="selected" if not library.enabled else "",
-                    actions="""
-<form method=\"post\" action=\"/settings/libraries/toggle\" style=\"display: inline-block; margin-right: 0.4rem;\">
-  <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
-  <input type=\"hidden\" name=\"enabled\" value=\"{toggle_target}\" />
-  <button type=\"submit\">{toggle_label}</button>
-</form>
-<form method=\"post\" action=\"/settings/libraries/delete\" style=\"display: inline-block;\">
-  <input type=\"hidden\" name=\"library_id\" value=\"{library_id}\" />
-  <button type=\"submit\">Delete</button>
-</form>""".format(
+                    actions=table_actions_template.format(
                         library_id=library.id,
                         toggle_target=toggle_target,
                         toggle_label=toggle_label,
@@ -2495,76 +2450,46 @@ class ChonkService:
     def _library_create_form_html(self) -> str:
         schedule_state = _schedule_form_state("")
         schedule_fields = self._schedule_fields_html(schedule_state, "create")
+        common_sections_template = self._load_template("partials/library_form_common_sections.html")
         return """
-<h3 style="margin-top: 1rem;">Create Library</h3>
+<h3 class="settings-subsection-title">Create Library</h3>
 <form method="post" action="/settings/libraries/create">
   <label>{name_label}</label><br />
-  <input name="name" style="width: 100%; max-width: 420px;" /><br />
+  <input name="name" class="library-form-input-wide" /><br />
   <label>{path_label}</label><br />
-  <input name="path" style="width: 100%; max-width: 420px;" /><br />
-  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-    <legend><strong>Processing Settings</strong></legend>
-    <label>{min_size_gb_label}</label><br />
-    <input name="min_size_gb" type="number" step="0.1" min="0" value="0.0" style="width: 100%;" /><br />
-    <label>{max_files_label}</label><br />
-    <input name="max_files" type="number" step="1" min="1" value="1" style="width: 100%;" /><br />
-    <label>{priority_label}</label><br />
-    <input name="priority" type="number" step="1" value="100" style="width: 100%;" /><br />
-    <small>Higher numbers run first when multiple libraries are queued.</small><br />
-  </fieldset>
-  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-    <legend><strong>Encoding Settings</strong></legend>
-    <label>{qsv_quality_label}</label><br />
-    <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality_default}" style="width: 100%;" /><br />
-    <label>{qsv_preset_label}</label><br />
-    <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset_default}" style="width: 100%;" /><br />
-  </fieldset>
-  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-    <legend><strong>Savings Policy</strong></legend>
-    <label>{min_savings_percent_label}</label><br />
-    <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent_default}" style="width: 100%;" /><br />
-    <label>{max_savings_percent_label}</label><br />
-    <input name="max_savings_percent" type="number" step="0.1" min="0" max="100" value="" style="width: 100%;" /><br />
-    <small>If unset, this value inherits the global setting.</small><br />
-  </fieldset>
-  <fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 420px;">
-    <legend><strong>Skip Settings</strong></legend>
-    <label>{skip_codecs_label}</label><br />
-    <input name="skip_codecs" value="{skip_codecs_default}" style="width: 100%;" /><br />
-    <small>Comma-separated codecs to skip, such as hevc,av1.</small><br />
-    <label>{skip_min_height_label}</label><br />
-    <input name="skip_min_height" type="number" step="1" min="0" value="{skip_min_height_default}" style="width: 100%;" /><br />
-    <small>Skip files at or above this vertical resolution.</small><br />
-    <label>{skip_resolution_tags_label}</label><br />
-    <input name="skip_resolution_tags" value="{skip_resolution_tags_default}" style="width: 100%;" /><br />
-    <small>Comma-separated filename tags to skip, such as 2160p,4k,uhd.</small><br />
-  </fieldset>
-  {schedule_fields}
-  <label>{enabled_label}</label>
-  <select name="enabled"><option value="1" selected>Yes</option><option value="0">No</option></select>
-  <div style="margin-top: 0.5rem;"><button type="submit">Create Library</button></div>
+  <input name="path" class="library-form-input-wide" /><br />
+  {common_sections_html}
 </form>
 """.format(
-    schedule_fields=schedule_fields,
-    qsv_quality_default=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
-    qsv_preset_default=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
-    min_savings_percent_default=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
-    skip_codecs_default=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_CODECS", ""))),
-    skip_min_height_default=_escape_html(str(max(0, _env_int("SKIP_MIN_HEIGHT", 0)))),
-    skip_resolution_tags_default=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", ""))),
     name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-create"),
     path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-create"),
-    min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
-    max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
-    priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-create"),
-    qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
-    qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
-    min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
-    max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-create"),
-    skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-create"),
-    skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-create"),
-    skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-create"),
-    enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-create"),
+    common_sections_html=common_sections_template.format(
+        min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
+        max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
+        priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-create"),
+        qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
+        qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
+        min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
+        max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-create"),
+        skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-create"),
+        skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-create"),
+        skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-create"),
+        min_size_gb="0.0",
+        max_files="1",
+        priority="100",
+        qsv_quality=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
+        qsv_preset=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
+        min_savings_percent=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
+        max_savings_percent="",
+        skip_codecs=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_CODECS", ""))),
+        skip_min_height=_escape_html(str(max(0, _env_int("SKIP_MIN_HEIGHT", 0)))),
+        skip_resolution_tags=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", ""))),
+        schedule_fields=schedule_fields,
+        enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-create"),
+        enabled_yes="selected",
+        enabled_no="",
+        submit_text="Create Library",
+    ),
 )
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:

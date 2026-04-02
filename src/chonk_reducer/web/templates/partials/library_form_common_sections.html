@@ -1,0 +1,41 @@
+<fieldset class="library-form-fieldset">
+  <legend><strong>Processing Settings</strong></legend>
+  <label>{min_size_gb_label}</label><br />
+  <input name="min_size_gb" type="number" step="0.1" min="0" value="{min_size_gb}" class="library-form-input-full" /><br />
+  <label>{max_files_label}</label><br />
+  <input name="max_files" type="number" step="1" min="1" value="{max_files}" class="library-form-input-full" /><br />
+  <label>{priority_label}</label><br />
+  <input name="priority" type="number" step="1" value="{priority}" class="library-form-input-full" /><br />
+  <small>Higher numbers run first when multiple libraries are queued.</small><br />
+</fieldset>
+<fieldset class="library-form-fieldset">
+  <legend><strong>Encoding Settings</strong></legend>
+  <label>{qsv_quality_label}</label><br />
+  <input name="qsv_quality" type="number" step="1" min="0" value="{qsv_quality}" class="library-form-input-full" /><br />
+  <label>{qsv_preset_label}</label><br />
+  <input name="qsv_preset" type="number" step="1" min="0" value="{qsv_preset}" class="library-form-input-full" /><br />
+</fieldset>
+<fieldset class="library-form-fieldset">
+  <legend><strong>Savings Policy</strong></legend>
+  <label>{min_savings_percent_label}</label><br />
+  <input name="min_savings_percent" type="number" step="0.1" min="0" value="{min_savings_percent}" class="library-form-input-full" /><br />
+  <label>{max_savings_percent_label}</label><br />
+  <input name="max_savings_percent" type="number" step="0.1" min="0" max="100" value="{max_savings_percent}" class="library-form-input-full" /><br />
+  <small>If unset, this value inherits the global setting.</small><br />
+</fieldset>
+<fieldset class="library-form-fieldset">
+  <legend><strong>Skip Settings</strong></legend>
+  <label>{skip_codecs_label}</label><br />
+  <input name="skip_codecs" value="{skip_codecs}" class="library-form-input-full" /><br />
+  <small>Comma-separated codecs to skip, such as hevc,av1.</small><br />
+  <label>{skip_min_height_label}</label><br />
+  <input name="skip_min_height" type="number" step="1" min="0" value="{skip_min_height}" class="library-form-input-full" /><br />
+  <small>Skip files at or above this vertical resolution.</small><br />
+  <label>{skip_resolution_tags_label}</label><br />
+  <input name="skip_resolution_tags" value="{skip_resolution_tags}" class="library-form-input-full" /><br />
+  <small>Comma-separated filename tags to skip, such as 2160p,4k,uhd.</small><br />
+</fieldset>
+{schedule_fields}
+<label>{enabled_label}</label>
+<select name="enabled"><option value="1" {enabled_yes}>Yes</option><option value="0" {enabled_no}>No</option></select>
+<div class="library-form-submit-row"><button type="submit">{submit_text}</button></div>

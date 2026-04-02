@@ -1,0 +1,9 @@
+<form method="post" action="/settings/libraries/toggle" class="libraries-inline-form libraries-inline-form-spaced">
+  <input type="hidden" name="library_id" value="{library_id}" />
+  <input type="hidden" name="enabled" value="{toggle_target}" />
+  <button type="submit">{toggle_label}</button>
+</form>
+<form method="post" action="/settings/libraries/delete" class="libraries-inline-form">
+  <input type="hidden" name="library_id" value="{library_id}" />
+  <button type="submit">Delete</button>
+</form>
