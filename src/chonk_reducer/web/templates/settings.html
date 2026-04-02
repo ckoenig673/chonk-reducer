@@ -4,17 +4,19 @@
 <h2>Global Settings</h2>
 <p>Editable service defaults persisted in SQLite.</p>
 <form method="post" action="/settings">
-  <div class="settings-group">
-    <h3 class="settings-subsection-title">Global Settings</h3>
-    {settings_rows_global_html}
-  </div>
-  <div class="settings-group">
-    <h3 class="settings-subsection-title">Notifications</h3>
-    {settings_rows_notifications_html}
-  </div>
-  <div class="settings-group">
-    <h3 class="settings-subsection-title">Retry / Backoff</h3>
-    {settings_rows_retry_html}
+  <div class="settings-layout-grid">
+    <div class="settings-group">
+      <h3 class="settings-subsection-title">Global Settings</h3>
+      {settings_rows_global_html}
+    </div>
+    <div class="settings-group">
+      <h3 class="settings-subsection-title">Notifications</h3>
+      {settings_rows_notifications_html}
+    </div>
+    <div class="settings-group">
+      <h3 class="settings-subsection-title">Retry / Backoff</h3>
+      {settings_rows_retry_html}
+    </div>
   </div>
   <div class="settings-save-row"><button type="submit" class="primary-button">Save</button></div>
 </form>
