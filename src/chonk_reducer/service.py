@@ -66,10 +66,26 @@ from .web.app import build_web_app
 from .web.routers.pages import register_page_routes
 from .web.routers.api import register_action_routes
 from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
+from .core.display_formatting import (
+    analytics_file_display_name as _analytics_file_display_name,
+    coerce_scheduler_datetime as _coerce_scheduler_datetime,
+    display_run_mode as _display_run_mode,
+    display_run_trigger as _display_run_trigger,
+    display_trigger as _display_trigger,
+    display_version as _display_version,
+    duration_seconds_from_run as _duration_seconds_from_run,
+    format_duration_seconds as _format_duration_seconds,
+    format_eta_seconds as _format_eta_seconds,
+    format_readable_timestamp as _format_readable_timestamp,
+    format_savings_pct as _format_savings_pct,
+    format_saved_bytes as _format_saved_bytes,
+    format_scheduler_datetime as _format_scheduler_datetime,
+    run_saved_mb_gb_label as _run_saved_mb_gb_label,
+)
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.11") or "1.46.11").strip() or "1.46.11"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.12") or "1.46.12").strip() or "1.46.12"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -88,22 +104,6 @@ WEEKDAY_CHOICES = [
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 WEB_TEMPLATES_ROOT = WEB_ROOT / "templates"
 WEB_STATIC_ROOT = WEB_ROOT / "static"
-
-
-def _display_version(version: str) -> str:
-    normalized = str(version or "").strip() or "dev"
-    if normalized.lower().startswith("v"):
-        return normalized
-    return "v%s" % normalized
-
-
-def _analytics_file_display_name(path: str) -> str:
-    raw_path = str(path or "").strip()
-    if not raw_path:
-        return "-"
-    filename = os.path.basename(raw_path)
-    stem, _ = os.path.splitext(filename)
-    return stem or filename
 
 
 LEGACY_CRON_WEEKDAY_MAP = {
@@ -852,7 +852,7 @@ class ChonkService:
             return "-"
         raw_next = _coerce_scheduler_datetime(getattr(job, "next_run_time", None))
         if raw_next is not None:
-            return _format_scheduler_datetime(raw_next)
+            return _format_scheduler_datetime(raw_next, _configured_timezone_name())
         trigger = getattr(job, "trigger", None)
         if hasattr(trigger, "get_next_fire_time"):
             timezone = _cron_trigger_timezone()
@@ -863,7 +863,7 @@ class ChonkService:
                 computed = None
             computed_value = _coerce_scheduler_datetime(computed)
             if computed_value is not None:
-                return _format_scheduler_datetime(computed_value)
+                return _format_scheduler_datetime(computed_value, _configured_timezone_name())
         return "-"
 
     def _housekeeping_summary_html(self) -> str:
@@ -871,20 +871,14 @@ class ChonkService:
         parsed = _parse_housekeeping_form_values({"housekeeping_schedule": config["schedule"]})
         days = list(parsed["days"])
         day_labels = [label for label, value in WEEKDAY_CHOICES if value in days]
-        return """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
-  <tbody>
-    <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;">Housekeeping Enabled</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
-    <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Housekeeping Schedule</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;"><code>%s</code> (%s at %s)</td></tr>
-    <tr><th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;">Next Housekeeping Run</th><td style="border-bottom: 1px solid #ddd; padding: 0.35rem;">%s</td></tr>
-    <tr><th style="text-align: left; padding: 0.35rem;">Log Retention Days</th><td style="padding: 0.35rem;">%s</td></tr>
-  </tbody>
-</table>""" % (
-            "Yes" if config["enabled"] == "1" else "No",
-            _escape_html(config["schedule"]),
-            _escape_html(", ".join(day_labels) if day_labels else "No days"),
-            _escape_html(str(parsed["time"])),
-            _escape_html(self._next_housekeeping_run_label()),
-            _escape_html(self._editable_settings.get("log_retention_days", "30")),
+        template = self._load_template("partials/housekeeping_summary_table.html")
+        return template.format(
+            housekeeping_enabled="Yes" if config["enabled"] == "1" else "No",
+            housekeeping_schedule=_escape_html(config["schedule"]),
+            housekeeping_days=_escape_html(", ".join(day_labels) if day_labels else "No days"),
+            housekeeping_time=_escape_html(str(parsed["time"])),
+            next_housekeeping_run=_escape_html(self._next_housekeeping_run_label()),
+            log_retention_days=_escape_html(self._editable_settings.get("log_retention_days", "30")),
         )
 
     def activity_page_html(self) -> str:
@@ -1365,21 +1359,14 @@ class ChonkService:
     def _preview_summary_html(self, summary: Dict[str, object]) -> str:
         pct = summary.get("estimated_savings_percent")
         pct_label = "-" if pct is None else "%.1f%%" % float(pct)
-        return """<div style="border:1px solid #d7e2f4; background:#f8fbff; padding:0.45rem; margin-bottom:0.5rem;">
-  <div style="font-weight:600; margin-bottom:0.25rem;">Preview Summary</div>
-  <div><strong>Files Evaluated:</strong> <span id="runtime-preview-files-evaluated">%s</span></div>
-  <div><strong>Candidates Found:</strong> <span id="runtime-preview-candidates-found">%s</span></div>
-  <div><strong>Estimated Original Total Size:</strong> <span id="runtime-preview-estimated-original">%s</span></div>
-  <div><strong>Estimated Encoded Total Size:</strong> <span id="runtime-preview-estimated-encoded">%s</span></div>
-  <div><strong>Estimated Total Savings:</strong> <span id="runtime-preview-estimated-saved">%s</span></div>
-  <div><strong>Estimated Savings Percent:</strong> <span id="runtime-preview-estimated-pct">%s</span></div>
-</div>""" % (
-            _escape_html(str(summary.get("files_evaluated", 0))),
-            _escape_html(str(summary.get("candidates_found", 0))),
-            _escape_html(_format_saved_bytes(summary.get("estimated_original_total", 0))),
-            _escape_html(_format_saved_bytes(summary.get("estimated_encoded_total", 0))),
-            _escape_html(_format_saved_bytes(summary.get("estimated_total_savings", 0))),
-            _escape_html(pct_label),
+        template = self._load_template("partials/preview_summary.html")
+        return template.format(
+            files_evaluated=_escape_html(str(summary.get("files_evaluated", 0))),
+            candidates_found=_escape_html(str(summary.get("candidates_found", 0))),
+            estimated_original_total=_escape_html(_format_saved_bytes(summary.get("estimated_original_total", 0))),
+            estimated_encoded_total=_escape_html(_format_saved_bytes(summary.get("estimated_encoded_total", 0))),
+            estimated_total_savings=_escape_html(_format_saved_bytes(summary.get("estimated_total_savings", 0))),
+            estimated_savings_percent=_escape_html(pct_label),
         )
 
     def run_detail_page_html(self, run_id: str) -> tuple:
@@ -1570,7 +1557,7 @@ class ChonkService:
         if earliest is None:
             return "-", "-"
 
-        return earliest[0], _format_scheduler_datetime(earliest[1])
+        return earliest[0], _format_scheduler_datetime(earliest[1], _configured_timezone_name())
 
     def _scheduled_job_display_name(self, job_id: str) -> str:
         value = str(job_id or "").strip()
@@ -1634,7 +1621,7 @@ class ChonkService:
         computed_next = self._library_next_run_datetime(library)
         if computed_next is None:
             return manual_label
-        return _format_scheduler_datetime(computed_next)
+        return _format_scheduler_datetime(computed_next, _configured_timezone_name())
 
     def _current_time_label(self) -> str:
         tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
@@ -4628,195 +4615,6 @@ def _derive_run_status(success_count: int, failed_count: int, skipped_count: int
     if skipped_count > 0:
         return "skipped"
     return "completed"
-
-
-def _format_duration_seconds(value) -> str:
-    try:
-        seconds = int(round(float(value)))
-    except Exception:
-        return "Unknown"
-    if seconds < 0:
-        return "Unknown"
-    if seconds < 60:
-        return "%ss" % seconds
-    if seconds < 3600:
-        minutes = seconds // 60
-        remainder = seconds % 60
-        return "%sm %ss" % (minutes, remainder)
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    return "%sh %02dm" % (hours, minutes)
-
-
-def _duration_seconds_from_run(ts_start, ts_end, fallback_seconds) -> Optional[float]:
-    start_text = str(ts_start or "").strip()
-    end_text = str(ts_end or "").strip()
-    if start_text and end_text:
-        try:
-            start_dt = datetime.fromisoformat(start_text)
-            end_dt = datetime.fromisoformat(end_text)
-            delta_seconds = (end_dt - start_dt).total_seconds()
-            if delta_seconds > 0:
-                return float(delta_seconds)
-        except Exception:
-            pass
-    try:
-        fallback = float(fallback_seconds)
-    except Exception:
-        return None
-    if fallback < 0:
-        return None
-    return fallback
-
-
-def _run_saved_mb_gb_label(saved_bytes) -> str:
-    try:
-        value = int(saved_bytes)
-    except Exception:
-        return "Unknown"
-    if value < 0:
-        return "Unknown"
-    gib = float(1024 ** 3)
-    mib = float(1024 ** 2)
-    if value >= 1024 ** 3:
-        return "%.1f GB" % (value / gib)
-    return "%.1f MB" % (value / mib)
-
-
-def _format_saved_bytes(value) -> str:
-    try:
-        saved_bytes = int(value)
-    except Exception:
-        return "Unknown"
-
-    if saved_bytes < 0:
-        return "Unknown"
-    if saved_bytes < 1024:
-        return "%d B" % saved_bytes
-
-    units = ["KB", "MB", "GB", "TB"]
-    scaled = float(saved_bytes)
-    for unit in units:
-        scaled = scaled / 1024.0
-        if scaled < 1024.0 or unit == units[-1]:
-            return "%.1f %s" % (scaled, unit)
-    return "%d B" % saved_bytes
-
-
-def _format_eta_seconds(value) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return "-"
-    try:
-        seconds = int(text)
-    except Exception:
-        return "-"
-    if seconds < 0:
-        return "-"
-    if seconds < 60:
-        return "%ss" % seconds
-    minutes = seconds // 60
-    remainder = seconds % 60
-    return "%sm %ss" % (minutes, remainder)
-
-
-
-
-def _display_trigger(trigger: str) -> str:
-    value = str(trigger or "").strip().lower()
-    if value == "manual":
-        return "Manual"
-    if value in ("schedule", "scheduled"):
-        return "Scheduled"
-    if not value:
-        return "-"
-    return str(trigger)
-
-
-def _display_run_mode(mode: str) -> str:
-    value = str(mode or "").strip().lower()
-    if value in ("preview", "dry_run", "dry-run"):
-        return "Preview"
-    if value in ("live", "normal", "encode"):
-        return "Live"
-    if not value:
-        return "Live"
-    return str(mode)
-
-
-def _display_run_trigger(event_type: str) -> str:
-    value = str(event_type or "").strip().lower()
-    if value == "manual_preview_requested":
-        return "Manual Preview"
-    if value == "manual_run_requested":
-        return "Manual"
-    if value == "scheduled_run_requested":
-        return "Scheduled"
-    return "Unknown"
-
-
-def _format_scheduler_datetime(value) -> str:
-    if value is None:
-        return "Unknown"
-    if isinstance(value, datetime):
-        tzinfo = None
-        if ZoneInfo is not None:
-            tz_name = (_env("TZ", "UTC") or "UTC").strip() or "UTC"
-            try:
-                tzinfo = ZoneInfo(tz_name)
-            except Exception:
-                tzinfo = None
-        if tzinfo is not None and value.tzinfo is not None:
-            try:
-                value = value.astimezone(tzinfo)
-            except Exception:
-                pass
-        return value.strftime("%Y-%m-%d %H:%M")
-    return str(value)
-
-
-def _format_readable_timestamp(value: object) -> str:
-    text = str(value or "").strip()
-    if not text or text == "-":
-        return "-"
-    if "T" in text:
-        text = text.replace("T", " ")
-    if text.endswith("Z"):
-        text = text[:-1]
-    if len(text) >= 16:
-        return text[:16]
-    return text
-
-
-def _coerce_scheduler_datetime(value) -> Optional[datetime]:
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        normalized = text
-        if normalized.endswith(" UTC"):
-            normalized = normalized[:-4] + "+00:00"
-        try:
-            return datetime.fromisoformat(normalized)
-        except Exception:
-            return None
-    return None
-
-
-def _format_savings_pct(size_before, size_after) -> str:
-    try:
-        before = float(size_before)
-        after = float(size_after)
-    except Exception:
-        return "Unknown"
-
-    if before <= 0:
-        return "Unknown"
-
-    pct = ((before - after) / before) * 100.0
-    return "%.1f%%" % pct
 
 
 def _escape_html(value: str) -> str:
