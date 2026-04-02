@@ -135,3 +135,24 @@
   border: 1px solid #e3ebf6;
   background: #f7faff;
 }
+
+.page-section-title {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.page-subsection-title {
+  margin: 0.5rem 0;
+}
+
+.page-subsection-title.spaced {
+  margin: 0.75rem 0 0.5rem 0;
+}
+
+.runs-active-banner {
+  margin: 0.75rem 0;
+  padding: 0.6rem;
+  border: 1px solid #bcd6f3;
+  background: #f4f8ff;
+  color: #173a5e;
+}
