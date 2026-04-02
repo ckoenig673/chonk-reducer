@@ -1,6 +1,6 @@
 import os
 
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.7") or "1.46.7").strip() or "1.46.7"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.8") or "1.46.8").strip() or "1.46.8"
 
 __all__ = ["__version__", "APP_VERSION"]
 __version__ = APP_VERSION
