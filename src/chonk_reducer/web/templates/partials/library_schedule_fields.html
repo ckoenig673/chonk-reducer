@@ -1,0 +1,35 @@
+<fieldset class="library-schedule-fieldset">
+  <legend>{schedule_label}</legend>
+  <label class="library-schedule-mode-option library-schedule-mode-option-spaced"><input id="{simple_radio_id}" type="radio" name="schedule_mode" value="simple" {simple_checked} onchange="toggleScheduleMode_{form_token}()" /> Simple</label>
+  <label><input id="{advanced_radio_id}" type="radio" name="schedule_mode" value="advanced" {advanced_checked} onchange="toggleScheduleMode_{form_token}()" /> Advanced cron</label>
+
+  <div id="simple-schedule-{form_token}" class="library-schedule-simple" style="display:{simple_display};">
+    <label>{days_label}</label><br />
+    {weekday_options_html}
+    <br />
+    <label>{time_label}</label><br />
+    <select name="schedule_time" class="library-schedule-time">{time_options_html}</select>
+    <div class="library-schedule-generated-cron">Generated cron: <code>{preview}</code></div>
+  </div>
+
+  <div id="advanced-schedule-{form_token}" class="library-schedule-advanced" style="display:{advanced_display};">
+    <label>{raw_cron_label}</label><br />
+    <input name="schedule" value="{raw_value}" class="library-form-input-wide" />
+  </div>
+</fieldset>
+<script>
+  function toggleScheduleMode_{form_token}() {{
+    var simpleRadio = document.getElementById('{simple_radio_id}');
+    var simple = document.getElementById('simple-schedule-{form_token}');
+    var advanced = document.getElementById('advanced-schedule-{form_token}');
+    if (!simpleRadio || !simple || !advanced) {{ return; }}
+    if (simpleRadio.checked) {{
+      simple.style.display = 'block';
+      advanced.style.display = 'none';
+    }} else {{
+      simple.style.display = 'none';
+      advanced.style.display = 'block';
+    }}
+  }}
+  toggleScheduleMode_{form_token}();
+</script>

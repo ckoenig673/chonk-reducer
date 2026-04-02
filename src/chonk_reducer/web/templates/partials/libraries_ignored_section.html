@@ -1,0 +1,109 @@
+<fieldset class="libraries-ignored-fieldset">
+  <legend><strong>Ignored Folders</strong></legend>
+  <label>{ignored_folders_label}</label>
+  <ul class="libraries-ignored-list">{ignored_items}</ul>
+  <form method="post" action="/settings/libraries/ignored/add">
+    <input type="hidden" name="library_id" value="{library_id}" />
+    <label for="ignored-folder-{library_id}"><strong>Add Ignored Folder (library-relative path)</strong></label><br />
+    <div class="libraries-ignored-add-row">
+      <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" class="libraries-ignored-input" />
+      <button type="button" id="ignored-folder-browse-button-{library_id}">Browse</button>
+    </div>
+    <div id="ignored-folder-browser-{library_id}" class="libraries-ignored-browser">
+      <div class="libraries-ignored-browser-label"><strong>Folder browser</strong>: <code id="ignored-folder-browser-path-{library_id}">.</code></div>
+      <div id="ignored-folder-browser-actions-{library_id}" class="libraries-ignored-browser-actions"></div>
+      <ul id="ignored-folder-browser-list-{library_id}" class="libraries-ignored-browser-list"></ul>
+    </div>
+    <div class="libraries-ignored-submit-row"><button type="submit">Add Ignored Folder</button></div>
+  </form>
+  <script>
+  (function() {{
+    const libraryId = {library_id};
+    const input = document.getElementById("ignored-folder-" + libraryId);
+    const toggleButton = document.getElementById("ignored-folder-browse-button-" + libraryId);
+    const browserBox = document.getElementById("ignored-folder-browser-" + libraryId);
+    const pathLabel = document.getElementById("ignored-folder-browser-path-" + libraryId);
+    const actions = document.getElementById("ignored-folder-browser-actions-" + libraryId);
+    const folderList = document.getElementById("ignored-folder-browser-list-" + libraryId);
+    if (!input || !toggleButton || !browserBox || !pathLabel || !actions || !folderList) {{
+      return;
+    }}
+
+    let currentPath = "";
+
+    function normalize(path) {{
+      const raw = String(path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      return raw === "." ? "" : raw;
+    }}
+
+    function render(folders) {{
+      const safePath = normalize(currentPath);
+      pathLabel.textContent = safePath || ".";
+      actions.innerHTML = "";
+      if (safePath) {{
+        const upButton = document.createElement("button");
+        upButton.type = "button";
+        upButton.textContent = "Up";
+        upButton.addEventListener("click", function() {{
+          const parts = safePath.split("/").filter(Boolean);
+          parts.pop();
+          load(parts.join("/"));
+        }});
+        actions.appendChild(upButton);
+      }}
+
+      folderList.innerHTML = "";
+      const folderNames = Array.isArray(folders) ? folders : [];
+      if (!folderNames.length) {{
+        const emptyItem = document.createElement("li");
+        emptyItem.textContent = "No subfolders";
+        folderList.appendChild(emptyItem);
+        return;
+      }}
+
+      folderNames.forEach(function(name) {{
+        const selectedPath = normalize(safePath ? (safePath + "/" + name) : name);
+        const item = document.createElement("li");
+        const openButton = document.createElement("button");
+        openButton.type = "button";
+        openButton.textContent = "Open";
+        openButton.className = "libraries-ignored-open-button";
+        openButton.addEventListener("click", function() {{
+          load(selectedPath);
+        }});
+
+        const selectButton = document.createElement("button");
+        selectButton.type = "button";
+        selectButton.textContent = name;
+        selectButton.addEventListener("click", function() {{
+          input.value = selectedPath;
+        }});
+
+        item.appendChild(openButton);
+        item.appendChild(selectButton);
+        folderList.appendChild(item);
+      }});
+    }}
+
+    async function load(path) {{
+      const targetPath = normalize(path);
+      const response = await fetch("/api/library/" + libraryId + "/folders?path=" + encodeURIComponent(targetPath));
+      if (!response.ok) {{
+        folderList.innerHTML = "<li>Unable to load folders</li>";
+        return;
+      }}
+      const payload = await response.json();
+      currentPath = normalize(payload.path || "");
+      render(payload.folders || []);
+    }}
+
+    toggleButton.addEventListener("click", function() {{
+      const isHidden = browserBox.style.display === "none";
+      browserBox.style.display = isHidden ? "block" : "none";
+      if (isHidden) {{
+        load(input.value || "");
+      }}
+    }});
+  }})();
+  </script>
+</fieldset>
