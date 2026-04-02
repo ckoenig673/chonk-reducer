@@ -61,6 +61,13 @@ from .runner import run
 from . import notifications
 from . import secrets
 from .services.library_paths import discover_ignored_folders, resolve_library_relative_folder
+from .services.settings_libraries_rendering import (
+    SettingsLibrariesRenderDeps,
+    render_libraries_table_html,
+    render_library_create_form_html,
+    render_library_name_path_fields_html,
+    render_schedule_fields_html,
+)
 from .data.db import connect_settings_db
 from .web.app import build_web_app
 from .web.routers.pages import register_page_routes
@@ -87,7 +94,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.14") or "1.46.14").strip() or "1.46.14"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.15") or "1.46.15").strip() or "1.46.15"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -2085,89 +2092,7 @@ class ChonkService:
         return "Library validation failed: duplicate value."
 
     def _libraries_table_html(self, libraries: List[LibraryRecord]) -> str:
-        empty_template = self._load_template("partials/libraries_empty.html")
-        table_template = self._load_template("partials/libraries_table.html")
-        common_sections_template = self._load_template("partials/library_form_common_sections.html")
-        table_actions_template = self._load_template("partials/library_table_row_actions.html")
-        if not libraries:
-            return empty_template
-
-        row_html = []
-        for library in libraries:
-            schedule_state = _schedule_form_state(library.schedule)
-            enabled_label = "Enabled" if library.enabled else "Disabled"
-            toggle_target = "0" if library.enabled else "1"
-            toggle_label = "Disable" if library.enabled else "Enable"
-            row_html.append(
-                """<tr>
-  <td class="libraries-table-cell">{name}</td>
-  <td class="libraries-table-cell"><code>{path}</code></td>
-  <td class="libraries-table-cell">{enabled}</td>
-  <td class="libraries-table-cell">{priority}</td>
-  <td class="libraries-table-cell"><code>{schedule}</code></td>
-  <td class="libraries-table-cell">{actions}</td>
-</tr>
-<tr>
-  <td colspan="6" class="libraries-table-detail-cell">
-    <details>
-      <summary>Edit {name}</summary>
-      <form method="post" action="/settings/libraries/update" class="library-edit-form">
-        <input type="hidden" name="library_id" value="{library_id}" />
-        {name_path_fields_html}
-        {common_sections_html}
-      </form>
-      {ignored_folders_html}
-    </details>
-  </td>
-</tr>""".format(
-                    name=_escape_html(library.name),
-                    path=_escape_html(library.path),
-                    enabled=enabled_label,
-                    priority=_escape_html(str(library.priority)),
-                    schedule=_escape_html(library.schedule),
-                    name_path_fields_html=self._library_name_path_fields_html(
-                        name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-edit-%d" % library.id),
-                        path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-edit-%d" % library.id),
-                        name_value=_escape_html(library.name),
-                        path_value=_escape_html(library.path),
-                    ),
-                    common_sections_html=common_sections_template.format(
-                        min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-edit-%d" % library.id),
-                        max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-edit-%d" % library.id),
-                        priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-edit-%d" % library.id),
-                        qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-edit-%d" % library.id),
-                        qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-edit-%d" % library.id),
-                        min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-edit-%d" % library.id),
-                        max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-edit-%d" % library.id),
-                        skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-edit-%d" % library.id),
-                        skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-edit-%d" % library.id),
-                        skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-edit-%d" % library.id),
-                        min_size_gb=_escape_html("%s" % library.min_size_gb),
-                        max_files=_escape_html(str(library.max_files)),
-                        priority=_escape_html(str(library.priority)),
-                        qsv_quality=_escape_html(str(library.qsv_quality if library.qsv_quality is not None else _env_bootstrap("QSV_QUALITY", "21"))),
-                        qsv_preset=_escape_html(str(library.qsv_preset if library.qsv_preset is not None else _env_bootstrap("QSV_PRESET", "7"))),
-                        min_savings_percent=_escape_html(str(library.min_savings_percent if library.min_savings_percent is not None else _env_bootstrap("MIN_SAVINGS_PERCENT", "15"))),
-                        max_savings_percent=_escape_html(str(library.max_savings_percent) if library.max_savings_percent is not None else ""),
-                        skip_codecs=_escape_html(str(library.skip_codecs or "")),
-                        skip_min_height=_escape_html(str(max(0, int(library.skip_min_height or 0)))),
-                        skip_resolution_tags=_escape_html(str(library.skip_resolution_tags or "")),
-                        schedule_fields=self._schedule_fields_html(schedule_state, "edit-%d" % library.id),
-                        enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-edit-%d" % library.id),
-                        enabled_yes="selected" if library.enabled else "",
-                        enabled_no="selected" if not library.enabled else "",
-                        submit_text="Save Library",
-                    ),
-                    ignored_folders_html=self._ignored_folders_section_html(library),
-                    library_id=library.id,
-                    actions=table_actions_template.format(
-                        library_id=library.id,
-                        toggle_target=toggle_target,
-                        toggle_label=toggle_label,
-                    ),
-                )
-            )
-        return table_template.format(library_rows_html="".join(row_html))
+        return render_libraries_table_html(libraries, self._settings_libraries_render_deps())
 
     def _ignored_folders_section_html(self, library: LibraryRecord) -> str:
         ignored_paths = self._discover_ignored_folders(library.path)
@@ -2286,50 +2211,11 @@ class ChonkService:
         return "Ignored folder removed: %s" % rel
 
     def _library_create_form_html(self) -> str:
-        create_form_template = self._load_template("partials/library_create_form.html")
-        schedule_state = _schedule_form_state("")
-        schedule_fields = self._schedule_fields_html(schedule_state, "create")
-        common_sections_template = self._load_template("partials/library_form_common_sections.html")
-        name_path_fields_html = self._library_name_path_fields_html(
-            name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-create"),
-            path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-create"),
-            name_value="",
-            path_value="",
-        )
-        return create_form_template.format(
-            name_path_fields_html=name_path_fields_html,
-            common_sections_html=common_sections_template.format(
-                min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
-                max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
-                priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-create"),
-                qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
-                qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
-                min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
-                max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-create"),
-                skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-create"),
-                skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-create"),
-                skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-create"),
-                min_size_gb="0.0",
-                max_files="1",
-                priority="100",
-                qsv_quality=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
-                qsv_preset=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
-                min_savings_percent=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
-                max_savings_percent="",
-                skip_codecs=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_CODECS", ""))),
-                skip_min_height=_escape_html(str(max(0, _env_int("SKIP_MIN_HEIGHT", 0)))),
-                skip_resolution_tags=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", ""))),
-                schedule_fields=schedule_fields,
-                enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-create"),
-                enabled_yes="selected",
-                enabled_no="",
-                submit_text="Create Library",
-            ),
-        )
+        return render_library_create_form_html(self._settings_libraries_render_deps())
 
     def _library_name_path_fields_html(self, name_label: str, path_label: str, name_value: str, path_value: str) -> str:
-        fields_template = self._load_template("partials/library_form_name_path_fields.html")
-        return fields_template.format(
+        return render_library_name_path_fields_html(
+            self._settings_libraries_render_deps(),
             name_label=name_label,
             path_label=path_label,
             name_value=name_value,
@@ -2337,50 +2223,22 @@ class ChonkService:
         )
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
-        schedule_template = self._load_template("partials/library_schedule_fields.html")
-        form_token = _sanitize_token(str(form_id), replacement="_")
-        mode = str(schedule_state.get("mode", "simple"))
-        raw_value = _escape_html(str(schedule_state.get("raw", "")))
-        simple_time = _escape_html(str(schedule_state.get("time", "00:00")))
-        selected_days = set(schedule_state.get("days", []))
-        simple_radio_id = "schedule-mode-simple-%s" % form_token
-        advanced_radio_id = "schedule-mode-advanced-%s" % form_token
-        simple_checked = "checked" if mode == "simple" else ""
-        advanced_checked = "checked" if mode == "advanced" else ""
+        return render_schedule_fields_html(self._settings_libraries_render_deps(), schedule_state, form_id)
 
-        weekday_options = []
-        for label, day_value in WEEKDAY_CHOICES:
-            checked = "checked" if day_value in selected_days else ""
-            weekday_options.append(
-                '<label class="library-schedule-weekday"><input type="checkbox" name="schedule_day_%s" value="1" %s /> %s</label>'
-                % (day_value, checked, label)
-            )
-
-        time_options = []
-        for value in _simple_schedule_time_options():
-            selected = "selected" if value == simple_time else ""
-            time_options.append('<option value="%s" %s>%s</option>' % (_escape_html(value), selected, _escape_html(value)))
-
-        simple_display = "block" if mode == "simple" else "none"
-        advanced_display = "block" if mode == "advanced" else "none"
-        preview = _escape_html(str(schedule_state.get("preview", "")))
-
-        return schedule_template.format(
-            schedule_label=self._label_with_help("Schedule", LIBRARY_SETTINGS_HELP["schedule"], "lib-schedule-%s" % form_token),
-            simple_radio_id=simple_radio_id,
-            simple_checked=simple_checked,
-            advanced_radio_id=advanced_radio_id,
-            advanced_checked=advanced_checked,
-            form_token=form_token,
-            simple_display=simple_display,
-            days_label=self._label_with_help("Days", LIBRARY_SETTINGS_HELP["schedule_days"], "lib-schedule-days-%s" % form_token),
-            weekday_options_html="".join(weekday_options),
-            time_label=self._label_with_help("Time", LIBRARY_SETTINGS_HELP["schedule_time"], "lib-schedule-time-%s" % form_token),
-            time_options_html="".join(time_options),
-            preview=preview,
-            advanced_display=advanced_display,
-            raw_cron_label=self._label_with_help("Raw cron expression", LIBRARY_SETTINGS_HELP["raw_cron"], "lib-schedule-raw-%s" % form_token),
-            raw_value=raw_value,
+    def _settings_libraries_render_deps(self) -> SettingsLibrariesRenderDeps:
+        return SettingsLibrariesRenderDeps(
+            load_template=self._load_template,
+            label_with_help=self._label_with_help,
+            ignored_folders_section_html=self._ignored_folders_section_html,
+            schedule_form_state=_schedule_form_state,
+            simple_schedule_time_options=_simple_schedule_time_options,
+            env_bootstrap=_env_bootstrap,
+            env_int=_env_int,
+            normalize_csv_text=_normalize_csv_text,
+            escape_html=_escape_html,
+            sanitize_token=lambda value: _sanitize_token(value, replacement="_"),
+            weekday_choices=WEEKDAY_CHOICES,
+            library_settings_help=LIBRARY_SETTINGS_HELP,
         )
 
     def register_jobs(self) -> None:
