@@ -68,7 +68,7 @@ from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.5") or "1.46.5").strip() or "1.46.5"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.8") or "1.46.8").strip() or "1.46.8"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -700,6 +700,7 @@ class ChonkService:
 
     def settings_page_html(self, message: str = "") -> str:
         libraries = self.list_libraries()
+        settings_template = self._load_template("settings.html")
         rows = []
         for key in EDITABLE_SETTINGS:
             if key in {"housekeeping_enabled", "housekeeping_schedule"}:
@@ -711,11 +712,11 @@ class ChonkService:
             label_html = self._label_with_help(label, description, "global-%s" % key)
             restart_badge = ""
             if key in RESTART_REQUIRED_SETTINGS:
-                restart_badge = ' <span style="color: #8a4f00; font-size: 0.9rem;">(restart required)</span>'
+                restart_badge = ' <span class="settings-restart-required">(restart required)</span>'
             if key in CHECKBOX_SETTINGS:
                 checked = "checked" if _env_bool_text(value) else ""
                 rows.append(
-                    """<label for="{key}" style="display:block; margin-top: 0.75rem;">{label_html}{restart_badge}</label>
+                    """<label for="{key}" class="settings-input-label">{label_html}{restart_badge}</label>
   <input id="{key}" name="{key}" type="checkbox" value="1" {checked} />""".format(
                         key=key,
                         label_html=label_html,
@@ -727,10 +728,10 @@ class ChonkService:
                 configured = bool(str(value or "").strip())
                 status = "Configured (hidden)" if configured else "Not configured"
                 rows.append(
-                    """<label for="{key}" style="display:block; margin-top: 0.75rem;">{label_html}{restart_badge}</label>
-  <input id="{key}" name="{key}" value="" placeholder="Set (hidden)" style="width: 100%; max-width: 420px;" autocomplete="off" />
-  <div style="font-size: 0.9rem; color: #555; margin-top: 0.2rem;">{status}</div>
-  <label style="display:block; margin-top: 0.3rem; color:#444;"><input type="checkbox" name="clear_{key}" value="1" /> Clear stored secret</label>""".format(
+                    """<label for="{key}" class="settings-input-label">{label_html}{restart_badge}</label>
+  <input id="{key}" name="{key}" value="" placeholder="Set (hidden)" class="settings-input-control" autocomplete="off" />
+  <div class="settings-secret-status">{status}</div>
+  <label class="settings-secret-clear"><input type="checkbox" name="clear_{key}" value="1" /> Clear stored secret</label>""".format(
                         key=key,
                         label_html=label_html,
                         restart_badge=restart_badge,
@@ -739,49 +740,23 @@ class ChonkService:
                 )
             else:
                 rows.append(
-                    """<label for="{key}" style="display:block; margin-top: 0.75rem;">{label_html}{restart_badge}</label>
-  <input id="{key}" name="{key}" value="{value}" style="width: 100%; max-width: 420px;" />""".format(
+                    """<label for="{key}" class="settings-input-label">{label_html}{restart_badge}</label>
+  <input id="{key}" name="{key}" value="{value}" class="settings-input-control" />""".format(
                         key=key,
                         label_html=label_html,
                         restart_badge=restart_badge,
                         value=_escape_html(value),
                     )
                 )
-
-        content = """
-<h1>Settings</h1>
-"""
+        message_html = ""
         if message:
-            content += '<div style="padding: 0.5rem; border: 1px solid #cfe9cf; background:#f4fff4;">%s</div>' % _escape_html(
-                message
-            )
-        content += """
-<section>
-<h2>Global Settings</h2>
-<p>Editable service defaults persisted in SQLite.</p>
-<form method="post" action="/settings">%s
-  <div style="margin-top: 1rem;"><button type="submit">Save</button></div>
-</form>
-<form method="post" action="/settings/test-notification" style="margin-top: 0.75rem;">
-  <button type="submit">Send Test Notification</button>
-</form>
-<p style="margin-top: 1rem; color: #555;">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
-</section>
-<section style="margin-top: 2rem;">
-<h2>Housekeeping</h2>
-<p>Configure daily cleanup schedule for logs and backups.</p>
-%s
-</section>
-<section style="margin-top: 2rem;">
-<h2>Libraries</h2>
-<p>Configured media library roots for future dynamic scheduling.</p>
-%s
-%s
-</section>""" % (
-            "".join(rows),
-            self._housekeeping_settings_form_html(),
-            self._libraries_table_html(libraries),
-            self._library_create_form_html(),
+            message_html = '<div class="settings-success-message">%s</div>' % _escape_html(message)
+        content = settings_template.format(
+            message_html=message_html,
+            settings_rows_html="".join(rows),
+            housekeeping_form_html=self._housekeeping_settings_form_html(),
+            libraries_table_html=self._libraries_table_html(libraries),
+            library_create_form_html=self._library_create_form_html(),
         )
         return self._render_shell_html("Settings", content)
 
@@ -2134,8 +2109,10 @@ class ChonkService:
         return "Library validation failed: duplicate value."
 
     def _libraries_table_html(self, libraries: List[LibraryRecord]) -> str:
+        empty_template = self._load_template("partials/libraries_empty.html")
+        table_template = self._load_template("partials/libraries_table.html")
         if not libraries:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No libraries configured.</div>'
+            return empty_template
 
         row_html = []
         for library in libraries:
@@ -2256,19 +2233,7 @@ class ChonkService:
                     ),
                 )
             )
-        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
-  <thead>
-    <tr>
-      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Name</th>
-      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Path</th>
-      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Enabled</th>
-      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Priority</th>
-      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Schedule</th>
-      <th style=\"text-align: left; padding: 0.35rem; border-bottom: 1px solid #ddd;\">Actions</th>
-    </tr>
-  </thead>
-  <tbody>%s</tbody>
-</table>""" % "".join(row_html)
+        return table_template.format(library_rows_html="".join(row_html))
 
     def _ignored_folders_section_html(self, library: LibraryRecord) -> str:
         ignored_paths = self._discover_ignored_folders(library.path)

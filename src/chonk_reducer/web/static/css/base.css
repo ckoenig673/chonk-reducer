@@ -156,3 +156,70 @@
   background: #f4f8ff;
   color: #173a5e;
 }
+
+.settings-success-message {
+  padding: 0.5rem;
+  border: 1px solid #cfe9cf;
+  background: #f4fff4;
+}
+
+.settings-section-spaced {
+  margin-top: 2rem;
+}
+
+.settings-input-label {
+  display: block;
+  margin-top: 0.75rem;
+}
+
+.settings-restart-required {
+  color: #8a4f00;
+  font-size: 0.9rem;
+}
+
+.settings-input-control {
+  width: 100%;
+  max-width: 420px;
+}
+
+.settings-secret-status {
+  font-size: 0.9rem;
+  color: #555;
+  margin-top: 0.2rem;
+}
+
+.settings-secret-clear {
+  display: block;
+  margin-top: 0.3rem;
+  color: #444;
+}
+
+.settings-save-row {
+  margin-top: 1rem;
+}
+
+.settings-test-notification-form {
+  margin-top: 0.75rem;
+}
+
+.settings-save-note {
+  margin-top: 1rem;
+  color: #555;
+}
+
+.libraries-empty-state {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+}
+
+.libraries-table {
+  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid #ddd;
+}
+
+.libraries-table th {
+  text-align: left;
+  padding: 0.35rem;
+  border-bottom: 1px solid #ddd;
+}

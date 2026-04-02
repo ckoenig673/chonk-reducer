@@ -1,0 +1,24 @@
+<h1>Settings</h1>
+{message_html}
+<section class="settings-section">
+<h2>Global Settings</h2>
+<p>Editable service defaults persisted in SQLite.</p>
+<form method="post" action="/settings">{settings_rows_html}
+  <div class="settings-save-row"><button type="submit">Save</button></div>
+</form>
+<form method="post" action="/settings/test-notification" class="settings-test-notification-form">
+  <button type="submit">Send Test Notification</button>
+</form>
+<p class="settings-save-note">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
+</section>
+<section class="settings-section settings-section-spaced">
+<h2>Housekeeping</h2>
+<p>Configure daily cleanup schedule for logs and backups.</p>
+{housekeeping_form_html}
+</section>
+<section class="settings-section settings-section-spaced">
+<h2>Libraries</h2>
+<p>Configured media library roots for future dynamic scheduling.</p>
+{libraries_table_html}
+{library_create_form_html}
+</section>
