@@ -60,6 +60,7 @@ from .logging_utils import Logger
 from .runner import run
 from . import notifications
 from . import secrets
+from .services.library_paths import discover_ignored_folders, resolve_library_relative_folder
 from .data.db import connect_settings_db
 from .web.app import build_web_app
 from .web.routers.pages import register_page_routes
@@ -68,7 +69,7 @@ from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.10") or "1.46.10").strip() or "1.46.10"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.11") or "1.46.11").strip() or "1.46.11"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -2185,18 +2186,13 @@ class ChonkService:
 
     def _ignored_folders_section_html(self, library: LibraryRecord) -> str:
         ignored_paths = self._discover_ignored_folders(library.path)
+        section_template = self._load_template("partials/libraries_ignored_section.html")
+        item_template = self._load_template("partials/libraries_ignored_item.html")
         if ignored_paths:
             items = []
             for rel_path in ignored_paths:
                 items.append(
-                    """<li class="libraries-ignored-item">
-  <code>{display_path}</code>
-  <form method="post" action="/settings/libraries/ignored/remove" class="libraries-ignored-remove-form">
-    <input type="hidden" name="library_id" value="{library_id}" />
-    <input type="hidden" name="relative_path" value="{relative_path}" />
-    <button type="submit">Remove</button>
-  </form>
-</li>""".format(
+                    item_template.format(
                         display_path=_escape_html(rel_path),
                         library_id=int(library.id),
                         relative_path=_escape_html(rel_path),
@@ -2206,115 +2202,7 @@ class ChonkService:
         else:
             ignored_items = "<li>No ignored folders found.</li>"
 
-        return """<fieldset class="libraries-ignored-fieldset">
-  <legend><strong>Ignored Folders</strong></legend>
-  <label>{ignored_folders_label}</label>
-  <ul class="libraries-ignored-list">{ignored_items}</ul>
-  <form method="post" action="/settings/libraries/ignored/add">
-    <input type="hidden" name="library_id" value="{library_id}" />
-    <label for="ignored-folder-{library_id}"><strong>Add Ignored Folder (library-relative path)</strong></label><br />
-    <div class="libraries-ignored-add-row">
-      <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" class="libraries-ignored-input" />
-      <button type="button" id="ignored-folder-browse-button-{library_id}">Browse</button>
-    </div>
-    <div id="ignored-folder-browser-{library_id}" class="libraries-ignored-browser">
-      <div class="libraries-ignored-browser-label"><strong>Folder browser</strong>: <code id="ignored-folder-browser-path-{library_id}">.</code></div>
-      <div id="ignored-folder-browser-actions-{library_id}" class="libraries-ignored-browser-actions"></div>
-      <ul id="ignored-folder-browser-list-{library_id}" class="libraries-ignored-browser-list"></ul>
-    </div>
-    <div class="libraries-ignored-submit-row"><button type="submit">Add Ignored Folder</button></div>
-  </form>
-  <script>
-  (function() {{
-    const libraryId = {library_id};
-    const input = document.getElementById("ignored-folder-" + libraryId);
-    const toggleButton = document.getElementById("ignored-folder-browse-button-" + libraryId);
-    const browserBox = document.getElementById("ignored-folder-browser-" + libraryId);
-    const pathLabel = document.getElementById("ignored-folder-browser-path-" + libraryId);
-    const actions = document.getElementById("ignored-folder-browser-actions-" + libraryId);
-    const folderList = document.getElementById("ignored-folder-browser-list-" + libraryId);
-    if (!input || !toggleButton || !browserBox || !pathLabel || !actions || !folderList) {{
-      return;
-    }}
-
-    let currentPath = "";
-
-    function normalize(path) {{
-      const raw = String(path || "").replace(/\\\\/g, "/").replace(/^\/+|\/+$/g, "");
-      return raw === "." ? "" : raw;
-    }}
-
-    function render(folders) {{
-      const safePath = normalize(currentPath);
-      pathLabel.textContent = safePath || ".";
-      actions.innerHTML = "";
-      if (safePath) {{
-        const upButton = document.createElement("button");
-        upButton.type = "button";
-        upButton.textContent = "Up";
-        upButton.addEventListener("click", function() {{
-          const parts = safePath.split("/").filter(Boolean);
-          parts.pop();
-          load(parts.join("/"));
-        }});
-        actions.appendChild(upButton);
-      }}
-
-      folderList.innerHTML = "";
-      const folderNames = Array.isArray(folders) ? folders : [];
-      if (!folderNames.length) {{
-        const emptyItem = document.createElement("li");
-        emptyItem.textContent = "No subfolders";
-        folderList.appendChild(emptyItem);
-        return;
-      }}
-
-      folderNames.forEach(function(name) {{
-        const selectedPath = normalize(safePath ? (safePath + "/" + name) : name);
-        const item = document.createElement("li");
-        const openButton = document.createElement("button");
-        openButton.type = "button";
-        openButton.textContent = "Open";
-        openButton.className = "libraries-ignored-open-button";
-        openButton.addEventListener("click", function() {{
-          load(selectedPath);
-        }});
-
-        const selectButton = document.createElement("button");
-        selectButton.type = "button";
-        selectButton.textContent = name;
-        selectButton.addEventListener("click", function() {{
-          input.value = selectedPath;
-        }});
-
-        item.appendChild(openButton);
-        item.appendChild(selectButton);
-        folderList.appendChild(item);
-      }});
-    }}
-
-    async function load(path) {{
-      const targetPath = normalize(path);
-      const response = await fetch("/api/library/" + libraryId + "/folders?path=" + encodeURIComponent(targetPath));
-      if (!response.ok) {{
-        folderList.innerHTML = "<li>Unable to load folders</li>";
-        return;
-      }}
-      const payload = await response.json();
-      currentPath = normalize(payload.path || "");
-      render(payload.folders || []);
-    }}
-
-    toggleButton.addEventListener("click", function() {{
-      const isHidden = browserBox.style.display === "none";
-      browserBox.style.display = isHidden ? "block" : "none";
-      if (isHidden) {{
-        load(input.value || "");
-      }}
-    }});
-  }})();
-  </script>
-</fieldset>""".format(
+        return section_template.format(
             ignored_folders_label=self._label_with_help(
                 "Ignored folders are backed by .chonkignore files.",
                 LIBRARY_SETTINGS_HELP["ignored_folders"],
@@ -2325,21 +2213,7 @@ class ChonkService:
         )
 
     def _discover_ignored_folders(self, library_root: str) -> List[str]:
-        root = Path(str(library_root or "").strip()).resolve()
-        if not root.exists() or not root.is_dir():
-            return []
-        matches: List[str] = []
-        try:
-            for marker in root.rglob(".chonkignore"):
-                folder = marker.parent.resolve()
-                try:
-                    rel_path = folder.relative_to(root)
-                except ValueError:
-                    continue
-                matches.append("." if str(rel_path) == "." else rel_path.as_posix())
-        except (OSError, RuntimeError):
-            return []
-        return sorted(set(matches), key=lambda item: item.lower())
+        return discover_ignored_folders(library_root)
 
     def _library_record_by_id(self, library_id: int) -> Optional[LibraryRecord]:
         for library in self.list_libraries():
@@ -2348,21 +2222,7 @@ class ChonkService:
         return None
 
     def _resolve_library_relative_folder(self, library_root: str, relative_path: str) -> tuple[Optional[Path], str]:
-        root = Path(str(library_root or "").strip()).resolve()
-        if not root.exists() or not root.is_dir():
-            return None, "Ignored folder update failed: library path is missing or not a directory."
-        cleaned = str(relative_path or "").strip().replace("\\", "/")
-        if not cleaned:
-            return None, "Ignored folder update failed: relative path is required."
-        if cleaned in {".", "./"}:
-            target = root
-        else:
-            target = (root / cleaned).resolve()
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return None, "Ignored folder update failed: path must stay inside the library root."
-        return target, ""
+        return resolve_library_relative_folder(library_root, relative_path, operation="update")
 
     def library_folders_payload(self, library_id: int, relative_path: str) -> tuple[Dict[str, object], int]:
         library = self._library_record_by_id(int(library_id))
@@ -2441,6 +2301,7 @@ class ChonkService:
         return "Ignored folder removed: %s" % rel
 
     def _library_create_form_html(self) -> str:
+        create_form_template = self._load_template("partials/library_create_form.html")
         schedule_state = _schedule_form_state("")
         schedule_fields = self._schedule_fields_html(schedule_state, "create")
         common_sections_template = self._load_template("partials/library_form_common_sections.html")
@@ -2450,42 +2311,36 @@ class ChonkService:
             name_value="",
             path_value="",
         )
-        return """
-<h3 class="settings-subsection-title">Create Library</h3>
-<form method="post" action="/settings/libraries/create">
-  {name_path_fields_html}
-  {common_sections_html}
-</form>
-""".format(
-    name_path_fields_html=name_path_fields_html,
-    common_sections_html=common_sections_template.format(
-        min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
-        max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
-        priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-create"),
-        qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
-        qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
-        min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
-        max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-create"),
-        skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-create"),
-        skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-create"),
-        skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-create"),
-        min_size_gb="0.0",
-        max_files="1",
-        priority="100",
-        qsv_quality=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
-        qsv_preset=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
-        min_savings_percent=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
-        max_savings_percent="",
-        skip_codecs=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_CODECS", ""))),
-        skip_min_height=_escape_html(str(max(0, _env_int("SKIP_MIN_HEIGHT", 0)))),
-        skip_resolution_tags=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", ""))),
-        schedule_fields=schedule_fields,
-        enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-create"),
-        enabled_yes="selected",
-        enabled_no="",
-        submit_text="Create Library",
-    ),
-)
+        return create_form_template.format(
+            name_path_fields_html=name_path_fields_html,
+            common_sections_html=common_sections_template.format(
+                min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
+                max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
+                priority_label=self._label_with_help("Priority", LIBRARY_SETTINGS_HELP["priority"], "lib-priority-create"),
+                qsv_quality_label=self._label_with_help("QSV Quality", LIBRARY_SETTINGS_HELP["qsv_quality"], "lib-qsv-quality-create"),
+                qsv_preset_label=self._label_with_help("QSV Preset", LIBRARY_SETTINGS_HELP["qsv_preset"], "lib-qsv-preset-create"),
+                min_savings_percent_label=self._label_with_help("Minimum Savings Percent", LIBRARY_SETTINGS_HELP["min_savings_percent"], "lib-min-savings-create"),
+                max_savings_percent_label=self._label_with_help("Maximum Savings Percent", LIBRARY_SETTINGS_HELP["max_savings_percent"], "lib-max-savings-create"),
+                skip_codecs_label=self._label_with_help("Skip Codecs", LIBRARY_SETTINGS_HELP["skip_codecs"], "lib-skip-codecs-create"),
+                skip_min_height_label=self._label_with_help("Skip Minimum Height", LIBRARY_SETTINGS_HELP["skip_min_height"], "lib-skip-min-height-create"),
+                skip_resolution_tags_label=self._label_with_help("Skip Resolution Tags", LIBRARY_SETTINGS_HELP["skip_resolution_tags"], "lib-skip-resolution-tags-create"),
+                min_size_gb="0.0",
+                max_files="1",
+                priority="100",
+                qsv_quality=_escape_html(_env_bootstrap("QSV_QUALITY", "21")),
+                qsv_preset=_escape_html(_env_bootstrap("QSV_PRESET", "7")),
+                min_savings_percent=_escape_html(_env_bootstrap("MIN_SAVINGS_PERCENT", "15")),
+                max_savings_percent="",
+                skip_codecs=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_CODECS", ""))),
+                skip_min_height=_escape_html(str(max(0, _env_int("SKIP_MIN_HEIGHT", 0)))),
+                skip_resolution_tags=_escape_html(_normalize_csv_text(_env_bootstrap("SKIP_RESOLUTION_TAGS", ""))),
+                schedule_fields=schedule_fields,
+                enabled_label=self._label_with_help("Enabled", LIBRARY_SETTINGS_HELP["enabled"], "lib-enabled-create"),
+                enabled_yes="selected",
+                enabled_no="",
+                submit_text="Create Library",
+            ),
+        )
 
     def _library_name_path_fields_html(self, name_label: str, path_label: str, name_value: str, path_value: str) -> str:
         fields_template = self._load_template("partials/library_form_name_path_fields.html")
@@ -2497,6 +2352,7 @@ class ChonkService:
         )
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
+        schedule_template = self._load_template("partials/library_schedule_fields.html")
         form_token = "".join(ch if ch.isalnum() else "_" for ch in str(form_id))
         mode = str(schedule_state.get("mode", "simple"))
         raw_value = _escape_html(str(schedule_state.get("raw", "")))
@@ -2524,66 +2380,22 @@ class ChonkService:
         advanced_display = "block" if mode == "advanced" else "none"
         preview = _escape_html(str(schedule_state.get("preview", "")))
 
-        return """
-  <fieldset class=\"library-schedule-fieldset\">
-    <legend>%s</legend>
-    <label class=\"library-schedule-mode-option library-schedule-mode-option-spaced\"><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
-    <label><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"advanced\" %s onchange=\"toggleScheduleMode_%s()\" /> Advanced cron</label>
-
-    <div id=\"simple-schedule-%s\" class=\"library-schedule-simple\" style=\"display:%s;\">
-      <label>%s</label><br />
-      %s
-      <br />
-      <label>%s</label><br />
-      <select name=\"schedule_time\" class=\"library-schedule-time\">%s</select>
-      <div class=\"library-schedule-generated-cron\">Generated cron: <code>%s</code></div>
-    </div>
-
-    <div id=\"advanced-schedule-%s\" class=\"library-schedule-advanced\" style=\"display:%s;\">
-      <label>%s</label><br />
-      <input name=\"schedule\" value=\"%s\" class=\"library-form-input-wide\" />
-    </div>
-  </fieldset>
-  <script>
-    function toggleScheduleMode_%s() {
-      var simpleRadio = document.getElementById('%s');
-      var simple = document.getElementById('simple-schedule-%s');
-      var advanced = document.getElementById('advanced-schedule-%s');
-      if (!simpleRadio || !simple || !advanced) { return; }
-      if (simpleRadio.checked) {
-        simple.style.display = 'block';
-        advanced.style.display = 'none';
-      } else {
-        simple.style.display = 'none';
-        advanced.style.display = 'block';
-      }
-    }
-    toggleScheduleMode_%s();
-  </script>
-""" % (
-            self._label_with_help("Schedule", LIBRARY_SETTINGS_HELP["schedule"], "lib-schedule-%s" % form_token),
-            simple_radio_id,
-            simple_checked,
-            form_token,
-            advanced_radio_id,
-            advanced_checked,
-            form_token,
-            form_token,
-            simple_display,
-            self._label_with_help("Days", LIBRARY_SETTINGS_HELP["schedule_days"], "lib-schedule-days-%s" % form_token),
-            "".join(weekday_options),
-            self._label_with_help("Time", LIBRARY_SETTINGS_HELP["schedule_time"], "lib-schedule-time-%s" % form_token),
-            "".join(time_options),
-            preview,
-            form_token,
-            advanced_display,
-            self._label_with_help("Raw cron expression", LIBRARY_SETTINGS_HELP["raw_cron"], "lib-schedule-raw-%s" % form_token),
-            raw_value,
-            form_token,
-            simple_radio_id,
-            form_token,
-            form_token,
-            form_token,
+        return schedule_template.format(
+            schedule_label=self._label_with_help("Schedule", LIBRARY_SETTINGS_HELP["schedule"], "lib-schedule-%s" % form_token),
+            simple_radio_id=simple_radio_id,
+            simple_checked=simple_checked,
+            advanced_radio_id=advanced_radio_id,
+            advanced_checked=advanced_checked,
+            form_token=form_token,
+            simple_display=simple_display,
+            days_label=self._label_with_help("Days", LIBRARY_SETTINGS_HELP["schedule_days"], "lib-schedule-days-%s" % form_token),
+            weekday_options_html="".join(weekday_options),
+            time_label=self._label_with_help("Time", LIBRARY_SETTINGS_HELP["schedule_time"], "lib-schedule-time-%s" % form_token),
+            time_options_html="".join(time_options),
+            preview=preview,
+            advanced_display=advanced_display,
+            raw_cron_label=self._label_with_help("Raw cron expression", LIBRARY_SETTINGS_HELP["raw_cron"], "lib-schedule-raw-%s" % form_token),
+            raw_value=raw_value,
         )
 
     def register_jobs(self) -> None:
