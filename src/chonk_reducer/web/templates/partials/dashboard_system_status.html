@@ -1,11 +1,15 @@
   <section class="dashboard-system-status">
     <h3 class="dashboard-system-status-title">System Status</h3>
     <div class="dashboard-system-status-subtitle">Compact dashboard summary</div>
-    <div><strong>Total Saved:</strong> <span id="runtime-dashboard-total-saved">{total_saved}</span></div>
-    <div><strong>Files Optimized:</strong> <span id="runtime-dashboard-files-optimized">{files_optimized}</span></div>
-    <div><strong>Saved This Week:</strong> <span id="runtime-dashboard-saved-week">{saved_this_week}</span></div>
-    <div><strong>Saved This Month:</strong> <span id="runtime-dashboard-saved-month">{saved_this_month}</span></div>
-    <div class="dashboard-system-status-scheduler"><strong>Scheduler:</strong> <span id="runtime-system-scheduler">{scheduler_label}</span></div>
-    <div><strong>Next Library Run:</strong> <span id="runtime-system-next-library-run">{next_library_run}</span></div>
-    <div><strong>Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">{next_housekeeping_run}</span></div>
+    <span class="legacy-inline-text"><strong>Next Library Run:</strong> {next_library_run}</span>
+    <span class="legacy-inline-text"><strong>Next Housekeeping Run:</strong> {next_housekeeping_run}</span>
+    <div class="kv-grid">
+      <div class="kv-grid-label">Total Saved</div><div><span id="runtime-dashboard-total-saved">{total_saved}</span></div>
+      <div class="kv-grid-label">Files Optimized</div><div><span id="runtime-dashboard-files-optimized">{files_optimized}</span></div>
+      <div class="kv-grid-label">Saved This Week</div><div><span id="runtime-dashboard-saved-week">{saved_this_week}</span></div>
+      <div class="kv-grid-label">Saved This Month</div><div><span id="runtime-dashboard-saved-month">{saved_this_month}</span></div>
+      <div class="kv-grid-label dashboard-system-status-scheduler">Scheduler</div><div><span id="runtime-system-scheduler" class="badge" data-status="{scheduler_label}">{scheduler_label}</span></div>
+      <div class="kv-grid-label"></div><div><strong>Next Library Run:</strong> <span id="runtime-system-next-library-run">{next_library_run}</span></div>
+      <div class="kv-grid-label"></div><div><strong>Next Housekeeping Run:</strong> <span id="runtime-system-next-housekeeping-run">{next_housekeeping_run}</span></div>
+    </div>
   </section>

@@ -691,7 +691,29 @@ class ChonkService:
         secret_row_template = self._load_template("partials/settings_global_row_secret.html")
         text_row_template = self._load_template("partials/settings_global_row_text.html")
         message_template = self._load_template("partials/settings_message.html")
-        rows = []
+        global_keys = {
+            "min_file_age_minutes",
+            "min_savings_percent",
+            "max_savings_percent",
+            "min_media_free_gb",
+            "max_gb_per_run",
+            "fail_fast",
+            "log_skips",
+            "top_candidates",
+            "validate_seconds",
+            "bak_retention_days",
+            "log_retention_days",
+        }
+        notification_keys = {
+            "discord_webhook_url",
+            "generic_webhook_url",
+            "enable_run_complete_notifications",
+            "enable_run_failure_notifications",
+        }
+        retry_keys = {"retry_count", "retry_backoff_seconds"}
+        rows_global: list[str] = []
+        rows_notifications: list[str] = []
+        rows_retry: list[str] = []
         for key in EDITABLE_SETTINGS:
             if key in {"housekeeping_enabled", "housekeeping_schedule"}:
                 continue
@@ -705,40 +727,46 @@ class ChonkService:
                 restart_badge = ' <span class="settings-restart-required">(restart required)</span>'
             if key in CHECKBOX_SETTINGS:
                 checked = "checked" if _env_bool_text(value) else ""
-                rows.append(
-                    checkbox_row_template.format(
-                        key=key,
-                        label_html=label_html,
-                        restart_badge=restart_badge,
-                        checked=checked,
-                    )
+                rendered_row = checkbox_row_template.format(
+                    key=key,
+                    label_html=label_html,
+                    restart_badge=restart_badge,
+                    checked=checked,
                 )
             elif key in SECRET_SETTINGS:
                 configured = bool(str(value or "").strip())
                 status = "Configured (hidden)" if configured else "Not configured"
-                rows.append(
-                    secret_row_template.format(
-                        key=key,
-                        label_html=label_html,
-                        restart_badge=restart_badge,
-                        status=_escape_html(status),
-                    )
+                rendered_row = secret_row_template.format(
+                    key=key,
+                    label_html=label_html,
+                    restart_badge=restart_badge,
+                    status=_escape_html(status),
                 )
             else:
-                rows.append(
-                    text_row_template.format(
-                        key=key,
-                        label_html=label_html,
-                        restart_badge=restart_badge,
-                        value=_escape_html(value),
-                    )
+                rendered_row = text_row_template.format(
+                    key=key,
+                    label_html=label_html,
+                    restart_badge=restart_badge,
+                    value=_escape_html(value),
                 )
+
+            if key in notification_keys:
+                rows_notifications.append(rendered_row)
+            elif key in retry_keys:
+                rows_retry.append(rendered_row)
+            elif key in global_keys:
+                rows_global.append(rendered_row)
+            else:
+                rows_global.append(rendered_row)
         message_html = ""
         if message:
             message_html = message_template.format(message=_escape_html(message))
         content = settings_template.format(
             message_html=message_html,
-            settings_rows_html="".join(rows),
+            settings_rows_global_html="".join(rows_global),
+            settings_rows_notifications_html="".join(rows_notifications),
+            settings_rows_retry_html="".join(rows_retry),
+            housekeeping_summary_html=self._housekeeping_summary_html(),
             housekeeping_form_html=self._housekeeping_settings_form_html(),
             libraries_table_html=self._libraries_table_html(libraries),
             library_create_form_html=self._library_create_form_html(),
@@ -2670,31 +2698,33 @@ class ChonkService:
         started_at = snapshot["started_at"] or idle_placeholder
         current_file = snapshot["current_file"] or ("Waiting for first file" if snapshot["status"] == "Running" else idle_placeholder)
         preview_html = self._preview_results_html(snapshot) if include_preview else ""
-        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;\">
+        return """<div class="table-frame"><table class="data-table">
   <tbody>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem; width: 250px;\">Status</th><td id=\"runtime-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Library</th><td id=\"runtime-library\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Trigger</th><td id=\"runtime-trigger\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Scheduler Status</th><td id=\"runtime-scheduler-status\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Scheduler Started</th><td id=\"runtime-scheduler-started\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Scheduled Job</th><td id=\"runtime-next-scheduled-job\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Next Scheduled Time</th><td id=\"runtime-next-scheduled-time\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Mode</th><td id=\"runtime-mode\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Queue Depth</th><td id=\"runtime-queue-depth\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current Run ID</th><td id=\"runtime-run-id\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Started At</th><td id=\"runtime-started-at\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Current File</th><td id=\"runtime-current-file\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Candidates Found</th><td id=\"runtime-candidates-found\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Evaluated</th><td id=\"runtime-files-evaluated\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Processed</th><td id=\"runtime-files-processed\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Skipped</th><td id=\"runtime-files-skipped\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.35rem;\">Files Failed</th><td id=\"runtime-files-failed\" style=\"border-bottom: 1px solid #ddd; padding: 0.35rem;\">%s</td></tr>
-    <tr><th style=\"text-align: left; padding: 0.35rem;\">Bytes Saved So Far</th><td id=\"runtime-bytes-saved\" style=\"padding: 0.35rem;\">%s</td></tr>
+    <tr><th style=\"width: 250px;\">Status</th><td><span id=\"runtime-status\" class=\"badge\" data-status=\"%s\">%s</span></td></tr>
+    <tr><th>Current Library</th><td id=\"runtime-library\">%s</td></tr>
+    <tr><th>Trigger</th><td id=\"runtime-trigger\">%s</td></tr>
+    <tr><th>Scheduler Status</th><td id=\"runtime-scheduler-status\"><span class=\"badge\" data-status=\"%s\">%s</span></td></tr>
+    <tr><th>Scheduler Started</th><td id=\"runtime-scheduler-started\">%s</td></tr>
+    <tr><th>Next Scheduled Job</th><td id=\"runtime-next-scheduled-job\">%s</td></tr>
+    <tr><th>Next Scheduled Time</th><td id=\"runtime-next-scheduled-time\">%s</td></tr>
+    <tr><th>Mode</th><td id=\"runtime-mode\">%s</td></tr>
+    <tr><th>Queue Depth</th><td id=\"runtime-queue-depth\">%s</td></tr>
+    <tr><th>Current Run ID</th><td id=\"runtime-run-id\">%s</td></tr>
+    <tr><th>Started At</th><td id=\"runtime-started-at\">%s</td></tr>
+    <tr><th>Current File</th><td id=\"runtime-current-file\">%s</td></tr>
+    <tr><th>Candidates Found</th><td id=\"runtime-candidates-found\">%s</td></tr>
+    <tr><th>Files Evaluated</th><td id=\"runtime-files-evaluated\">%s</td></tr>
+    <tr><th>Files Processed</th><td id=\"runtime-files-processed\">%s</td></tr>
+    <tr><th>Files Skipped</th><td id=\"runtime-files-skipped\">%s</td></tr>
+    <tr><th>Files Failed</th><td id=\"runtime-files-failed\">%s</td></tr>
+    <tr><th>Bytes Saved So Far</th><td id=\"runtime-bytes-saved\">%s</td></tr>
   </tbody>
-</table><div style=\"margin-top:0.6rem;\"><button id=\"runtime-stop-button\" type=\"button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>%s""" % (
+</table></div><div style=\"margin-top:0.6rem;\"><button id=\"runtime-stop-button\" type=\"button\" class=\"secondary-button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>%s""" % (
+            _escape_html(snapshot["status"]),
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
             _escape_html(_display_trigger(current_trigger)),
+            _escape_html(snapshot.get("scheduler_status") or "-"),
             _escape_html(snapshot.get("scheduler_status") or "-"),
             _escape_html(_format_readable_timestamp(snapshot.get("scheduler_started_at") or "-")),
             _escape_html(snapshot.get("next_scheduled_job") or "-"),

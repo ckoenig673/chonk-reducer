@@ -1,10 +1,8 @@
-<div class="table-frame">
-  <table class="data-table">
-    <tbody>
-      <tr><th>Housekeeping Enabled</th><td>{housekeeping_enabled}</td></tr>
-      <tr><th>Housekeeping Schedule</th><td><code>{housekeeping_schedule}</code> ({housekeeping_days} at {housekeeping_time})</td></tr>
-      <tr><th>Next Housekeeping Run</th><td>{next_housekeeping_run}</td></tr>
-      <tr><th>Log Retention Days</th><td>{log_retention_days}</td></tr>
-    </tbody>
-  </table>
+<div class="dashboard-runtime-summary">
+  <div class="kv-grid">
+    <div class="kv-grid-label">Housekeeping Enabled</div><div><span class="badge" data-status="{housekeeping_enabled}">{housekeeping_enabled}</span></div>
+    <div class="kv-grid-label">Housekeeping Schedule</div><div><code>{housekeeping_schedule}</code> ({housekeeping_days} at {housekeeping_time})</div>
+    <div class="kv-grid-label">Next Housekeeping Run</div><div>{next_housekeeping_run}</div>
+    <div class="kv-grid-label">Log Retention Days</div><div>{log_retention_days}</div>
+  </div>
 </div>
