@@ -68,7 +68,7 @@ from .scheduler.runtime import build_scheduler, attach_scheduler_listeners
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.9") or "1.46.9").strip() or "1.46.9"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.10") or "1.46.10").strip() or "1.46.10"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -704,6 +704,7 @@ class ChonkService:
         checkbox_row_template = self._load_template("partials/settings_global_row_checkbox.html")
         secret_row_template = self._load_template("partials/settings_global_row_secret.html")
         text_row_template = self._load_template("partials/settings_global_row_text.html")
+        message_template = self._load_template("partials/settings_message.html")
         rows = []
         for key in EDITABLE_SETTINGS:
             if key in {"housekeeping_enabled", "housekeeping_schedule"}:
@@ -748,7 +749,7 @@ class ChonkService:
                 )
         message_html = ""
         if message:
-            message_html = '<div class="settings-success-message">%s</div>' % _escape_html(message)
+            message_html = message_template.format(message=_escape_html(message))
         content = settings_template.format(
             message_html=message_html,
             settings_rows_html="".join(rows),
@@ -761,6 +762,7 @@ class ChonkService:
     def _housekeeping_settings_form_html(self) -> str:
         config = self._housekeeping_config()
         parsed = _parse_housekeeping_form_values({"housekeeping_schedule": config["schedule"]})
+        form_template = self._load_template("partials/settings_housekeeping_form.html")
         options = []
         for value in _simple_schedule_time_options():
             selected = " selected" if value == parsed["time"] else ""
@@ -770,28 +772,18 @@ class ChonkService:
         for label, day_value in WEEKDAY_CHOICES:
             checked = " checked" if day_value in selected_days else ""
             weekday_options.append(
-                '<label style="display:inline-block; margin-right: 0.55rem;"><input type="checkbox" name="housekeeping_day_%s" value="1"%s /> %s</label>'
+                '<label class="settings-housekeeping-weekday"><input type="checkbox" name="housekeeping_day_%s" value="1"%s /> %s</label>'
                 % (_escape_html(day_value), checked, _escape_html(label))
             )
         enabled_checked = " checked" if config["enabled"] == "1" else ""
-        return """<form method="post" action="/settings">
-  <input type="hidden" name="housekeeping_form" value="1" />
-  <label style="display:block; margin-top: 0.5rem;"><input type="checkbox" name="housekeeping_enabled" value="1"%s /> Enable housekeeping scheduler</label>
-  <input type="hidden" name="housekeeping_schedule" value="%s" />
-  <label style="display:block; margin-top: 0.75rem;">%s</label>
-  <div style="margin-top: 0.35rem;">%s</div>
-  <label for="housekeeping_time" style="display:block; margin-top: 0.75rem;">%s</label>
-  <select id="housekeeping_time" name="housekeeping_time" style="width: 100%%; max-width: 180px;">%s</select>
-  <div style="margin-top: 0.35rem; color:#555;">Generated cron: <code>%s</code></div>
-  <div style="margin-top: 0.8rem;"><button type="submit">Save Housekeeping</button></div>
-</form>""" % (
-            enabled_checked,
-            _escape_html(config["schedule"]),
-            self._label_with_help("Days", "Select weekdays for housekeeping runs.", "housekeeping-days"),
-            "".join(weekday_options),
-            self._label_with_help("Time", "Run time used with selected housekeeping days.", "housekeeping-time"),
-            "".join(options),
-            _escape_html(_build_simple_cron(str(parsed["time"]), list(parsed["days"]))),
+        return form_template.format(
+            enabled_checked=enabled_checked,
+            schedule=_escape_html(config["schedule"]),
+            days_label=self._label_with_help("Days", "Select weekdays for housekeeping runs.", "housekeeping-days"),
+            weekday_options="".join(weekday_options),
+            time_label=self._label_with_help("Time", "Run time used with selected housekeeping days.", "housekeeping-time"),
+            time_options="".join(options),
+            generated_cron=_escape_html(_build_simple_cron(str(parsed["time"]), list(parsed["days"]))),
         )
 
     def settings_saved_message(self, updates: Dict[str, str]) -> str:
@@ -2122,23 +2114,20 @@ class ChonkService:
             toggle_label = "Disable" if library.enabled else "Enable"
             row_html.append(
                 """<tr>
-  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{name}</td>
-  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;"><code>{path}</code></td>
-  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{enabled}</td>
-  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{priority}</td>
-  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;"><code>{schedule}</code></td>
-  <td style="padding: 0.35rem; border-bottom: 1px solid #eee;">{actions}</td>
+  <td class="libraries-table-cell">{name}</td>
+  <td class="libraries-table-cell"><code>{path}</code></td>
+  <td class="libraries-table-cell">{enabled}</td>
+  <td class="libraries-table-cell">{priority}</td>
+  <td class="libraries-table-cell"><code>{schedule}</code></td>
+  <td class="libraries-table-cell">{actions}</td>
 </tr>
 <tr>
-  <td colspan="6" style="padding: 0.35rem 0.35rem 0.75rem 0.35rem; border-bottom: 1px solid #ddd; background: #fafcff;">
+  <td colspan="6" class="libraries-table-detail-cell">
     <details>
       <summary>Edit {name}</summary>
       <form method="post" action="/settings/libraries/update" class="library-edit-form">
         <input type="hidden" name="library_id" value="{library_id}" />
-        <label>{name_label}</label><br />
-        <input name="name" value="{name}" class="library-form-input-wide" /><br />
-        <label>{path_label}</label><br />
-        <input name="path" value="{path}" class="library-form-input-wide" /><br />
+        {name_path_fields_html}
         {common_sections_html}
       </form>
       {ignored_folders_html}
@@ -2150,8 +2139,12 @@ class ChonkService:
                     enabled=enabled_label,
                     priority=_escape_html(str(library.priority)),
                     schedule=_escape_html(library.schedule),
-                    name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-edit-%d" % library.id),
-                    path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-edit-%d" % library.id),
+                    name_path_fields_html=self._library_name_path_fields_html(
+                        name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-edit-%d" % library.id),
+                        path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-edit-%d" % library.id),
+                        name_value=_escape_html(library.name),
+                        path_value=_escape_html(library.path),
+                    ),
                     common_sections_html=common_sections_template.format(
                         min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-edit-%d" % library.id),
                         max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-edit-%d" % library.id),
@@ -2196,9 +2189,9 @@ class ChonkService:
             items = []
             for rel_path in ignored_paths:
                 items.append(
-                    """<li style="margin-bottom: 0.25rem;">
+                    """<li class="libraries-ignored-item">
   <code>{display_path}</code>
-  <form method="post" action="/settings/libraries/ignored/remove" style="display: inline-block; margin-left: 0.5rem;">
+  <form method="post" action="/settings/libraries/ignored/remove" class="libraries-ignored-remove-form">
     <input type="hidden" name="library_id" value="{library_id}" />
     <input type="hidden" name="relative_path" value="{relative_path}" />
     <button type="submit">Remove</button>
@@ -2213,23 +2206,23 @@ class ChonkService:
         else:
             ignored_items = "<li>No ignored folders found.</li>"
 
-        return """<fieldset style="margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd; max-width: 520px;">
+        return """<fieldset class="libraries-ignored-fieldset">
   <legend><strong>Ignored Folders</strong></legend>
   <label>{ignored_folders_label}</label>
-  <ul style="margin: 0.5rem 0; padding-left: 1.2rem;">{ignored_items}</ul>
+  <ul class="libraries-ignored-list">{ignored_items}</ul>
   <form method="post" action="/settings/libraries/ignored/add">
     <input type="hidden" name="library_id" value="{library_id}" />
     <label for="ignored-folder-{library_id}"><strong>Add Ignored Folder (library-relative path)</strong></label><br />
-    <div style="display: flex; gap: 0.4rem; align-items: center;">
-      <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" style="width: 100%;" />
+    <div class="libraries-ignored-add-row">
+      <input id="ignored-folder-{library_id}" name="relative_path" placeholder="Anime/Seasonal" class="libraries-ignored-input" />
       <button type="button" id="ignored-folder-browse-button-{library_id}">Browse</button>
     </div>
-    <div id="ignored-folder-browser-{library_id}" style="display: none; margin-top: 0.45rem; border: 1px solid #ddd; padding: 0.5rem; border-radius: 4px; background: #fafafa;">
-      <div style="font-size: 0.9rem; margin-bottom: 0.35rem;"><strong>Folder browser</strong>: <code id="ignored-folder-browser-path-{library_id}">.</code></div>
-      <div id="ignored-folder-browser-actions-{library_id}" style="margin-bottom: 0.35rem;"></div>
-      <ul id="ignored-folder-browser-list-{library_id}" style="margin: 0; padding-left: 1.2rem;"></ul>
+    <div id="ignored-folder-browser-{library_id}" class="libraries-ignored-browser">
+      <div class="libraries-ignored-browser-label"><strong>Folder browser</strong>: <code id="ignored-folder-browser-path-{library_id}">.</code></div>
+      <div id="ignored-folder-browser-actions-{library_id}" class="libraries-ignored-browser-actions"></div>
+      <ul id="ignored-folder-browser-list-{library_id}" class="libraries-ignored-browser-list"></ul>
     </div>
-    <div style="margin-top: 0.4rem;"><button type="submit">Add Ignored Folder</button></div>
+    <div class="libraries-ignored-submit-row"><button type="submit">Add Ignored Folder</button></div>
   </form>
   <script>
   (function() {{
@@ -2282,7 +2275,7 @@ class ChonkService:
         const openButton = document.createElement("button");
         openButton.type = "button";
         openButton.textContent = "Open";
-        openButton.style.marginRight = "0.35rem";
+        openButton.className = "libraries-ignored-open-button";
         openButton.addEventListener("click", function() {{
           load(selectedPath);
         }});
@@ -2451,18 +2444,20 @@ class ChonkService:
         schedule_state = _schedule_form_state("")
         schedule_fields = self._schedule_fields_html(schedule_state, "create")
         common_sections_template = self._load_template("partials/library_form_common_sections.html")
+        name_path_fields_html = self._library_name_path_fields_html(
+            name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-create"),
+            path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-create"),
+            name_value="",
+            path_value="",
+        )
         return """
 <h3 class="settings-subsection-title">Create Library</h3>
 <form method="post" action="/settings/libraries/create">
-  <label>{name_label}</label><br />
-  <input name="name" class="library-form-input-wide" /><br />
-  <label>{path_label}</label><br />
-  <input name="path" class="library-form-input-wide" /><br />
+  {name_path_fields_html}
   {common_sections_html}
 </form>
 """.format(
-    name_label=self._label_with_help("Name", LIBRARY_SETTINGS_HELP["name"], "lib-name-create"),
-    path_label=self._label_with_help("Path", LIBRARY_SETTINGS_HELP["path"], "lib-path-create"),
+    name_path_fields_html=name_path_fields_html,
     common_sections_html=common_sections_template.format(
         min_size_gb_label=self._label_with_help("Minimum File Size (GB)", LIBRARY_SETTINGS_HELP["min_size_gb"], "lib-min-size-create"),
         max_files_label=self._label_with_help("Max Files Per Run", LIBRARY_SETTINGS_HELP["max_files"], "lib-max-files-create"),
@@ -2492,6 +2487,15 @@ class ChonkService:
     ),
 )
 
+    def _library_name_path_fields_html(self, name_label: str, path_label: str, name_value: str, path_value: str) -> str:
+        fields_template = self._load_template("partials/library_form_name_path_fields.html")
+        return fields_template.format(
+            name_label=name_label,
+            path_label=path_label,
+            name_value=name_value,
+            path_value=path_value,
+        )
+
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
         form_token = "".join(ch if ch.isalnum() else "_" for ch in str(form_id))
         mode = str(schedule_state.get("mode", "simple"))
@@ -2507,7 +2511,7 @@ class ChonkService:
         for label, day_value in WEEKDAY_CHOICES:
             checked = "checked" if day_value in selected_days else ""
             weekday_options.append(
-                '<label style="margin-right: 0.5rem;"><input type="checkbox" name="schedule_day_%s" value="1" %s /> %s</label>'
+                '<label class="library-schedule-weekday"><input type="checkbox" name="schedule_day_%s" value="1" %s /> %s</label>'
                 % (day_value, checked, label)
             )
 
@@ -2521,23 +2525,23 @@ class ChonkService:
         preview = _escape_html(str(schedule_state.get("preview", "")))
 
         return """
-  <fieldset style=\"margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ddd;\">
+  <fieldset class=\"library-schedule-fieldset\">
     <legend>%s</legend>
-    <label style=\"margin-right: 1rem;\"><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
+    <label class=\"library-schedule-mode-option library-schedule-mode-option-spaced\"><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"simple\" %s onchange=\"toggleScheduleMode_%s()\" /> Simple</label>
     <label><input id=\"%s\" type=\"radio\" name=\"schedule_mode\" value=\"advanced\" %s onchange=\"toggleScheduleMode_%s()\" /> Advanced cron</label>
 
-    <div id=\"simple-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
+    <div id=\"simple-schedule-%s\" class=\"library-schedule-simple\" style=\"display:%s;\">
       <label>%s</label><br />
       %s
       <br />
       <label>%s</label><br />
-      <select name=\"schedule_time\" style=\"width: 100%%; max-width: 180px;\">%s</select>
-      <div style=\"margin-top: 0.35rem; color:#555;\">Generated cron: <code>%s</code></div>
+      <select name=\"schedule_time\" class=\"library-schedule-time\">%s</select>
+      <div class=\"library-schedule-generated-cron\">Generated cron: <code>%s</code></div>
     </div>
 
-    <div id=\"advanced-schedule-%s\" style=\"display:%s; margin-top: 0.5rem;\">
+    <div id=\"advanced-schedule-%s\" class=\"library-schedule-advanced\" style=\"display:%s;\">
       <label>%s</label><br />
-      <input name=\"schedule\" value=\"%s\" style=\"width: 100%%; max-width: 420px;\" />
+      <input name=\"schedule\" value=\"%s\" class=\"library-form-input-wide\" />
     </div>
   </fieldset>
   <script>
