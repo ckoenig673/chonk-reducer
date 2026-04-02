@@ -1,16 +1,25 @@
   <section class="dashboard-library-card">
     <h2 class="dashboard-library-title">{library_name}</h2>
-    <div><strong>Path:</strong> {library_path}</div>
-    <div><strong>Status:</strong> {runtime_status}</div>
-    <div><strong>Priority:</strong> {library_priority}</div>
-    <div><strong>Last Run:</strong> {last_run_label}</div>
-    <div><strong>Next Run:</strong> {next_run_label}</div>
-    <div><strong>Files Optimized:</strong> {files_optimized}</div>
-    <div><strong>Total Saved:</strong> {total_saved}</div>
-    <div><strong>Recent Savings:</strong> {recent_savings} across {processed_count} files</div>
+    <span class="legacy-inline-text"><strong>Path:</strong> {library_path}</span>
+    <span class="legacy-inline-text"><strong>Status:</strong> {runtime_status}</span>
+    <span class="legacy-inline-text"><strong>Last Run:</strong> {last_run_label}</span>
+    <span class="legacy-inline-text"><strong>Next Run:</strong> {next_run_label}</span>
+    <span class="legacy-inline-text"><strong>Files Optimized:</strong> {files_optimized}</span>
+    <span class="legacy-inline-text"><strong>Total Saved:</strong> {total_saved}</span>
+    <span class="legacy-inline-text"><strong>Recent Savings:</strong> {recent_savings} across {processed_count} files</span>
+    <div class="kv-grid">
+      <div class="kv-grid-label">Path</div><div>{library_path}</div>
+      <div class="kv-grid-label">Status</div><div><span class="badge" data-status="{runtime_status}">{runtime_status}</span></div>
+      <div class="kv-grid-label">Priority</div><div>{library_priority}</div>
+      <div class="kv-grid-label">Last Run</div><div>{last_run_label}</div>
+      <div class="kv-grid-label">Next Run</div><div>{next_run_label}</div>
+      <div class="kv-grid-label">Files Optimized</div><div>{files_optimized}</div>
+      <div class="kv-grid-label">Total Saved</div><div>{total_saved}</div>
+      <div class="kv-grid-label">Recent Savings</div><div>{recent_savings} across {processed_count} files</div>
+    </div>
     {runtime_summary}
     <form method="post" action="/dashboard/libraries/{library_id}/run" class="dashboard-library-actions">
-      <button type="submit">Run Now</button>
-      <button type="submit" formaction="/dashboard/libraries/{library_id}/preview" class="dashboard-library-preview-btn">Preview Run</button>
+      <button type="submit" class="primary-button">Run Now</button>
+      <button type="submit" formaction="/dashboard/libraries/{library_id}/preview" class="dashboard-library-preview-btn secondary-button">Preview Run</button>
     </form>
   </section>

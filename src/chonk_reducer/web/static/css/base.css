@@ -16,6 +16,10 @@
   --accent-soft: #dceeff;
   --success-bg: #effbf1;
   --success-border: #b6e3be;
+  --warning-bg: #fff8e8;
+  --warning-border: #f5d27f;
+  --error-bg: #fff1f1;
+  --error-border: #efb2b2;
   --warning: #9a5b00;
   --radius: 8px;
   --radius-sm: 6px;
@@ -41,8 +45,8 @@
 
 .app-sidebar {
   width: 230px;
-  background: var(--bg-sidebar);
-  padding: 1.15rem 0.8rem;
+  background: linear-gradient(180deg, #111827 0%, #0d1523 100%);
+  padding: 1rem 0.65rem;
   border-right: 1px solid #0b1320;
 }
 
@@ -60,15 +64,16 @@
 }
 
 .app-nav-item {
-  margin: 0.28rem 0;
+  margin: 0.15rem 0;
 }
 
 .app-nav-link {
   text-decoration: none;
   color: var(--text-sidebar);
   display: block;
-  padding: 0.4rem 0.55rem;
+  padding: 0.42rem 0.6rem;
   border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
 }
 
 .app-nav-link:hover {
@@ -80,6 +85,7 @@
   font-weight: 600;
   background: #2a3a52;
   color: var(--text-sidebar-active);
+  border-left-color: #66a6ff;
 }
 
 .app-main {
@@ -134,7 +140,7 @@ button {
   border-radius: var(--radius-sm);
   background: #f4f8fd;
   color: #18324f;
-  padding: 0.32rem 0.62rem;
+  padding: 0.44rem 0.9rem;
   cursor: pointer;
 }
 
@@ -157,6 +163,84 @@ button:focus {
   outline: 2px solid var(--accent-soft);
   outline-offset: 1px;
   border-color: var(--accent);
+}
+
+.primary-button {
+  background: #2a6eb3;
+  border-color: #245f98;
+  color: #fff;
+  font-weight: 600;
+}
+.primary-button:hover { background: #245f98; }
+.secondary-button {
+  background: #f1f5fa;
+  border-color: #c6d2e2;
+  color: #1a3758;
+}
+.secondary-button:hover { background: #e4edf7; }
+
+.badge {
+  display: inline-block;
+  padding: 0.16rem 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  background: #f2f5fa;
+  color: #334155;
+}
+.badge-success,
+.badge[data-status*="Running"],
+.badge[data-status*="running"],
+.badge[data-status*="Success"],
+.badge[data-status*="success"],
+.badge[data-status*="Enabled"],
+.badge[data-status*="enabled"] {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: #1b5e2b;
+}
+.badge-warning,
+.badge[data-status*="Skipped"],
+.badge[data-status*="skipped"],
+.badge[data-status*="Queued"],
+.badge[data-status*="queued"] {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: #7f4b00;
+}
+.badge-error,
+.badge[data-status*="Failed"],
+.badge[data-status*="failed"],
+.badge[data-status*="Stopped"],
+.badge[data-status*="No"],
+.badge[data-status*="disabled"] {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: #8a1e1e;
+}
+
+.grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
+  gap: 0.35rem 0.8rem;
+  align-items: baseline;
+}
+.kv-grid-label {
+  color: #334155;
+  font-weight: 600;
+}
+
+.card-section {
+  padding: 0.9rem;
+}
+.legacy-inline-text {
+  display: none;
 }
 
 .panel,
@@ -227,7 +311,7 @@ button:focus {
 .dashboard-system-status {
   padding: 0.75rem 0.85rem;
   margin-bottom: 0.8rem;
-  max-width: 700px;
+  max-width: none;
 }
 
 .dashboard-system-status-title {
@@ -243,10 +327,19 @@ button:focus {
 .dashboard-system-status-scheduler {
   margin-top: 0.45rem;
 }
+.dashboard-top-grid {
+  align-items: start;
+}
+.dashboard-section-title-top {
+  margin-top: 0;
+}
+.dashboard-libraries-grid {
+  align-items: start;
+}
 
 .dashboard-library-card {
   padding: 0.85rem;
-  margin-bottom: 0.8rem;
+  margin-bottom: 0;
 }
 
 .dashboard-library-title {
@@ -256,6 +349,9 @@ button:focus {
 
 .dashboard-library-actions {
   margin-top: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .dashboard-library-preview-btn {
@@ -288,6 +384,11 @@ button:focus {
 
 .settings-section-spaced {
   margin-top: 1.8rem;
+}
+.settings-group + .settings-group {
+  margin-top: 1.1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e8eef6;
 }
 
 .settings-input-label {
@@ -397,7 +498,7 @@ button:focus {
 .library-form-fieldset,
 .library-schedule-fieldset,
 .libraries-ignored-fieldset {
-  margin-top: 0.65rem;
+  margin-top: 0.85rem;
   padding: 0.65rem 0.72rem;
   border: 1px solid var(--border-base);
   border-radius: var(--radius-sm);
@@ -526,5 +627,15 @@ button:focus {
 
   .app-main {
     padding: 1rem;
+  }
+
+  .grid-2col,
+  .kv-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-library-actions {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

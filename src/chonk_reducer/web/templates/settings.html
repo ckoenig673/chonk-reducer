@@ -1,22 +1,39 @@
 <h1>Settings</h1>
 {message_html}
-<section class="settings-section">
+<section class="settings-section card-section">
 <h2>Global Settings</h2>
 <p>Editable service defaults persisted in SQLite.</p>
-<form method="post" action="/settings">{settings_rows_html}
-  <div class="settings-save-row"><button type="submit">Save</button></div>
+<form method="post" action="/settings">
+  <div class="settings-group">
+    <h3 class="settings-subsection-title">Global Settings</h3>
+    {settings_rows_global_html}
+  </div>
+  <div class="settings-group">
+    <h3 class="settings-subsection-title">Notifications</h3>
+    {settings_rows_notifications_html}
+  </div>
+  <div class="settings-group">
+    <h3 class="settings-subsection-title">Retry / Backoff</h3>
+    {settings_rows_retry_html}
+  </div>
+  <div class="settings-save-row"><button type="submit" class="primary-button">Save</button></div>
 </form>
 <form method="post" action="/settings/test-notification" class="settings-test-notification-form">
-  <button type="submit">Send Test Notification</button>
+  <button type="submit" class="secondary-button">Send Test Notification</button>
 </form>
 <p class="settings-save-note">Settings are saved immediately to SQLite. Some service-level behaviors are applied on startup/restart only.</p>
 </section>
-<section class="settings-section settings-section-spaced">
+<section class="settings-section settings-section-spaced card-section">
 <h2>Housekeeping</h2>
 <p>Configure daily cleanup schedule for logs and backups.</p>
+{housekeeping_summary_html}
+</section>
+<section class="settings-section settings-section-spaced card-section">
+<h2>Housekeeping Schedule</h2>
+<p>Set when cleanup should run.</p>
 {housekeeping_form_html}
 </section>
-<section class="settings-section settings-section-spaced">
+<section class="settings-section settings-section-spaced card-section">
 <h2>Libraries</h2>
 <p>Configured media library roots for future dynamic scheduling.</p>
 {libraries_table_html}
