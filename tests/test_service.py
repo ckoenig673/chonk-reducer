@@ -1324,7 +1324,7 @@ def test_dashboard_and_system_show_runtime_status():
     system_code, system_body, _ = _call_get(service, "/system")
 
     assert dashboard_code == 200
-    assert "Status</th><td" in dashboard_body
+    assert 'id="runtime-status"' in dashboard_body
     assert "Idle" in dashboard_body
     assert "Queue Depth" in dashboard_body
     assert "Current File" in dashboard_body
@@ -1563,7 +1563,7 @@ def test_dashboard_library_card_shows_manual_only_for_blank_schedule():
     assert status_code == 200
     assert body.count("Next Run:</strong> Not Scheduled") == 2
     assert "Current Job Status" in body
-    assert "Status</th><td" in body and "Idle" in body
+    assert 'id="runtime-status"' in body and "Idle" in body
 
 
 def test_dashboard_library_card_shows_not_scheduled_for_invalid_schedule(monkeypatch):
@@ -1619,9 +1619,9 @@ def test_dashboard_current_job_status_shows_scheduler_running_and_start_time():
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert "Scheduler Status</th><td id=\"runtime-scheduler-status\"" in body
+    assert 'id="runtime-scheduler-status"' in body
     assert "Running" in body
-    assert "Scheduler Started</th><td id=\"runtime-scheduler-started\"" in body
+    assert 'id="runtime-scheduler-started"' in body
     assert "2026-03-08 20:27" in body
 
 
@@ -1830,14 +1830,14 @@ def test_dashboard_runtime_status_shows_current_file_and_live_snapshot():
     status_code, body, _ = _call_get(service, "/dashboard")
 
     assert status_code == 200
-    assert "Current Library</th><td" in body and "Movies" in body
-    assert "Current File</th><td" in body and "/movies/Example.mkv" in body
-    assert "Candidates Found</th><td" in body and ">10<" in body
-    assert "Files Evaluated</th><td" in body and ">6<" in body
-    assert "Files Processed</th><td" in body and ">4<" in body
-    assert "Files Skipped</th><td" in body and ">1<" in body
-    assert "Files Failed</th><td" in body and ">0<" in body
-    assert "Bytes Saved So Far</th><td" in body and "5.0 MB" in body
+    assert 'id="runtime-library">Movies<' in body
+    assert 'id="runtime-current-file">/movies/Example.mkv<' in body
+    assert 'id="runtime-candidates-found">10<' in body
+    assert 'id="runtime-files-evaluated">6<' in body
+    assert 'id="runtime-files-processed">4<' in body
+    assert 'id="runtime-files-skipped">1<' in body
+    assert 'id="runtime-files-failed">0<' in body
+    assert 'id="runtime-bytes-saved">5.0 MB<' in body
 
 def test_dashboard_progress_bar_renders_for_active_run():
     service = ChonkService(

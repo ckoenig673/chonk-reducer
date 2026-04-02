@@ -123,7 +123,7 @@ def render_runs_active_run_banner_html(*, deps: DashboardRenderDeps) -> str:
 
 def render_recent_runs_html(rows: Sequence[Mapping[str, str]]) -> str:
     if not rows:
-        return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No recent runs recorded yet.</div>'
+        return '<div class="common-bordered-message">No recent runs recorded yet.</div>'
 
     row_html = []
     for row in rows:
@@ -132,25 +132,25 @@ def render_recent_runs_html(rows: Sequence[Mapping[str, str]]) -> str:
             % (row["time"], row["library"], row["status"], row["duration"], row["saved"])
         )
 
-    return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+    return """<div class="table-frame"><table class="data-table">
   <thead>
     <tr>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Time</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Status</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Duration</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Saved</th>
+      <th>Time</th>
+      <th>Library</th>
+      <th>Status</th>
+      <th>Duration</th>
+      <th>Saved</th>
     </tr>
   </thead>
   <tbody>
     %s
   </tbody>
-</table>""" % "".join(row_html)
+</table></div>""" % "".join(row_html)
 
 
 def render_runs_history_html(rows: Sequence[Mapping[str, str]], *, deps: DashboardRenderDeps) -> str:
     if not rows:
-        return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No runs recorded yet.</div>'
+        return '<div class="common-bordered-message">No runs recorded yet.</div>'
 
     row_html = []
     for row in rows:
@@ -171,25 +171,25 @@ def render_runs_history_html(rows: Sequence[Mapping[str, str]], *, deps: Dashboa
             )
         )
 
-    return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+    return """<div class="table-frame"><table class="data-table">
   <thead>
     <tr>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Time</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Library</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Mode</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Result</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Processed</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Skipped</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Failed</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Saved</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Duration</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Run ID</th>
+      <th>Time</th>
+      <th>Library</th>
+      <th>Mode</th>
+      <th>Result</th>
+      <th>Processed</th>
+      <th>Skipped</th>
+      <th>Failed</th>
+      <th>Saved</th>
+      <th>Duration</th>
+      <th>Run ID</th>
     </tr>
   </thead>
   <tbody>
     %s
   </tbody>
-</table>""" % "".join(row_html)
+</table></div>""" % "".join(row_html)
 
 
 def render_run_summary_html(run: Mapping[str, object], *, deps: DashboardRenderDeps) -> str:
@@ -324,28 +324,28 @@ def render_run_encodes_html(rows: Sequence[Mapping[str, str]], *, deps: Dashboar
             )
         )
 
-    return render_run_file_summary_html(rows, deps=deps) + """<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd;">
+    return render_run_file_summary_html(rows, deps=deps) + """<div class="table-frame"><table class="data-table">
   <thead>
     <tr>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Path</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Status</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Codec</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Before</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">After</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Saved</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Encode Time</th>
-      <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;">Reason / Detail</th>
+      <th>Path</th>
+      <th>Status</th>
+      <th>Codec</th>
+      <th>Before</th>
+      <th>After</th>
+      <th>Saved</th>
+      <th>Encode Time</th>
+      <th>Reason / Detail</th>
     </tr>
   </thead>
   <tbody>
     %s
   </tbody>
-</table>""" % "".join(body_rows)
+</table></div>""" % "".join(body_rows)
 
 
 def render_recent_activity_html(rows: Sequence[Mapping[str, str]], *, deps: DashboardRenderDeps) -> str:
     if not rows:
-        return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No recent activity recorded yet.</div>'
+        return '<div class="common-bordered-message">No recent activity recorded yet.</div>'
 
     row_html = []
     for row in rows:
@@ -356,7 +356,7 @@ def render_recent_activity_html(rows: Sequence[Mapping[str, str]], *, deps: Dash
             if str(row.get("run_exists") or "0") == "1":
                 run_id_html = '<a href="/runs/%s">%s</a>' % (escaped_run_id, escaped_run_id)
             else:
-                run_id_html = "%s <span style=\"color:#666;\">(run unavailable)</span>" % escaped_run_id
+                run_id_html = "%s <span class=\"table-inline-note\">(run unavailable)</span>" % escaped_run_id
         row_html.append(
             "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
             % (
@@ -368,17 +368,17 @@ def render_recent_activity_html(rows: Sequence[Mapping[str, str]], *, deps: Dash
             )
         )
 
-    return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+    return """<div class="table-frame"><table class="data-table">
   <thead>
     <tr>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Timestamp</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Event Type</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Message</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Run ID</th>
+      <th>Timestamp</th>
+      <th>Library</th>
+      <th>Event Type</th>
+      <th>Message</th>
+      <th>Run ID</th>
     </tr>
   </thead>
   <tbody>
     %s
   </tbody>
-</table>""" % "".join(row_html)
+</table></div>""" % "".join(row_html)

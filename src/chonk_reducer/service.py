@@ -2698,28 +2698,30 @@ class ChonkService:
         started_at = snapshot["started_at"] or idle_placeholder
         current_file = snapshot["current_file"] or ("Waiting for first file" if snapshot["status"] == "Running" else idle_placeholder)
         preview_html = self._preview_results_html(snapshot) if include_preview else ""
-        return """<div class="table-frame"><table class="data-table">
-  <tbody>
-    <tr><th style=\"width: 250px;\">Status</th><td><span id=\"runtime-status\" class=\"badge\" data-status=\"%s\">%s</span></td></tr>
-    <tr><th>Current Library</th><td id=\"runtime-library\">%s</td></tr>
-    <tr><th>Trigger</th><td id=\"runtime-trigger\">%s</td></tr>
-    <tr><th>Scheduler Status</th><td id=\"runtime-scheduler-status\"><span class=\"badge\" data-status=\"%s\">%s</span></td></tr>
-    <tr><th>Scheduler Started</th><td id=\"runtime-scheduler-started\">%s</td></tr>
-    <tr><th>Next Scheduled Job</th><td id=\"runtime-next-scheduled-job\">%s</td></tr>
-    <tr><th>Next Scheduled Time</th><td id=\"runtime-next-scheduled-time\">%s</td></tr>
-    <tr><th>Mode</th><td id=\"runtime-mode\">%s</td></tr>
-    <tr><th>Queue Depth</th><td id=\"runtime-queue-depth\">%s</td></tr>
-    <tr><th>Current Run ID</th><td id=\"runtime-run-id\">%s</td></tr>
-    <tr><th>Started At</th><td id=\"runtime-started-at\">%s</td></tr>
-    <tr><th>Current File</th><td id=\"runtime-current-file\">%s</td></tr>
-    <tr><th>Candidates Found</th><td id=\"runtime-candidates-found\">%s</td></tr>
-    <tr><th>Files Evaluated</th><td id=\"runtime-files-evaluated\">%s</td></tr>
-    <tr><th>Files Processed</th><td id=\"runtime-files-processed\">%s</td></tr>
-    <tr><th>Files Skipped</th><td id=\"runtime-files-skipped\">%s</td></tr>
-    <tr><th>Files Failed</th><td id=\"runtime-files-failed\">%s</td></tr>
-    <tr><th>Bytes Saved So Far</th><td id=\"runtime-bytes-saved\">%s</td></tr>
-  </tbody>
-</table></div><div style=\"margin-top:0.6rem;\"><button id=\"runtime-stop-button\" type=\"button\" class=\"secondary-button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>%s""" % (
+        return """<section class="dashboard-system-status dashboard-job-status">
+  <h3 class="dashboard-system-status-title">Job Status</h3>
+  <div class="dashboard-system-status-subtitle">Current worker and scheduler state</div>
+  <div class="kv-grid">
+    <div class="kv-grid-label">Status</div><div><span id=\"runtime-status\" class=\"badge\" data-status=\"%s\">%s</span></div>
+    <div class="kv-grid-label">Current Library</div><div id=\"runtime-library\">%s</div>
+    <div class="kv-grid-label">Trigger</div><div id=\"runtime-trigger\">%s</div>
+    <div class="kv-grid-label">Scheduler Status</div><div id=\"runtime-scheduler-status\"><span class=\"badge\" data-status=\"%s\">%s</span></div>
+    <div class="kv-grid-label">Scheduler Started</div><div id=\"runtime-scheduler-started\">%s</div>
+    <div class="kv-grid-label">Next Scheduled Job</div><div id=\"runtime-next-scheduled-job\">%s</div>
+    <div class="kv-grid-label">Next Scheduled Time</div><div id=\"runtime-next-scheduled-time\">%s</div>
+    <div class="kv-grid-label">Mode</div><div id=\"runtime-mode\">%s</div>
+    <div class="kv-grid-label">Queue Depth</div><div id=\"runtime-queue-depth\">%s</div>
+    <div class="kv-grid-label">Current Run ID</div><div id=\"runtime-run-id\">%s</div>
+    <div class="kv-grid-label">Started At</div><div id=\"runtime-started-at\">%s</div>
+    <div class="kv-grid-label">Current File</div><div id=\"runtime-current-file\">%s</div>
+    <div class="kv-grid-label">Candidates Found</div><div id=\"runtime-candidates-found\">%s</div>
+    <div class="kv-grid-label">Files Evaluated</div><div id=\"runtime-files-evaluated\">%s</div>
+    <div class="kv-grid-label">Files Processed</div><div id=\"runtime-files-processed\">%s</div>
+    <div class="kv-grid-label">Files Skipped</div><div id=\"runtime-files-skipped\">%s</div>
+    <div class="kv-grid-label">Files Failed</div><div id=\"runtime-files-failed\">%s</div>
+    <div class="kv-grid-label">Bytes Saved So Far</div><div id=\"runtime-bytes-saved\">%s</div>
+  </div>
+</section><div class=\"dashboard-runtime-controls\"><button id=\"runtime-stop-button\" type=\"button\" class=\"secondary-button\" style=\"display:none;\">Stop Run</button></div><div id=\"runtime-progress-section\">%s</div>%s""" % (
             _escape_html(snapshot["status"]),
             _escape_html(snapshot["status"]),
             _escape_html(current_library),
@@ -2748,7 +2750,7 @@ class ChonkService:
         rows = snapshot.get("preview_results") or []
         preview_library = str(snapshot.get("preview_library", "") or "").strip()
         preview_generated_at = str(snapshot.get("preview_generated_at", "") or "").strip()
-        details = '<div style="margin-bottom:0.35rem;"><strong>Library:</strong> <span id="runtime-preview-library">%s</span></div><div style="margin-bottom:0.35rem;"><strong>Generated At:</strong> <span id="runtime-preview-generated-at">%s</span></div>' % (
+        details = '<div class="dashboard-preview-meta"><div><strong>Library:</strong> <span id="runtime-preview-library">%s</span></div><div><strong>Generated At:</strong> <span id="runtime-preview-generated-at">%s</span></div></div>' % (
             _escape_html(preview_library or "-"),
             _escape_html(preview_generated_at or "-"),
         )
@@ -2759,7 +2761,7 @@ class ChonkService:
             savings_pct = row.get("estimated_savings_pct", "")
             savings_label = "%s%%" % savings_pct if savings_pct != "" else "-"
             body_rows.append(
-                '<tr><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td><td style="border-top:1px solid #ddd; padding:0.3rem;">%s</td></tr>' 
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
                     _escape_html(str(row.get("file", "-"))),
                     _escape_html(_format_saved_bytes(row.get("original_size"))),
@@ -2769,8 +2771,8 @@ class ChonkService:
                 )
             )
         if not body_rows:
-            body_rows.append('<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>')
-        return """<div id="runtime-preview-results" style="margin-top:0.8rem;"><div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.35rem;"><div style="font-weight:600;">Preview Results</div><button id="runtime-clear-preview-button" type="button" style="font-size:0.85rem;">Clear Preview Results</button></div><div style="border:1px solid #d7e2f4; background:#f8fbff; padding:0.45rem; margin-bottom:0.5rem;">%s</div>%s<table style="border-collapse: collapse; width: 100%%; border: 1px solid #ddd; background: #fff;"><thead><tr><th style="text-align:left; padding:0.35rem;">File</th><th style="text-align:left; padding:0.35rem;">Original Size</th><th style="text-align:left; padding:0.35rem;">Estimated Size</th><th style="text-align:left; padding:0.35rem;">Savings %%</th><th style="text-align:left; padding:0.35rem;">Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div>""" % (details, summary_html, "".join(body_rows))
+            body_rows.append('<tr><td colspan="5">No preview results yet.</td></tr>')
+        return """<section id="runtime-preview-results" class="dashboard-preview-panel"><div class="dashboard-preview-header"><h3 class="dashboard-preview-title">Preview Results</h3><button id="runtime-clear-preview-button" type="button" class="secondary-button">Clear Preview Results</button></div><div class="dashboard-preview-details">%s</div>%s<div class="table-frame"><table class="data-table"><thead><tr><th>File</th><th>Original Size</th><th>Estimated Size</th><th>Savings %%</th><th>Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div></section>""" % (details, summary_html, "".join(body_rows))
 
     def clear_preview_results(self) -> Dict[str, str]:
         with self._job_state_lock:
