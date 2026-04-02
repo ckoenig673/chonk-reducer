@@ -223,3 +223,39 @@
   padding: 0.35rem;
   border-bottom: 1px solid #ddd;
 }
+
+.settings-subsection-title {
+  margin-top: 1rem;
+}
+
+.library-edit-form {
+  margin-top: 0.5rem;
+}
+
+.library-form-input-wide {
+  width: 100%;
+  max-width: 420px;
+}
+
+.library-form-fieldset {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  max-width: 420px;
+}
+
+.library-form-input-full {
+  width: 100%;
+}
+
+.library-form-submit-row {
+  margin-top: 0.5rem;
+}
+
+.libraries-inline-form {
+  display: inline-block;
+}
+
+.libraries-inline-form-spaced {
+  margin-right: 0.4rem;
+}
