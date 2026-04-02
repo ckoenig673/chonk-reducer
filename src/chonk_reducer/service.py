@@ -82,10 +82,11 @@ from .core.display_formatting import (
     format_scheduler_datetime as _format_scheduler_datetime,
     run_saved_mb_gb_label as _run_saved_mb_gb_label,
 )
+from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize_token as _sanitize_token
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.12") or "1.46.12").strip() or "1.46.12"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.13") or "1.46.13").strip() or "1.46.13"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -682,21 +683,20 @@ class ChonkService:
     def _label_with_help(self, label: str, help_text: str, token: str) -> str:
         if not help_text:
             return "<strong>%s</strong>" % _escape_html(label)
-        tooltip_id = "help-%s" % "".join(ch if ch.isalnum() else "-" for ch in token)
-        return (
-            '<span class="help-label"><strong>%s</strong>%s</span>'
-            % (_escape_html(label), self._help_icon_html(help_text, tooltip_id))
+        tooltip_id = "help-%s" % _sanitize_token(token, replacement="-")
+        help_label_template = self._load_template("partials/help_label.html")
+        return help_label_template.format(
+            label=_escape_html(label),
+            help_icon_html=self._help_icon_html(help_text, tooltip_id),
         )
 
     def _help_icon_html(self, help_text: str, tooltip_id: str) -> str:
         escaped_text = _escape_html(help_text)
         escaped_id = _escape_html(tooltip_id)
-        return (
-            '<span class="help-tooltip-wrap">'
-            '<span class="help-tooltip-trigger" tabindex="0" aria-label="Help: %s" aria-describedby="%s">?</span>'
-            '<span class="help-tooltip-bubble" role="tooltip" id="%s">%s</span>'
-            "</span>"
-            % (escaped_text, escaped_id, escaped_id, escaped_text)
+        help_icon_template = self._load_template("partials/help_tooltip.html")
+        return help_icon_template.format(
+            escaped_text=escaped_text,
+            escaped_id=escaped_id,
         )
 
     def settings_page_html(self, message: str = "") -> str:
@@ -2340,7 +2340,7 @@ class ChonkService:
 
     def _schedule_fields_html(self, schedule_state: Dict[str, object], form_id: str) -> str:
         schedule_template = self._load_template("partials/library_schedule_fields.html")
-        form_token = "".join(ch if ch.isalnum() else "_" for ch in str(form_id))
+        form_token = _sanitize_token(str(form_id), replacement="_")
         mode = str(schedule_state.get("mode", "simple"))
         raw_value = _escape_html(str(schedule_state.get("raw", "")))
         simple_time = _escape_html(str(schedule_state.get("time", "00:00")))
@@ -4335,18 +4335,6 @@ def _slugify_library_name(name: str) -> str:
     value = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(name))
     value = value.strip("_")
     return value or "library"
-
-
-def _normalize_csv_text(value: str) -> str:
-    parts: List[str] = []
-    seen = set()
-    for raw in str(value or "").split(","):
-        token = raw.strip().lower()
-        if not token or token in seen:
-            continue
-        parts.append(token)
-        seen.add(token)
-    return ",".join(parts)
 
 def _connect_settings_db(db_path: Path) -> sqlite3.Connection:
     return connect_settings_db(

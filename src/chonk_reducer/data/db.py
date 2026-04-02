@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from ..core.text_utils import normalize_csv_text as _normalize_csv_text
+
 
 def connect_settings_db(
     db_path: Path,
@@ -128,14 +130,3 @@ def connect_settings_db(
     )
     return conn
 
-
-def _normalize_csv_text(value: str) -> str:
-    parts: list[str] = []
-    seen: set[str] = set()
-    for raw in str(value or "").split(","):
-        token = raw.strip().lower()
-        if not token or token in seen:
-            continue
-        parts.append(token)
-        seen.add(token)
-    return ",".join(parts)
