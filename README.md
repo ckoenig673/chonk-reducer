@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400">
 </p>
 
-**Current Version:** v1.47.0
+**Current Version:** v1.48.0
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
@@ -128,10 +128,11 @@ Candidate scoring groundwork (Story 2.1):
 - Runner now builds an internal candidate scoring-input snapshot (library/file/probe/estimate/cache context) for each evaluated file.
 - This is a data-model foundation only; current candidate order, skip behavior, and processing flow remain unchanged.
 
-Candidate scoring calculation groundwork (Story 2.2):
-- The scoring module now calculates a deterministic candidate score from existing cheap inputs (estimated savings bytes/percent, library priority, file size, and cached max-savings signal penalty).
-- Score output also includes concise factor labels for explainability.
-- This still does **not** reorder candidates and does **not** change skip behavior.
+Candidate ranking by score (Story 2.3):
+- Candidate discovery and skip/eligibility logic remain unchanged.
+- After discovery/prefilter eligibility, candidates are ranked by descending deterministic score before processing.
+- Score ties keep the existing discovery order for stable, explainable behavior.
+- Runtime logs now include a concise score/reason line per evaluated candidate, and preview payload rows include lightweight `score` + `score_reasons` fields.
 
 ---
 
