@@ -7,7 +7,7 @@ import select
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from .logging_utils import Logger
+from ..logging_utils import Logger
 
 
 class CmdError(RuntimeError):

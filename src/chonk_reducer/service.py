@@ -57,7 +57,7 @@ except Exception:  # pragma: no cover - exercised by fallback tests
 
 from .cleanup import cleanup_logs
 from .logging_utils import Logger
-from .runner import run
+from .transcoding.runner import run
 from . import notifications
 from . import secrets
 from .services.library_paths import discover_ignored_folders, resolve_library_relative_folder
@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.17") or "1.46.17").strip() or "1.46.17"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.21") or "1.46.21").strip() or "1.46.21"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}

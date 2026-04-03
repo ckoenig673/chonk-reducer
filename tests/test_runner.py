@@ -5,7 +5,7 @@ import sqlite3
 import types
 from pathlib import Path
 
-import chonk_reducer.runner as runner
+import chonk_reducer.transcoding.runner as runner
 import pytest
 
 

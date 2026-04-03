@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from chonk_reducer.ffmpeg_utils import CmdError, run_cmd
+from chonk_reducer.transcoding.ffmpeg_utils import CmdError, run_cmd
 from chonk_reducer.logging_utils import Logger
 
 
