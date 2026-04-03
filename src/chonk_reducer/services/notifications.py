@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
-from . import secrets
+from .. import secrets
 
 LOGGER = logging.getLogger("chonk_reducer.notifications")
 

@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from .config import load_config
-from .discord_utils import send_discord_message, notify_healthcheck_enabled
+from .services.discord_utils import send_discord_message, notify_healthcheck_enabled
 from .logging_utils import Logger
 
 

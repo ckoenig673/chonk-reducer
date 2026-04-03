@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400">
 </p>
 
-**Current Version:** v1.46.21
+**Current Version:** v1.46.22
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
@@ -50,7 +50,7 @@ Responsibilities:
 - `web/`: FastAPI app bootstrap, route registration, plus UI templates/static assets (`web/templates`, `web/static/css`, `web/static/js`).
 - `data/`: SQLite setup and repository-oriented data access modules.
 - `scheduler/`: scheduler wiring and listener setup helpers.
-- `services/`: service orchestration and runtime workflows.
+- `services/`: service orchestration and runtime workflows (including notification and reporting modules such as Discord/webhook notifications and weekly reporting).
 - `core/`: shared runtime helpers such as display/formatting and text-normalization utilities used by service, data, and web rendering paths.
 - `transcoding/`: encoding/runner pipeline modules (`encode.py`, `runner.py`, `swap.py`, `validation.py`, `ffmpeg_utils.py`) kept separate from web routing.
 

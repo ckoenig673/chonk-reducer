@@ -5,7 +5,7 @@ import sys
 
 from .transcoding.runner import run
 from .healthcheck import run_healthcheck
-from .weekly_report import generate_weekly_report
+from .services.weekly_report import generate_weekly_report
 from .service import run_service, ServiceSettings
 
 
