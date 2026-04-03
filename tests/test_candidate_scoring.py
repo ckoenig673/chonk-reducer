@@ -3,7 +3,10 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
-from chonk_reducer.transcoding.candidate_scoring import build_candidate_score_inputs
+from chonk_reducer.transcoding.candidate_scoring import (
+    build_candidate_score_inputs,
+    calculate_candidate_score,
+)
 
 
 def _cfg(**overrides):
@@ -68,3 +71,93 @@ def test_build_candidate_score_inputs_handles_missing_optional_values(tmp_path: 
     assert inputs.resolution_tag_hints == ()
     assert inputs.has_cached_max_savings_skip is False
     assert inputs.cached_max_savings_percent is None
+
+
+def test_calculate_candidate_score_prefers_higher_value_candidates(tmp_path: Path):
+    strong = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=120),
+        src=tmp_path / "Strong.mkv",
+        file_size_bytes=8 * 1024 ** 3,
+        estimated_encoded_size_bytes=4 * 1024 ** 3,
+        estimated_savings_percent=50.0,
+    )
+    weak = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=10),
+        src=tmp_path / "Weak.mkv",
+        file_size_bytes=400 * 1024 ** 2,
+        estimated_encoded_size_bytes=380 * 1024 ** 2,
+        estimated_savings_percent=5.0,
+    )
+
+    strong_result = calculate_candidate_score(strong)
+    weak_result = calculate_candidate_score(weak)
+
+    assert strong_result.score > weak_result.score
+    assert strong_result.savings_bytes_points > weak_result.savings_bytes_points
+    assert strong_result.savings_percent_points > weak_result.savings_percent_points
+
+
+def test_calculate_candidate_score_cached_max_savings_penalty_reduces_score(tmp_path: Path):
+    baseline = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=100),
+        src=tmp_path / "PenaltyCheck.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=1 * 1024 ** 3,
+        estimated_savings_percent=50.0,
+    )
+    penalized = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=100),
+        src=tmp_path / "PenaltyCheck.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=1 * 1024 ** 3,
+        estimated_savings_percent=50.0,
+        cached_max_savings_percent=60.0,
+    )
+
+    baseline_result = calculate_candidate_score(baseline)
+    penalized_result = calculate_candidate_score(penalized)
+
+    assert penalized_result.score < baseline_result.score
+    assert penalized_result.cached_max_savings_penalty == 30.0
+    assert "cached_max_savings_penalty:60.0%" in penalized_result.reasons
+
+
+def test_calculate_candidate_score_handles_missing_optional_values(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=None),
+        src=tmp_path / "Unknown.mkv",
+        file_size_bytes=0,
+        estimated_encoded_size_bytes=None,
+        estimated_savings_percent=None,
+    )
+
+    result = calculate_candidate_score(inputs)
+
+    assert result.score == 0.0
+    assert result.savings_bytes_points == 0.0
+    assert result.savings_percent_points == 0.0
+    assert result.library_priority_points == 0.0
+    assert result.file_size_points == 0.0
+    assert result.cached_max_savings_penalty == 0.0
+    assert result.reasons == ()
+
+
+def test_calculate_candidate_score_reasons_are_consistent_order(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=100),
+        src=tmp_path / "Consistent.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=1 * 1024 ** 3,
+        estimated_savings_percent=50.0,
+        cached_max_savings_percent=63.2,
+    )
+
+    result = calculate_candidate_score(inputs)
+
+    assert result.reasons == (
+        f"savings_bytes:{1024 ** 3}B",
+        "savings_percent:50.0%",
+        "library_priority:100",
+        f"file_size:{2 * 1024 ** 3}B",
+        "cached_max_savings_penalty:63.2%",
+    )
