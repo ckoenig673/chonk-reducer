@@ -43,6 +43,36 @@ def _clamp(value: float, *, low: float, high: float) -> float:
     return max(low, min(value, high))
 
 
+def _reason_for_savings_bytes(points: float) -> str | None:
+    if points >= 24.0:
+        return "high projected GB savings"
+    if points >= 8.0:
+        return "notable projected GB savings"
+    return None
+
+
+def _reason_for_savings_percent(points: float) -> str | None:
+    if points >= 24.0:
+        return "strong projected % savings"
+    if points >= 8.0:
+        return "good projected % savings"
+    return None
+
+
+def _reason_for_library_priority(points: float) -> str | None:
+    if points >= 10.0:
+        return "high library priority"
+    if points >= 3.0:
+        return "elevated library priority"
+    return None
+
+
+def _reason_for_file_size(points: float) -> str | None:
+    if points >= 6.0:
+        return "large source file"
+    return None
+
+
 def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreResult:
     """
     Convert scoring inputs into a simple weighted heuristic score.
@@ -57,31 +87,36 @@ def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreRes
     if inputs.estimated_savings_bytes is not None:
         savings_mib = float(inputs.estimated_savings_bytes) / float(1024 * 1024)
         savings_bytes_points = _clamp(savings_mib / 4.0, low=0.0, high=40.0)
-        reasons.append(f"savings_bytes:{int(inputs.estimated_savings_bytes)}B")
+        reason = _reason_for_savings_bytes(savings_bytes_points)
+        if reason:
+            reasons.append(reason)
 
     savings_percent_points = 0.0
     if inputs.estimated_savings_percent is not None:
         savings_percent_points = _clamp(float(inputs.estimated_savings_percent) * 0.8, low=0.0, high=40.0)
-        reasons.append(f"savings_percent:{float(inputs.estimated_savings_percent):.1f}%")
+        reason = _reason_for_savings_percent(savings_percent_points)
+        if reason:
+            reasons.append(reason)
 
     library_priority_points = 0.0
     if inputs.library_priority is not None:
         library_priority_points = _clamp(float(inputs.library_priority) / 10.0, low=0.0, high=15.0)
-        reasons.append(f"library_priority:{int(inputs.library_priority)}")
+        reason = _reason_for_library_priority(library_priority_points)
+        if reason:
+            reasons.append(reason)
 
     file_size_points = 0.0
     if inputs.file_size_bytes > 0:
         size_gib = float(inputs.file_size_bytes) / float(1024 ** 3)
         file_size_points = _clamp(size_gib * 4.0, low=0.0, high=8.0)
-        reasons.append(f"file_size:{inputs.file_size_bytes}B")
+        reason = _reason_for_file_size(file_size_points)
+        if reason:
+            reasons.append(reason)
 
     cached_max_savings_penalty = 0.0
     if inputs.has_cached_max_savings_skip:
         cached_max_savings_penalty = 30.0
-        if inputs.cached_max_savings_percent is not None:
-            reasons.append(f"cached_max_savings_penalty:{inputs.cached_max_savings_percent:.1f}%")
-        else:
-            reasons.append("cached_max_savings_penalty")
+        reasons.append("reduced by prior max-savings skip signal")
 
     score = (
         savings_bytes_points
