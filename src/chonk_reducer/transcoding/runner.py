@@ -18,6 +18,7 @@ from ..core.logging_utils import Logger, make_run_stamp
 from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
+from .candidate_scoring import build_candidate_score_inputs
 from ..skip_policy import evaluate_skip
 from ..stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path, get_policy_skip_cache, upsert_policy_skip_cache, delete_policy_skip_cache
 
@@ -372,9 +373,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
             )
 
             try:
-                before_bytes = src.stat().st_size
+                src_stat = src.stat()
+                before_bytes = src_stat.st_size
+                file_mtime = src_stat.st_mtime
             except Exception:
                 before_bytes = 0
+                file_mtime = None
 
             if _cancel_check("evaluation"):
                 break
@@ -445,6 +449,17 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
             except Exception as e:
                 logger.log(f"Probe (before) failed: {e}")
 
+            _score_inputs = build_candidate_score_inputs(
+                cfg=cfg,
+                src=src,
+                file_size_bytes=int(before_bytes or 0),
+                before_probe=before_probe,
+                cached_max_savings_percent=(
+                    float(cached_max_savings.get("savings_percent")) if cached_max_savings is not None else None
+                ),
+                file_mtime=file_mtime,
+            )
+
             # Pre-encode skip evaluation (codec/resolution policies)
             skip = evaluate_skip(src, before_probe, cfg)
             if skip:
@@ -485,6 +500,19 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 estimated_savings_pct = 0.0
                 if before_bytes > 0 and estimated_bytes > 0:
                     estimated_savings_pct = ((before_bytes - estimated_bytes) / float(before_bytes)) * 100.0
+                _score_inputs = build_candidate_score_inputs(
+                    cfg=cfg,
+                    src=src,
+                    file_size_bytes=int(before_bytes or 0),
+                    before_probe=before_probe,
+                    estimated_encoded_size_bytes=int(estimated_bytes or 0),
+                    estimated_savings_percent=float(estimated_savings_pct),
+                    cached_max_savings_percent=(
+                        float(cached_max_savings.get("savings_percent")) if cached_max_savings is not None else None
+                    ),
+                    file_mtime=file_mtime,
+                )
+
                 if cfg.min_savings_percent and estimated_savings_pct < float(cfg.min_savings_percent):
                     skipped_min_savings += 1
                     decision = "Skip (below savings threshold)"
