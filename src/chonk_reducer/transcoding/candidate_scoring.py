@@ -26,6 +26,83 @@ class CandidateScoreInputs:
     cached_max_savings_percent: float | None
 
 
+@dataclass(frozen=True)
+class CandidateScoreResult:
+    """Deterministic score + concise factor labels for explainability."""
+
+    score: float
+    reasons: tuple[str, ...]
+    savings_bytes_points: float
+    savings_percent_points: float
+    library_priority_points: float
+    file_size_points: float
+    cached_max_savings_penalty: float
+
+
+def _clamp(value: float, *, low: float, high: float) -> float:
+    return max(low, min(value, high))
+
+
+def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreResult:
+    """
+    Convert scoring inputs into a simple weighted heuristic score.
+
+    Notes:
+    - This only computes score metadata; candidate ordering is unchanged for now.
+    - Weights intentionally prioritize estimated byte/percent savings first.
+    """
+    reasons: list[str] = []
+
+    savings_bytes_points = 0.0
+    if inputs.estimated_savings_bytes is not None:
+        savings_mib = float(inputs.estimated_savings_bytes) / float(1024 * 1024)
+        savings_bytes_points = _clamp(savings_mib / 4.0, low=0.0, high=40.0)
+        reasons.append(f"savings_bytes:{int(inputs.estimated_savings_bytes)}B")
+
+    savings_percent_points = 0.0
+    if inputs.estimated_savings_percent is not None:
+        savings_percent_points = _clamp(float(inputs.estimated_savings_percent) * 0.8, low=0.0, high=40.0)
+        reasons.append(f"savings_percent:{float(inputs.estimated_savings_percent):.1f}%")
+
+    library_priority_points = 0.0
+    if inputs.library_priority is not None:
+        library_priority_points = _clamp(float(inputs.library_priority) / 10.0, low=0.0, high=15.0)
+        reasons.append(f"library_priority:{int(inputs.library_priority)}")
+
+    file_size_points = 0.0
+    if inputs.file_size_bytes > 0:
+        size_gib = float(inputs.file_size_bytes) / float(1024 ** 3)
+        file_size_points = _clamp(size_gib * 4.0, low=0.0, high=8.0)
+        reasons.append(f"file_size:{inputs.file_size_bytes}B")
+
+    cached_max_savings_penalty = 0.0
+    if inputs.has_cached_max_savings_skip:
+        cached_max_savings_penalty = 30.0
+        if inputs.cached_max_savings_percent is not None:
+            reasons.append(f"cached_max_savings_penalty:{inputs.cached_max_savings_percent:.1f}%")
+        else:
+            reasons.append("cached_max_savings_penalty")
+
+    score = (
+        savings_bytes_points
+        + savings_percent_points
+        + library_priority_points
+        + file_size_points
+        - cached_max_savings_penalty
+    )
+    score = round(max(0.0, score), 3)
+
+    return CandidateScoreResult(
+        score=score,
+        reasons=tuple(reasons),
+        savings_bytes_points=round(savings_bytes_points, 3),
+        savings_percent_points=round(savings_percent_points, 3),
+        library_priority_points=round(library_priority_points, 3),
+        file_size_points=round(file_size_points, 3),
+        cached_max_savings_penalty=round(cached_max_savings_penalty, 3),
+    )
+
+
 def build_candidate_score_inputs(
     *,
     cfg,

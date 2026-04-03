@@ -18,7 +18,7 @@ from ..core.logging_utils import Logger, make_run_stamp
 from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
-from .candidate_scoring import build_candidate_score_inputs
+from .candidate_scoring import build_candidate_score_inputs, calculate_candidate_score
 from ..skip_policy import evaluate_skip
 from ..stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path, get_policy_skip_cache, upsert_policy_skip_cache, delete_policy_skip_cache
 
@@ -459,6 +459,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 ),
                 file_mtime=file_mtime,
             )
+            _score_result = calculate_candidate_score(_score_inputs)
 
             # Pre-encode skip evaluation (codec/resolution policies)
             skip = evaluate_skip(src, before_probe, cfg)
@@ -512,6 +513,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     ),
                     file_mtime=file_mtime,
                 )
+                _score_result = calculate_candidate_score(_score_inputs)
 
                 if cfg.min_savings_percent and estimated_savings_pct < float(cfg.min_savings_percent):
                     skipped_min_savings += 1
