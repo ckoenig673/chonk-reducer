@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .config import Config
-from .logging_utils import Logger
+from .core.logging_utils import Logger
 
 
 SCHEMA = """

@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .logging_utils import Logger
+from .core.logging_utils import Logger
 
 # Matches: something.mkv.bak.20260302_010925
 _BAK_TS_RE = re.compile(r"\.bak\.(\d{8}_\d{6})$")

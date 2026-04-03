@@ -56,10 +56,10 @@ except Exception:  # pragma: no cover - exercised by fallback tests
     uvicorn = None
 
 from .cleanup import cleanup_logs
-from .logging_utils import Logger
+from .core.logging_utils import Logger
 from .transcoding.runner import run
 from .services import notifications
-from . import secrets
+from .core import secrets
 from .services.library_paths import discover_ignored_folders, resolve_library_relative_folder
 from .services.settings_libraries_rendering import (
     SettingsLibrariesRenderDeps,
@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.46.22") or "1.46.22").strip() or "1.46.22"
+APP_VERSION = (os.getenv("APP_VERSION", "1.46.23") or "1.46.23").strip() or "1.46.23"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}

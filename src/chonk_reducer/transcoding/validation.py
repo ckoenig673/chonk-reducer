@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..config import Config
 from .ffmpeg_utils import run_cmd, CmdError
-from ..logging_utils import Logger
+from ..core.logging_utils import Logger
 
 
 def ffprobe_quick(src: Path, cfg: Config, logger: Logger) -> dict:

@@ -5,7 +5,7 @@ from collections import defaultdict
 import time
 
 from .config import Config
-from .logging_utils import Logger
+from .core.logging_utils import Logger
 
 
 def is_excluded(path: Path, cfg: Config) -> bool:
