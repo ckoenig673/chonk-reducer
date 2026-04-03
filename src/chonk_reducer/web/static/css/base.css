@@ -5,7 +5,7 @@
   --bg-sidebar-hover: #1f2937;
   --bg-panel: #ffffff;
   --bg-panel-soft: #f8fafd;
-  --bg-row-hover: #f6f9fe;
+  --bg-row-hover: #eef4fd;
   --text-main: #0f172a;
   --text-muted: #475569;
   --text-sidebar: #d6e3f6;
@@ -14,12 +14,12 @@
   --border-strong: #c6d2e2;
   --accent: #2a6eb3;
   --accent-soft: #dceeff;
-  --success-bg: #effbf1;
-  --success-border: #b6e3be;
-  --warning-bg: #fff8e8;
-  --warning-border: #f5d27f;
-  --error-bg: #fff1f1;
-  --error-border: #efb2b2;
+  --success-bg: #e5f7ea;
+  --success-border: #9cd3aa;
+  --warning-bg: #fff4db;
+  --warning-border: #eabf62;
+  --error-bg: #fee8e8;
+  --error-border: #e59c9c;
   --warning: #9a5b00;
   --radius: 8px;
   --radius-sm: 6px;
@@ -181,13 +181,13 @@ button:focus {
 
 .badge {
   display: inline-block;
-  padding: 0.18rem 0.52rem;
-  border: 1px solid #b9c7d9;
+  padding: 0.2rem 0.54rem;
+  border: 1px solid #aebfd4;
   border-radius: 999px;
   font-size: 0.82rem;
-  font-weight: 600;
-  background: #f2f5fa;
-  color: #243446;
+  font-weight: 650;
+  background: #edf2f8;
+  color: #1e2f43;
 }
 .badge-success,
 .badge[data-status*="Running"],
@@ -198,7 +198,7 @@ button:focus {
 .badge[data-status*="enabled"] {
   background: var(--success-bg);
   border-color: var(--success-border);
-  color: #174d24;
+  color: #123f1d;
 }
 .badge-warning,
 .badge[data-status*="Skipped"],
@@ -207,7 +207,7 @@ button:focus {
 .badge[data-status*="queued"] {
   background: var(--warning-bg);
   border-color: var(--warning-border);
-  color: #6e4000;
+  color: #5f3500;
 }
 .badge-error,
 .badge[data-status*="Failed"],
@@ -217,7 +217,7 @@ button:focus {
 .badge[data-status*="disabled"] {
   background: var(--error-bg);
   border-color: var(--error-border);
-  color: #742020;
+  color: #651818;
 }
 
 .grid-2col {
@@ -358,6 +358,7 @@ button:focus {
 
 .dashboard-library-preview-btn {
   margin-left: 0;
+  align-self: center;
 }
 
 .dashboard-empty-state {
@@ -468,16 +469,16 @@ button:focus {
 .data-table th,
 .libraries-table th {
   text-align: left;
-  padding: 0.54rem 0.6rem;
-  border-bottom: 1px solid #d5deea;
+  padding: 0.62rem 0.68rem;
+  border-bottom: 1px solid #cfd9e7;
   font-size: 0.91rem;
   color: #1e334f;
 }
 
 .data-table td,
 .libraries-table-cell {
-  padding: 0.56rem 0.6rem;
-  border-top: 1px solid #ecf1f8;
+  padding: 0.62rem 0.68rem;
+  border-top: 1px solid #e4ebf5;
   vertical-align: top;
 }
 
@@ -489,6 +490,11 @@ button:focus {
 .data-table tbody tr:hover,
 .libraries-table tbody tr:hover {
   background: var(--bg-row-hover);
+}
+
+.data-table tbody tr,
+.libraries-table tbody tr {
+  transition: background-color 120ms ease;
 }
 
 .libraries-table-detail-cell {
@@ -642,6 +648,11 @@ button:focus {
   align-items: center;
   gap: 0.6rem;
   margin-bottom: 0.45rem;
+}
+
+.dashboard-preview-header .secondary-button {
+  align-self: center;
+  white-space: nowrap;
 }
 .dashboard-preview-title {
   margin: 0;
