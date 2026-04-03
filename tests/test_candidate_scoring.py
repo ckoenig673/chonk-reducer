@@ -143,6 +143,10 @@ def test_calculate_candidate_score_handles_missing_optional_values(tmp_path: Pat
     assert result.library_priority_points == 0.0
     assert result.file_size_points == 0.0
     assert result.cached_max_savings_penalty == 0.0
+    assert result.confidence_adjustment_points == -2.0
+    assert result.confidence_label == "low"
+    assert result.history_influenced is False
+    assert result.history_influence_reason is None
     assert result.reasons == ()
 
 
@@ -226,7 +230,11 @@ def test_calculate_candidate_score_applies_positive_history_adjustment(tmp_path:
     )
 
     assert result.historical_adjustment_points == 10.0
-    assert result.score == round(baseline.score + 10.0, 3)
+    assert result.confidence_adjustment_points == 3.0
+    assert baseline.confidence_adjustment_points == 2.0
+    assert result.score == round(baseline.score + 11.0, 3)
+    assert result.history_influenced is True
+    assert result.history_influence_reason == "history-influenced score"
     assert "historically strong savings for this codec" in result.reasons
 
 
@@ -244,6 +252,7 @@ def test_calculate_candidate_score_applies_negative_history_adjustment(tmp_path:
     result = calculate_candidate_score(inputs)
 
     assert result.historical_adjustment_points == -10.0
+    assert result.history_influenced is True
     assert "historically weak savings for this resolution" in result.reasons
 
 
@@ -259,6 +268,8 @@ def test_calculate_candidate_score_history_adjustment_not_applied_without_histor
     result = calculate_candidate_score(inputs)
 
     assert result.historical_adjustment_points == 0.0
+    assert result.history_influenced is False
+    assert result.history_influence_reason is None
     assert "history suggests better than estimate" not in result.reasons
     assert "history suggests worse than estimate" not in result.reasons
 
@@ -306,3 +317,71 @@ def test_calculate_candidate_score_history_adjustment_is_deterministic(tmp_path:
     second = calculate_candidate_score(inputs)
 
     assert first == second
+
+
+def test_calculate_candidate_score_confidence_label_is_deterministic(tmp_path: Path):
+    high_conf = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(library_priority=80),
+            src=tmp_path / "HighConfidence.mkv",
+            file_size_bytes=4 * 1024 ** 3,
+            estimated_encoded_size_bytes=2 * 1024 ** 3,
+            estimated_savings_percent=55.0,
+            historical_avg_savings_percent=52.0,
+            historical_context="library:movies",
+        )
+    )
+    medium_conf = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(library_priority=0),
+            src=tmp_path / "MediumConfidence.mkv",
+            file_size_bytes=300 * 1024 ** 2,
+            estimated_encoded_size_bytes=260 * 1024 ** 2,
+            estimated_savings_percent=12.0,
+        )
+    )
+    low_conf = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(),
+            src=tmp_path / "LowConfidence.mkv",
+            file_size_bytes=1024,
+            estimated_encoded_size_bytes=None,
+            estimated_savings_percent=None,
+            cached_max_savings_percent=70.0,
+        )
+    )
+
+    assert high_conf.confidence_label == "high"
+    assert medium_conf.confidence_label == "medium"
+    assert low_conf.confidence_label == "low"
+    assert -3.0 <= high_conf.confidence_adjustment_points <= 3.0
+    assert -3.0 <= medium_conf.confidence_adjustment_points <= 3.0
+    assert -3.0 <= low_conf.confidence_adjustment_points <= 3.0
+
+
+def test_calculate_candidate_score_confidence_adjustment_is_small_and_bounded(tmp_path: Path):
+    strong = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(library_priority=120),
+            src=tmp_path / "StrongSignals.mkv",
+            file_size_bytes=8 * 1024 ** 3,
+            estimated_encoded_size_bytes=4 * 1024 ** 3,
+            estimated_savings_percent=60.0,
+            historical_avg_savings_percent=55.0,
+            historical_context="codec:h264",
+        )
+    )
+    weak = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(library_priority=120),
+            src=tmp_path / "WeakSignals.mkv",
+            file_size_bytes=1_000,
+            estimated_encoded_size_bytes=None,
+            estimated_savings_percent=None,
+            cached_max_savings_percent=90.0,
+        )
+    )
+
+    assert strong.confidence_adjustment_points == 3.0
+    assert weak.confidence_adjustment_points == -3.0
+    assert strong.score > weak.score

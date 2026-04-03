@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.49.1") or "1.49.1").strip() or "1.49.1"
+APP_VERSION = (os.getenv("APP_VERSION", "1.49.2") or "1.49.2").strip() or "1.49.2"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -2763,11 +2763,19 @@ class ChonkService:
             score_raw = row.get("score")
             score_label = self._preview_score_label(score_raw)
             score_band = str(row.get("score_band", "") or "").strip() or self._preview_score_band(score_raw)
+            confidence_label = str(row.get("confidence_label", "") or "").strip()
+            value_label = score_band
+            if confidence_label:
+                value_label = "%s (%s confidence)" % (score_band, confidence_label)
             reason_items = row.get("score_reasons")
             if isinstance(reason_items, (list, tuple)):
                 cleaned_reasons = [str(item).strip() for item in reason_items if str(item).strip()]
             else:
                 cleaned_reasons = []
+            if bool(row.get("history_influenced")):
+                history_reason = str(row.get("history_influence_reason", "") or "history-influenced score").strip()
+                if history_reason:
+                    cleaned_reasons = cleaned_reasons + [history_reason]
             reasons_label = " • ".join(cleaned_reasons[:2]) if cleaned_reasons else "-"
             body_rows.append(
                 "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
@@ -2777,7 +2785,7 @@ class ChonkService:
                     _escape_html(_format_saved_bytes(row.get("estimated_size"))),
                     _escape_html(str(savings_label)),
                     _escape_html(score_label),
-                    _escape_html(score_band),
+                    _escape_html(value_label),
                     _escape_html(reasons_label),
                     _escape_html(str(row.get("decision", "-"))),
                 )

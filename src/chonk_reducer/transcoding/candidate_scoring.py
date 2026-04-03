@@ -40,6 +40,10 @@ class CandidateScoreResult:
     file_size_points: float
     cached_max_savings_penalty: float
     historical_adjustment_points: float
+    confidence_adjustment_points: float
+    confidence_label: str
+    history_influenced: bool
+    history_influence_reason: str | None
 
 
 def _clamp(value: float, *, low: float, high: float) -> float:
@@ -91,6 +95,41 @@ def _reason_for_history_adjustment(*, points: float, context: str | None) -> str
     if context_value.startswith("library:"):
         return "history suggests better than estimate" if points > 0 else "history suggests worse than estimate"
     return "history suggests better than estimate" if points > 0 else "history suggests worse than estimate"
+
+
+def _confidence_adjustment_for_inputs(
+    *,
+    savings_bytes_points: float,
+    savings_percent_points: float,
+    has_historical_context: bool,
+    has_cached_max_savings_skip: bool,
+) -> float:
+    confidence_points = 0.0
+    if savings_bytes_points >= 18.0 and savings_percent_points >= 18.0:
+        confidence_points += 2.0
+    elif savings_bytes_points >= 8.0 and savings_percent_points >= 8.0:
+        confidence_points += 1.0
+    elif (savings_bytes_points > 0.0) != (savings_percent_points > 0.0):
+        confidence_points -= 1.0
+
+    if has_historical_context:
+        confidence_points += 1.0
+
+    if savings_bytes_points == 0.0 and savings_percent_points == 0.0:
+        confidence_points -= 2.0
+
+    if has_cached_max_savings_skip:
+        confidence_points -= 1.0
+
+    return _clamp(confidence_points, low=-3.0, high=3.0)
+
+
+def _confidence_label_for_adjustment(points: float) -> str:
+    if points >= 2.0:
+        return "high"
+    if points >= 0.0:
+        return "medium"
+    return "low"
 
 
 def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreResult:
@@ -152,6 +191,23 @@ def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreRes
         if reason:
             reasons.append(reason)
 
+    has_historical_context = (
+        inputs.historical_avg_savings_percent is not None
+        and inputs.estimated_savings_percent is not None
+    )
+    confidence_adjustment_points = _confidence_adjustment_for_inputs(
+        savings_bytes_points=savings_bytes_points,
+        savings_percent_points=savings_percent_points,
+        has_historical_context=has_historical_context,
+        has_cached_max_savings_skip=inputs.has_cached_max_savings_skip,
+    )
+    confidence_label = _confidence_label_for_adjustment(confidence_adjustment_points)
+
+    history_influenced = historical_adjustment_points != 0.0
+    history_influence_reason = None
+    if history_influenced:
+        history_influence_reason = "history-influenced score"
+
     score = (
         savings_bytes_points
         + savings_percent_points
@@ -159,6 +215,7 @@ def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreRes
         + file_size_points
         - cached_max_savings_penalty
         + historical_adjustment_points
+        + confidence_adjustment_points
     )
     score = round(max(0.0, score), 3)
 
@@ -171,6 +228,10 @@ def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreRes
         file_size_points=round(file_size_points, 3),
         cached_max_savings_penalty=round(cached_max_savings_penalty, 3),
         historical_adjustment_points=round(historical_adjustment_points, 3),
+        confidence_adjustment_points=round(confidence_adjustment_points, 3),
+        confidence_label=confidence_label,
+        history_influenced=history_influenced,
+        history_influence_reason=history_influence_reason,
     )
 
 

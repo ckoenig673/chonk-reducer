@@ -48,7 +48,7 @@ def _rank_candidates_by_score(cfg, cands: list[Path], *, cached_max_savings_by_p
     2) path string as a final deterministic fallback
     """
     cache_lookup = cached_max_savings_by_path or {}
-    ranked_rows: list[tuple[float, int, str, Path, tuple[str, ...]]] = []
+    ranked_rows: list[tuple[float, int, str, Path, tuple[str, ...], str, bool, float]] = []
 
     for idx, src in enumerate(cands):
         try:
@@ -62,11 +62,31 @@ def _rank_candidates_by_score(cfg, cands: list[Path], *, cached_max_savings_by_p
             cached_max_savings_percent=cache_lookup.get(src),
         )
         score_result = calculate_candidate_score(score_inputs)
-        ranked_rows.append((float(score_result.score), idx, str(src), src, tuple(score_result.reasons)))
+        ranked_rows.append(
+            (
+                float(score_result.score),
+                idx,
+                str(src),
+                src,
+                tuple(score_result.reasons),
+                str(getattr(score_result, "confidence_label", "medium") or "medium"),
+                bool(getattr(score_result, "history_influenced", False)),
+                float(getattr(score_result, "confidence_adjustment_points", 0.0) or 0.0),
+            )
+        )
 
     ranked_rows.sort(key=lambda row: (-row[0], row[1], row[2]))
     sorted_candidates = [row[3] for row in ranked_rows]
-    ranking_meta = {row[3]: {"score": row[0], "reasons": row[4]} for row in ranked_rows}
+    ranking_meta = {
+        row[3]: {
+            "score": row[0],
+            "reasons": row[4],
+            "confidence_label": row[5],
+            "history_influenced": row[6],
+            "confidence_adjustment_points": row[7],
+        }
+        for row in ranked_rows
+    }
     return sorted_candidates, ranking_meta
 
 
@@ -618,10 +638,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
             if history_points:
                 history_fragment = " (+history: %+0.1f)" % history_points
             logger.log(
-                "SCORE: %.3f%s reasons=%s file=%s"
+                "SCORE: %.3f%s conf=%s (%+0.1f) history_influenced=%s reasons=%s file=%s"
                 % (
                     float(_score_result.score),
                     history_fragment,
+                    str(getattr(_score_result, "confidence_label", "medium") or "medium"),
+                    float(getattr(_score_result, "confidence_adjustment_points", 0.0) or 0.0),
+                    "yes" if bool(getattr(_score_result, "history_influenced", False)) else "no",
                     ", ".join(_score_result.reasons[:3]) if _score_result.reasons else "none",
                     src,
                 )
@@ -658,7 +681,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                         "estimated_savings_pct": 0.0,
                         "score": round(float(_score_result.score), 3),
                         "score_band": _preview_score_band(float(_score_result.score)),
+                        "confidence_label": str(getattr(_score_result, "confidence_label", "medium") or "medium"),
+                        "confidence_adjustment_points": round(
+                            float(getattr(_score_result, "confidence_adjustment_points", 0.0) or 0.0), 3
+                        ),
                         "score_reasons": list(_score_result.reasons[:3]),
+                        "history_influenced": bool(getattr(_score_result, "history_influenced", False)),
+                        "history_influence_reason": getattr(_score_result, "history_influence_reason", None),
                         "decision": decision,
                     }
                     _progress(
@@ -725,7 +754,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     "estimated_savings_pct": round(float(estimated_savings_pct), 1),
                     "score": round(float(_score_result.score), 3),
                     "score_band": _preview_score_band(float(_score_result.score)),
+                    "confidence_label": str(getattr(_score_result, "confidence_label", "medium") or "medium"),
+                    "confidence_adjustment_points": round(
+                        float(getattr(_score_result, "confidence_adjustment_points", 0.0) or 0.0), 3
+                    ),
                     "score_reasons": list(_score_result.reasons[:3]),
+                    "history_influenced": bool(getattr(_score_result, "history_influenced", False)),
+                    "history_influence_reason": getattr(_score_result, "history_influence_reason", None),
                     "decision": decision,
                 }
                 _progress(
@@ -734,13 +769,15 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     files_evaluated=evaluated,
                 )
                 logger.log(
-                    "PREVIEW: %s before=%.2fGB estimated=%.2fGB savings=%.1f%% score=%.3f decision=%s"
+                    "PREVIEW: %s before=%.2fGB estimated=%.2fGB savings=%.1f%% score=%.3f conf=%s history_influenced=%s decision=%s"
                     % (
                         src,
                         (before_bytes / 1024 ** 3) if before_bytes else 0.0,
                         (estimated_bytes / 1024 ** 3) if estimated_bytes else 0.0,
                         estimated_savings_pct,
                         float(_score_result.score),
+                        str(getattr(_score_result, "confidence_label", "medium") or "medium"),
+                        "yes" if bool(getattr(_score_result, "history_influenced", False)) else "no",
                         decision,
                     )
                 )

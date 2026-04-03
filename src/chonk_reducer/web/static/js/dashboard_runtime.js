@@ -218,30 +218,43 @@
       }
       return Math.max(0, n).toFixed(3);
     }
-    function scoreBand(value, explicitBand) {
+    function scoreBand(value, explicitBand, confidenceLabel) {
+      var bandValue = '';
       if (explicitBand && String(explicitBand).trim() !== "") {
-        return String(explicitBand);
+        bandValue = String(explicitBand);
+      } else {
+        var n = Number(value);
+        if (isNaN(n)) {
+          return "-";
+        }
+        if (n >= 70) {
+          bandValue = "High value";
+        } else if (n >= 30) {
+          bandValue = "Medium value";
+        } else {
+          bandValue = "Low confidence";
+        }
       }
-      var n = Number(value);
-      if (isNaN(n)) {
-        return "-";
+      var confidence = String(confidenceLabel || "").trim();
+      if (confidence.length > 0) {
+        return bandValue + " (" + confidence + " confidence)";
       }
-      if (n >= 70) {
-        return "High value";
-      }
-      if (n >= 30) {
-        return "Medium value";
-      }
-      return "Low confidence";
+      return bandValue;
     }
-    function reasonsLabel(reasons) {
+    function reasonsLabel(reasons, historyInfluenced, historyInfluenceReason) {
       if (!Array.isArray(reasons) || !reasons.length) {
-        return "-";
+        if (!historyInfluenced) {
+          return "-";
+        }
+        return String(historyInfluenceReason || "history-influenced score");
       }
       var values = reasons
         .map(function (item) { return String(item || "").trim(); })
-        .filter(function (item) { return item.length > 0; })
-        .slice(0, 2);
+        .filter(function (item) { return item.length > 0; });
+      if (historyInfluenced) {
+        values.push(String(historyInfluenceReason || "history-influenced score"));
+      }
+      values = values.slice(0, 2);
       return values.length ? values.join(" • ") : "-";
     }
     var html = '';
@@ -255,8 +268,8 @@
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.estimated_size) + '</td>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savingsPctLabel + '</td>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + scoreLabel(row.score) + '</td>' +
-        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(scoreBand(row.score, row.score_band), '-') + '</td>' +
-        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(reasonsLabel(row.score_reasons), '-') + '</td>' +
+        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(scoreBand(row.score, row.score_band, row.confidence_label), '-') + '</td>' +
+        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(reasonsLabel(row.score_reasons, row.history_influenced, row.history_influence_reason), '-') + '</td>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.decision, '-') + '</td>' +
       '</tr>';
     }

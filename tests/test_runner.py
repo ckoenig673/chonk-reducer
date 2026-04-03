@@ -239,6 +239,9 @@ def test_preview_run_does_not_launch_ffmpeg_and_reports_estimates(tmp_path, monk
     assert parsed["estimated_size"] == 5699
     assert parsed["estimated_savings_pct"] == 43.0
     assert parsed["score_band"] in ("High value", "Medium value", "Low confidence")
+    assert parsed["confidence_label"] in ("high", "medium", "low")
+    assert "confidence_adjustment_points" in parsed
+    assert "history_influenced" in parsed
     assert parsed["decision"] == "Encode"
 
 
@@ -276,6 +279,8 @@ def test_preview_run_marks_skip_decisions_for_codec_and_resolution(tmp_path, mon
     assert "score" in rows[0]
     assert "score_band" in rows[0]
     assert "score_reasons" in rows[0]
+    assert "confidence_label" in rows[0]
+    assert "history_influenced" in rows[0]
 
 
 def test_run_ranks_candidates_by_score_descending(tmp_path, monkeypatch):
@@ -420,6 +425,41 @@ def test_select_historical_signal_uses_priority_codec_then_resolution_then_libra
         library_name="tv",
     )
     assert library_pick == (28.0, "library:tv")
+
+
+def test_preview_payload_marks_history_influence_when_applied(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, preview=True, max_files=1, stats_enabled=True, stats_path=tmp_path / "chonk.db")
+    src = cfg.media_root / "history-influence.mkv"
+    src.write_bytes(b"x" * 10_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src], {}, []))
+    monkeypatch.setattr(
+        runner,
+        "probe_video_stream",
+        lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 8_000_000},
+    )
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(
+        runner,
+        "get_history_summaries",
+        lambda *_a, **_k: {"by_codec": [{"codec": "h264", "avg_savings_pct": 80.0}]},
+    )
+
+    snapshots = []
+    rc = runner.run(progress_callback=lambda values: snapshots.append(values))
+
+    assert rc == 0
+    rows = [json.loads(item["preview_result_json"]) for item in snapshots if "preview_result_json" in item]
+    assert len(rows) == 1
+    assert rows[0]["history_influenced"] is True
+    assert rows[0]["history_influence_reason"] == "history-influenced score"
 
 
 def test_run_exits_when_free_space_too_low(tmp_path, monkeypatch):
