@@ -272,6 +272,119 @@ def test_preview_run_marks_skip_decisions_for_codec_and_resolution(tmp_path, mon
     rows = [json.loads(item["preview_result_json"]) for item in snapshots if "preview_result_json" in item]
     assert rows[0]["decision"] == "Skip (unsupported codec)"
     assert rows[1]["decision"] == "Skip (resolution rules)"
+    assert "score" in rows[0]
+    assert "score_reasons" in rows[0]
+
+
+def test_run_ranks_candidates_by_score_descending(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, dry_run=True, max_files=2)
+    low = cfg.media_root / "low.mkv"
+    high = cfg.media_root / "high.mkv"
+    low.write_bytes(b"x" * 5_000)
+    high.write_bytes(b"x" * 5_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([low, high], {}, []))
+    monkeypatch.setattr(runner, "build_candidate_score_inputs", lambda **kwargs: kwargs["src"])
+    monkeypatch.setattr(
+        runner,
+        "calculate_candidate_score",
+        lambda src: types.SimpleNamespace(
+            score=100.0 if src == high else 5.0,
+            reasons=("test",),
+        ),
+    )
+
+    seen_files: list[str] = []
+    rc = runner.run(
+        progress_callback=lambda values: seen_files.append(values["current_file"])
+        if values.get("current_file")
+        else None
+    )
+
+    assert rc == 0
+    assert seen_files[:2] == [str(high), str(low)]
+
+
+def test_run_ranking_ties_keep_existing_order(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, dry_run=True, max_files=2)
+    first = cfg.media_root / "first.mkv"
+    second = cfg.media_root / "second.mkv"
+    first.write_bytes(b"x" * 5_000)
+    second.write_bytes(b"x" * 5_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([first, second], {}, []))
+    monkeypatch.setattr(runner, "build_candidate_score_inputs", lambda **kwargs: kwargs["src"])
+    monkeypatch.setattr(
+        runner,
+        "calculate_candidate_score",
+        lambda _src: types.SimpleNamespace(score=25.0, reasons=("tied",)),
+    )
+
+    seen_files: list[str] = []
+    rc = runner.run(
+        progress_callback=lambda values: seen_files.append(values["current_file"])
+        if values.get("current_file")
+        else None
+    )
+
+    assert rc == 0
+    assert seen_files[:2] == [str(first), str(second)]
+
+
+def test_run_skip_eligibility_rules_unchanged_with_ranking(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=2)
+    skipped = cfg.media_root / "skip-me.mkv"
+    encoded = cfg.media_root / "encode-me.mkv"
+    skipped.write_bytes(b"x" * 8_000)
+    encoded.write_bytes(b"x" * 6_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([skipped, encoded], {}, []))
+    monkeypatch.setattr(runner, "build_candidate_score_inputs", lambda **kwargs: kwargs["src"])
+    monkeypatch.setattr(
+        runner,
+        "calculate_candidate_score",
+        lambda src: types.SimpleNamespace(score=99.0 if src == skipped else 1.0, reasons=("rank",)),
+    )
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1_000_000})
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded_path, cfg_obj, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "evaluate_skip", lambda src, *_a, **_k: ("codec", "codec=h264") if src == skipped else None)
+
+    encoded_calls = {"count": 0}
+
+    def _encode(src, encoded_path, cfg_obj, logger):
+        del cfg_obj, logger
+        encoded_calls["count"] += 1
+        encoded_path.write_bytes(b"x" * 1_000)
+
+    monkeypatch.setattr(runner, "encode_qsv", _encode)
+
+    rc = runner.run()
+
+    assert rc == 0
+    assert encoded_calls["count"] == 1
 
 
 def test_run_exits_when_free_space_too_low(tmp_path, monkeypatch):

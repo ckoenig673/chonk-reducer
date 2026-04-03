@@ -38,6 +38,37 @@ def _display_name(src: Path) -> str:
     return src.stem or src.name
 
 
+def _rank_candidates_by_score(cfg, cands: list[Path], *, cached_max_savings_by_path: dict[Path, float | None] | None = None):
+    """
+    Rank candidates by descending score while preserving deterministic tie behavior.
+
+    Tie-breaker strategy:
+    1) keep the existing discovery order (already deterministic from prior logic)
+    2) path string as a final deterministic fallback
+    """
+    cache_lookup = cached_max_savings_by_path or {}
+    ranked_rows: list[tuple[float, int, str, Path, tuple[str, ...]]] = []
+
+    for idx, src in enumerate(cands):
+        try:
+            file_size_bytes = int(src.stat().st_size)
+        except Exception:
+            file_size_bytes = 0
+        score_inputs = build_candidate_score_inputs(
+            cfg=cfg,
+            src=src,
+            file_size_bytes=file_size_bytes,
+            cached_max_savings_percent=cache_lookup.get(src),
+        )
+        score_result = calculate_candidate_score(score_inputs)
+        ranked_rows.append((float(score_result.score), idx, str(src), src, tuple(score_result.reasons)))
+
+    ranked_rows.sort(key=lambda row: (-row[0], row[1], row[2]))
+    sorted_candidates = [row[3] for row in ranked_rows]
+    ranking_meta = {row[3]: {"score": row[0], "reasons": row[4]} for row in ranked_rows}
+    return sorted_candidates, ranking_meta
+
+
 def _validate_config(cfg, logger: Logger) -> bool:
     errors = []
 
@@ -223,6 +254,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
     ignored_folders = {}
     recent_skipped: list[tuple[Path, int]] = []
     marked_failed: list[Path] = []
+    ranking_meta: dict[Path, dict[str, object]] = {}
 
     show_stats = {}  # show -> {files,before,after,elapsed}
     cancelled = False
@@ -286,6 +318,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         if getattr(cfg, "max_savings_percent", 0):
             threshold = float(cfg.max_savings_percent)
             filtered_candidates: list[Path] = []
+            cached_threshold_hits: dict[Path, float | None] = {}
             for cand in cands:
                 cached = get_policy_skip_cache(cfg, logger, src=cand, skip_reason="max_savings")
                 if cached is None:
@@ -309,7 +342,27 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 # Threshold was raised; this cached policy no longer applies.
                 delete_policy_skip_cache(cfg, logger, src=cand, skip_reason="max_savings")
                 filtered_candidates.append(cand)
+                cached_threshold_hits[cand] = cached_pct
             cands = filtered_candidates
+        else:
+            cached_threshold_hits = {}
+
+        if cands:
+            cands, ranking_meta = _rank_candidates_by_score(
+                cfg,
+                cands,
+                cached_max_savings_by_path=cached_threshold_hits,
+            )
+            logger.log("===== CANDIDATE RANKING (SCORE) =====")
+            for src in cands[: min(10, len(cands))]:
+                rank_row = ranking_meta.get(src, {})
+                rank_score = float(rank_row.get("score", 0.0))
+                reasons = tuple(rank_row.get("reasons", ()))
+                reasons_text = ", ".join(reasons[:2]) if reasons else "none"
+                logger.log(f"RANK score={rank_score:.3f} reasons={reasons_text} :: {src}")
+            if len(cands) > 10:
+                logger.log(f"...and {len(cands) - 10} more ranked candidates")
+            logger.log("=====================================")
 
         logger.log(f"Found {len(cands)} candidates")
         _progress(candidates_found=len(cands), current_file="", files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=0, files_failed=failed, bytes_saved=saved_bytes_run)
@@ -460,6 +513,14 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 file_mtime=file_mtime,
             )
             _score_result = calculate_candidate_score(_score_inputs)
+            logger.log(
+                "SCORE: %.3f reasons=%s file=%s"
+                % (
+                    float(_score_result.score),
+                    ", ".join(_score_result.reasons[:3]) if _score_result.reasons else "none",
+                    src,
+                )
+            )
 
             # Pre-encode skip evaluation (codec/resolution policies)
             skip = evaluate_skip(src, before_probe, cfg)
@@ -490,9 +551,15 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                         "original_size": int(before_bytes or 0),
                         "estimated_size": int(before_bytes or 0),
                         "estimated_savings_pct": 0.0,
+                        "score": round(float(_score_result.score), 3),
+                        "score_reasons": list(_score_result.reasons[:3]),
                         "decision": decision,
                     }
-                    _progress(preview_result=preview_result, preview_result_json=json.dumps(preview_result), files_evaluated=evaluated)
+                    _progress(
+                        preview_result=preview_result,
+                        preview_result_json=json.dumps(preview_result),
+                        files_evaluated=evaluated,
+                    )
                     done += 1
                 continue
 
@@ -542,6 +609,8 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     "original_size": int(before_bytes or 0),
                     "estimated_size": int(estimated_bytes or 0),
                     "estimated_savings_pct": round(float(estimated_savings_pct), 1),
+                    "score": round(float(_score_result.score), 3),
+                    "score_reasons": list(_score_result.reasons[:3]),
                     "decision": decision,
                 }
                 _progress(
@@ -550,12 +619,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     files_evaluated=evaluated,
                 )
                 logger.log(
-                    "PREVIEW: %s before=%.2fGB estimated=%.2fGB savings=%.1f%% decision=%s"
+                    "PREVIEW: %s before=%.2fGB estimated=%.2fGB savings=%.1f%% score=%.3f decision=%s"
                     % (
                         src,
                         (before_bytes / 1024 ** 3) if before_bytes else 0.0,
                         (estimated_bytes / 1024 ** 3) if estimated_bytes else 0.0,
                         estimated_savings_pct,
+                        float(_score_result.score),
                         decision,
                     )
                 )
