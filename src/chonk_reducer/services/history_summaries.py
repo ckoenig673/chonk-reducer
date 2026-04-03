@@ -23,7 +23,7 @@ _RESOLUTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 @dataclass(frozen=True)
 class _CacheEntry:
-    signature: tuple[int, int]
+    signature: tuple[int, ...]
     computed_at: float
     value: dict[str, Any]
 
@@ -47,7 +47,6 @@ class HistorySummariesService:
                 "by_library": [],
             }
 
-        signature = self._build_signature(db_file)
         now_value = time.time() if now_ts is None else float(now_ts)
         cache_key = str(db_file.resolve())
 
@@ -55,16 +54,45 @@ class HistorySummariesService:
             existing = self._cache.get(cache_key)
             if existing is not None:
                 is_fresh = (now_value - existing.computed_at) < self._cache_ttl_seconds
-                if is_fresh and existing.signature == signature:
+                if is_fresh:
                     return existing.value
+
+            signature = self._build_signature(db_file)
+            if existing is not None and existing.signature == signature:
+                self._cache[cache_key] = _CacheEntry(signature=signature, computed_at=now_value, value=existing.value)
+                return existing.value
 
             computed = self._compute(db_file, generated_at=int(now_value))
             self._cache[cache_key] = _CacheEntry(signature=signature, computed_at=now_value, value=computed)
             return computed
 
-    def _build_signature(self, db_file: Path) -> tuple[int, int]:
-        stat = db_file.stat()
-        return (int(stat.st_mtime_ns), int(stat.st_size))
+    def _build_signature(self, db_file: Path) -> tuple[int, int, int, int, int, int]:
+        db_stat = db_file.stat()
+        wal_file = Path(f"{db_file}-wal")
+        shm_file = Path(f"{db_file}-shm")
+
+        wal_mtime_ns = 0
+        wal_size = 0
+        if wal_file.exists():
+            wal_stat = wal_file.stat()
+            wal_mtime_ns = int(wal_stat.st_mtime_ns)
+            wal_size = int(wal_stat.st_size)
+
+        shm_mtime_ns = 0
+        shm_size = 0
+        if shm_file.exists():
+            shm_stat = shm_file.stat()
+            shm_mtime_ns = int(shm_stat.st_mtime_ns)
+            shm_size = int(shm_stat.st_size)
+
+        return (
+            int(db_stat.st_mtime_ns),
+            int(db_stat.st_size),
+            wal_mtime_ns,
+            wal_size,
+            shm_mtime_ns,
+            shm_size,
+        )
 
     def _compute(self, db_file: Path, *, generated_at: int) -> dict[str, Any]:
         conn = sqlite3.connect(str(db_file))
