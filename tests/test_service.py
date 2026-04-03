@@ -1049,7 +1049,7 @@ def test_post_run_library_id_starts_manual_run(monkeypatch):
 def test_disabled_library_not_scheduled_or_manually_runnable(tmp_path, monkeypatch):
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
-    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service = ChonkService(ServiceSettings(enabled=False, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
     service.toggle_library({"library_id": "2", "enabled": "0"})
 
     service.register_jobs()
@@ -1271,7 +1271,7 @@ def test_api_status_returns_current_runtime_snapshot_data():
 
 
 def test_api_status_endpoint_remains_responsive_while_run_active(monkeypatch):
-    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service = ChonkService(ServiceSettings(enabled=False, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
     started = threading.Event()
     progress_reached = threading.Event()
     release = threading.Event()
@@ -5357,7 +5357,7 @@ def test_top_savings_runs_calculation(tmp_path, monkeypatch):
     _seed_run(db_path, library="movies", ts_end="2026-02-01T00:00:00", success_count=1, saved_bytes=1200)
     _seed_run(db_path, library="tv", ts_end="2026-02-02T00:00:00", success_count=2, saved_bytes=800)
 
-    service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
+    service = ChonkService(ServiceSettings(enabled=False, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
     rows = service._analytics_top_savings_runs(limit=2)
 
     assert rows[0]["saved_bytes"] == 1200
@@ -5376,7 +5376,10 @@ def test_preview_savings_summary_calculation_and_render():
                 "estimated_savings_pct": "30.0",
                 "score": 83.25,
                 "score_band": "High value",
+                "confidence_label": "high",
                 "score_reasons": ["high projected GB savings", "strong projected % savings"],
+                "history_influenced": True,
+                "history_influence_reason": "history-influenced score",
                 "decision": "Encode",
             },
             {
@@ -5386,6 +5389,8 @@ def test_preview_savings_summary_calculation_and_render():
                 "estimated_savings_pct": "5.0",
                 "score": 12.0,
                 "score_reasons": [],
+                "confidence_label": "low",
+                "history_influenced": False,
                 "decision": "Skip",
             },
         ],
@@ -5404,7 +5409,7 @@ def test_preview_savings_summary_calculation_and_render():
     assert ">Score<" in html
     assert ">Value<" in html
     assert ">Why<" in html
-    assert "High value" in html
+    assert "High value (high confidence)" in html
     assert "high projected GB savings • strong projected % savings" in html
 
 
