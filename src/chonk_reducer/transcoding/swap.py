@@ -4,8 +4,8 @@ import os
 import shutil
 from pathlib import Path
 
-from .config import Config
-from .logging_utils import Logger, make_run_stamp
+from ..config import Config
+from ..logging_utils import Logger, make_run_stamp
 
 
 def _touch(path: Path) -> None:

@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from .config import Config
+from ..config import Config
 from .ffmpeg_utils import CmdError, run_cmd, run_cmd_capture
-from .logging_utils import Logger
+from ..logging_utils import Logger
 
 
 def parse_ffmpeg_progress_line(line: str) -> Optional[tuple[str, str]]:

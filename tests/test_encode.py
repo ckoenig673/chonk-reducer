@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from chonk_reducer.encode import _encoding_progress_update, parse_ffmpeg_progress_line
+from chonk_reducer.transcoding.encode import _encoding_progress_update, parse_ffmpeg_progress_line
 
 
 def test_parse_ffmpeg_progress_line():
