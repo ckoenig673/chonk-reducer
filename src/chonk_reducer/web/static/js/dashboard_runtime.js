@@ -205,17 +205,58 @@
     }
     setText("runtime-preview-estimated-pct", pctLabel, "-");
     if (!rows || !rows.length) {
-      body.innerHTML = '<tr><td colspan="5" style="padding: 0.35rem;">No preview results yet.</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" style="padding: 0.35rem;">No preview results yet.</td></tr>';
       return;
+    }
+    function scoreLabel(scoreValue) {
+      if (scoreValue === null || scoreValue === undefined || String(scoreValue).trim() === "") {
+        return "-";
+      }
+      var n = Number(scoreValue);
+      if (isNaN(n)) {
+        return "-";
+      }
+      return Math.max(0, n).toFixed(3);
+    }
+    function scoreBand(value, explicitBand) {
+      if (explicitBand && String(explicitBand).trim() !== "") {
+        return String(explicitBand);
+      }
+      var n = Number(value);
+      if (isNaN(n)) {
+        return "-";
+      }
+      if (n >= 70) {
+        return "High value";
+      }
+      if (n >= 30) {
+        return "Medium value";
+      }
+      return "Low confidence";
+    }
+    function reasonsLabel(reasons) {
+      if (!Array.isArray(reasons) || !reasons.length) {
+        return "-";
+      }
+      var values = reasons
+        .map(function (item) { return String(item || "").trim(); })
+        .filter(function (item) { return item.length > 0; })
+        .slice(0, 2);
+      return values.length ? values.join(" • ") : "-";
     }
     var html = '';
     for (var i = 0; i < rows.length; i += 1) {
       var row = rows[i] || {};
+      var savingsPct = textValue(row.estimated_savings_pct, '-');
+      var savingsPctLabel = savingsPct === '-' ? '-' : (savingsPct + '%');
       html += '<tr>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.file, '-') + '</td>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.original_size) + '</td>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savedBytesLabel(row.estimated_size) + '</td>' +
-        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.estimated_savings_pct, '-') + '%</td>' +
+        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + savingsPctLabel + '</td>' +
+        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + scoreLabel(row.score) + '</td>' +
+        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(scoreBand(row.score, row.score_band), '-') + '</td>' +
+        '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(reasonsLabel(row.score_reasons), '-') + '</td>' +
         '<td style="border-top:1px solid #ddd; padding:0.3rem;">' + textValue(row.decision, '-') + '</td>' +
       '</tr>';
     }

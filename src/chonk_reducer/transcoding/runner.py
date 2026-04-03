@@ -69,6 +69,15 @@ def _rank_candidates_by_score(cfg, cands: list[Path], *, cached_max_savings_by_p
     return sorted_candidates, ranking_meta
 
 
+def _preview_score_band(score: float) -> str:
+    score_value = max(0.0, float(score or 0.0))
+    if score_value >= 70.0:
+        return "High value"
+    if score_value >= 30.0:
+        return "Medium value"
+    return "Low confidence"
+
+
 def _validate_config(cfg, logger: Logger) -> bool:
     errors = []
 
@@ -552,6 +561,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                         "estimated_size": int(before_bytes or 0),
                         "estimated_savings_pct": 0.0,
                         "score": round(float(_score_result.score), 3),
+                        "score_band": _preview_score_band(float(_score_result.score)),
                         "score_reasons": list(_score_result.reasons[:3]),
                         "decision": decision,
                     }
@@ -610,6 +620,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     "estimated_size": int(estimated_bytes or 0),
                     "estimated_savings_pct": round(float(estimated_savings_pct), 1),
                     "score": round(float(_score_result.score), 3),
+                    "score_band": _preview_score_band(float(_score_result.score)),
                     "score_reasons": list(_score_result.reasons[:3]),
                     "decision": decision,
                 }

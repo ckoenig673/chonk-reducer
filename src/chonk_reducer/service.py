@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.48.1") or "1.48.1").strip() or "1.48.1"
+APP_VERSION = (os.getenv("APP_VERSION", "1.48.2") or "1.48.2").strip() or "1.48.2"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -2760,19 +2760,50 @@ class ChonkService:
         for row in rows[:25]:
             savings_pct = row.get("estimated_savings_pct", "")
             savings_label = "%s%%" % savings_pct if savings_pct != "" else "-"
+            score_raw = row.get("score")
+            score_label = self._preview_score_label(score_raw)
+            score_band = str(row.get("score_band", "") or "").strip() or self._preview_score_band(score_raw)
+            reason_items = row.get("score_reasons")
+            if isinstance(reason_items, (list, tuple)):
+                cleaned_reasons = [str(item).strip() for item in reason_items if str(item).strip()]
+            else:
+                cleaned_reasons = []
+            reasons_label = " • ".join(cleaned_reasons[:2]) if cleaned_reasons else "-"
             body_rows.append(
-                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
                     _escape_html(str(row.get("file", "-"))),
                     _escape_html(_format_saved_bytes(row.get("original_size"))),
                     _escape_html(_format_saved_bytes(row.get("estimated_size"))),
                     _escape_html(str(savings_label)),
+                    _escape_html(score_label),
+                    _escape_html(score_band),
+                    _escape_html(reasons_label),
                     _escape_html(str(row.get("decision", "-"))),
                 )
             )
         if not body_rows:
-            body_rows.append('<tr><td colspan="5">No preview results yet.</td></tr>')
-        return """<section id="runtime-preview-results" class="dashboard-preview-panel"><div class="dashboard-preview-header"><h3 class="dashboard-preview-title">Preview Results</h3><button id="runtime-clear-preview-button" type="button" class="secondary-button">Clear Preview Results</button></div><div class="dashboard-preview-details">%s</div>%s<div class="table-frame"><table class="data-table"><thead><tr><th>File</th><th>Original Size</th><th>Estimated Size</th><th>Savings %%</th><th>Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div></section>""" % (details, summary_html, "".join(body_rows))
+            body_rows.append('<tr><td colspan="8">No preview results yet.</td></tr>')
+        return """<section id="runtime-preview-results" class="dashboard-preview-panel"><div class="dashboard-preview-header"><h3 class="dashboard-preview-title">Preview Results</h3><button id="runtime-clear-preview-button" type="button" class="secondary-button">Clear Preview Results</button></div><div class="dashboard-preview-details">%s</div>%s<div class="table-frame"><table class="data-table"><thead><tr><th>File</th><th>Original Size</th><th>Estimated Size</th><th>Savings %%</th><th>Score</th><th>Value</th><th>Why</th><th>Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div></section>""" % (details, summary_html, "".join(body_rows))
+
+    @staticmethod
+    def _preview_score_label(raw_score: object) -> str:
+        try:
+            return "%.3f" % max(0.0, float(raw_score or 0.0))
+        except Exception:
+            return "-"
+
+    @staticmethod
+    def _preview_score_band(raw_score: object) -> str:
+        try:
+            score = max(0.0, float(raw_score or 0.0))
+        except Exception:
+            return "-"
+        if score >= 70.0:
+            return "High value"
+        if score >= 30.0:
+            return "Medium value"
+        return "Low confidence"
 
     def clear_preview_results(self) -> Dict[str, str]:
         with self._job_state_lock:
