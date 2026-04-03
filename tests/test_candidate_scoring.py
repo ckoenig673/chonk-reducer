@@ -119,7 +119,7 @@ def test_calculate_candidate_score_cached_max_savings_penalty_reduces_score(tmp_
 
     assert penalized_result.score < baseline_result.score
     assert penalized_result.cached_max_savings_penalty == 30.0
-    assert "cached_max_savings_penalty:60.0%" in penalized_result.reasons
+    assert "reduced by prior max-savings skip signal" in penalized_result.reasons
 
 
 def test_calculate_candidate_score_handles_missing_optional_values(tmp_path: Path):
@@ -155,9 +155,45 @@ def test_calculate_candidate_score_reasons_are_consistent_order(tmp_path: Path):
     result = calculate_candidate_score(inputs)
 
     assert result.reasons == (
-        f"savings_bytes:{1024 ** 3}B",
-        "savings_percent:50.0%",
-        "library_priority:100",
-        f"file_size:{2 * 1024 ** 3}B",
-        "cached_max_savings_penalty:63.2%",
+        "high projected GB savings",
+        "strong projected % savings",
+        "high library priority",
+        "large source file",
+        "reduced by prior max-savings skip signal",
     )
+
+
+def test_calculate_candidate_score_reasons_are_readable_and_high_signal(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=85),
+        src=tmp_path / "Readable.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=int(0.75 * 1024 ** 3),
+        estimated_savings_percent=38.0,
+    )
+
+    result = calculate_candidate_score(inputs)
+
+    assert result.reasons == (
+        "high projected GB savings",
+        "strong projected % savings",
+        "elevated library priority",
+        "large source file",
+    )
+    assert all(":" not in reason for reason in result.reasons)
+    assert all("_" not in reason for reason in result.reasons)
+
+
+def test_calculate_candidate_score_omits_low_value_reasons_for_weak_candidate(tmp_path: Path):
+    weak = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=10),
+        src=tmp_path / "WeakReasons.mkv",
+        file_size_bytes=300 * 1024 ** 2,
+        estimated_encoded_size_bytes=280 * 1024 ** 2,
+        estimated_savings_percent=6.0,
+    )
+
+    result = calculate_candidate_score(weak)
+
+    assert result.score > 0.0
+    assert result.reasons == ()
