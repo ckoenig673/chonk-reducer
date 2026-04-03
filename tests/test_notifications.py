@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import urllib.error
 
-from chonk_reducer import notifications
+from chonk_reducer.services import notifications
 from chonk_reducer import secrets
 
 

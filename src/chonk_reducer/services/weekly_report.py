@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .discord_utils import send_discord_message, notify_weekly_enabled
-from .logging_utils import Logger
-from .stats import fetch_encodes_since
+from ..logging_utils import Logger
+from ..stats import fetch_encodes_since
 
 
 def _env(name: str, default: str) -> str:

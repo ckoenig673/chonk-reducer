@@ -8,7 +8,7 @@ except Exception:  # pragma: no cover - fallback runtime
     class Request:  # type: ignore[no-redef]
         pass
 
-from ... import notifications
+from ...services import notifications
 
 
 def register_action_routes(service, JSONResponse, RedirectResponse) -> None:
