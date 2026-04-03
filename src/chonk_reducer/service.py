@@ -3379,7 +3379,7 @@ class ChonkService:
 
     def _history_table_html(self, rows: List[Dict[str, str]]) -> str:
         if not rows:
-            return '<div style="padding: 0.5rem; border: 1px solid #ddd;">No completed encode history recorded yet.</div>'
+            return '<div class="common-bordered-message">No completed encode history recorded yet.</div>'
 
         row_html = []
         for row in rows:
@@ -3396,22 +3396,22 @@ class ChonkService:
                 )
             )
 
-        return """<table style=\"border-collapse: collapse; width: 100%%; border: 1px solid #ddd;\">
+        return """<div class="table-frame"><table class="data-table">
   <thead>
     <tr>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Library</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">File Name</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Original Size</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">New Size</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Savings %%</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Savings Amount</th>
-      <th style=\"text-align: left; border-bottom: 1px solid #ddd; padding: 0.25rem;\">Date / Time</th>
+      <th>Library</th>
+      <th>File Name</th>
+      <th>Original Size</th>
+      <th>New Size</th>
+      <th>Savings %%</th>
+      <th>Savings Amount</th>
+      <th>Date / Time</th>
     </tr>
   </thead>
   <tbody>
     %s
   </tbody>
-</table>""" % "".join(row_html)
+</table></div>""" % "".join(row_html)
 
     def _lifetime_savings(self) -> Optional[Dict[str, int]]:
         db_path = Path(_env("STATS_PATH", "/config/chonk.db"))
