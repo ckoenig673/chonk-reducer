@@ -5,7 +5,7 @@ from typing import Callable, Dict, Optional
 
 from ..config import Config
 from .ffmpeg_utils import CmdError, run_cmd, run_cmd_capture
-from ..logging_utils import Logger
+from ..core.logging_utils import Logger
 
 
 def parse_ffmpeg_progress_line(line: str) -> Optional[tuple[str, str]]:

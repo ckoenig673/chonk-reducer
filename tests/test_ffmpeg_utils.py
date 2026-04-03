@@ -7,7 +7,7 @@ import time
 import pytest
 
 from chonk_reducer.transcoding.ffmpeg_utils import CmdError, run_cmd
-from chonk_reducer.logging_utils import Logger
+from chonk_reducer.core.logging_utils import Logger
 
 
 def test_run_cmd_terminates_process_when_cancelled(tmp_path):

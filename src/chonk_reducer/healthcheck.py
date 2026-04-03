@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import load_config
 from .services.discord_utils import send_discord_message, notify_healthcheck_enabled
-from .logging_utils import Logger
+from .core.logging_utils import Logger
 
 
 def _env(name: str, default: str) -> str:

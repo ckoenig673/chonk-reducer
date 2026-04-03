@@ -4,7 +4,7 @@ import sqlite3
 import urllib.error
 
 from chonk_reducer.services import notifications
-from chonk_reducer import secrets
+from chonk_reducer.core import secrets
 
 
 def _seed_settings(db_path, values):

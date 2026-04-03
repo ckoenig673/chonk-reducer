@@ -13,8 +13,8 @@ from ..cleanup import cleanup_baks, cleanup_logs, cleanup_work_dir, cleanup_medi
 from ..config import load_config
 from ..discovery import gather_candidates
 from .encode import encode_qsv
-from ..lock import acquire_lock, release_lock
-from ..logging_utils import Logger, make_run_stamp
+from ..core.lock import acquire_lock, release_lock
+from ..core.logging_utils import Logger, make_run_stamp
 from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream

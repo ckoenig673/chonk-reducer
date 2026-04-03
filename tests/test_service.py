@@ -3915,7 +3915,7 @@ def test_settings_route_renders_notification_fields(tmp_path, monkeypatch):
 
 
 def test_settings_notification_secrets_are_masked_and_never_echoed(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -3933,7 +3933,7 @@ def test_settings_notification_secrets_are_masked_and_never_echoed(tmp_path, mon
 
 
 def test_blank_secret_submission_preserves_existing_notification_secret(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -3950,7 +3950,7 @@ def test_blank_secret_submission_preserves_existing_notification_secret(tmp_path
 
 
 def test_replacing_secret_updates_encrypted_value(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -3968,7 +3968,7 @@ def test_replacing_secret_updates_encrypted_value(tmp_path, monkeypatch):
 
 
 def test_secret_webhook_round_trip_preserves_exact_value_after_decrypt(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -3986,7 +3986,7 @@ def test_secret_webhook_round_trip_preserves_exact_value_after_decrypt(tmp_path,
 
 
 def test_secret_webhook_special_characters_survive_post_round_trip(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -4002,7 +4002,7 @@ def test_secret_webhook_special_characters_survive_post_round_trip(tmp_path, mon
 
 
 def test_masked_secret_placeholder_submission_preserves_existing_notification_secret(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
@@ -4019,7 +4019,7 @@ def test_masked_secret_placeholder_submission_preserves_existing_notification_se
 
 
 def test_post_settings_persists_notification_fields_encrypted(tmp_path, monkeypatch):
-    from chonk_reducer import secrets
+    from chonk_reducer.core import secrets
 
     db_path = tmp_path / "chonk.db"
     monkeypatch.setenv("STATS_PATH", str(db_path))
