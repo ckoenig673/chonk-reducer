@@ -5369,8 +5369,25 @@ def test_preview_savings_summary_calculation_and_render():
     service = ChonkService(ServiceSettings(enabled=True, host="0.0.0.0", port=8080, movie_schedule="", tv_schedule=""))
     snapshot = {
         "preview_results": [
-            {"file": "a.mkv", "original_size": 1000, "estimated_size": 700, "estimated_savings_pct": "30.0", "decision": "Encode"},
-            {"file": "b.mkv", "original_size": 1000, "estimated_size": 950, "estimated_savings_pct": "5.0", "decision": "Skip"},
+            {
+                "file": "a.mkv",
+                "original_size": 1000,
+                "estimated_size": 700,
+                "estimated_savings_pct": "30.0",
+                "score": 83.25,
+                "score_band": "High value",
+                "score_reasons": ["high projected GB savings", "strong projected % savings"],
+                "decision": "Encode",
+            },
+            {
+                "file": "b.mkv",
+                "original_size": 1000,
+                "estimated_size": 950,
+                "estimated_savings_pct": "5.0",
+                "score": 12.0,
+                "score_reasons": [],
+                "decision": "Skip",
+            },
         ],
         "preview_library": "movies",
         "preview_generated_at": "2026-01-01T00:00:00Z",
@@ -5384,6 +5401,11 @@ def test_preview_savings_summary_calculation_and_render():
     html = service._preview_results_html(snapshot)
     assert "Preview Summary" in html
     assert "Estimated Total Savings" in html
+    assert ">Score<" in html
+    assert ">Value<" in html
+    assert ">Why<" in html
+    assert "High value" in html
+    assert "high projected GB savings • strong projected % savings" in html
 
 
 def test_dashboard_summary_widget_render(tmp_path, monkeypatch):

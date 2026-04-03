@@ -238,6 +238,7 @@ def test_preview_run_does_not_launch_ffmpeg_and_reports_estimates(tmp_path, monk
     assert parsed["file"].endswith("movie.mkv")
     assert parsed["estimated_size"] == 5699
     assert parsed["estimated_savings_pct"] == 43.0
+    assert parsed["score_band"] in ("High value", "Medium value", "Low confidence")
     assert parsed["decision"] == "Encode"
 
 
@@ -273,6 +274,7 @@ def test_preview_run_marks_skip_decisions_for_codec_and_resolution(tmp_path, mon
     assert rows[0]["decision"] == "Skip (unsupported codec)"
     assert rows[1]["decision"] == "Skip (resolution rules)"
     assert "score" in rows[0]
+    assert "score_band" in rows[0]
     assert "score_reasons" in rows[0]
 
 
