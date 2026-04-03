@@ -389,6 +389,39 @@ def test_run_skip_eligibility_rules_unchanged_with_ranking(tmp_path, monkeypatch
     assert encoded_calls["count"] == 1
 
 
+def test_select_historical_signal_uses_priority_codec_then_resolution_then_library(tmp_path):
+    src = tmp_path / "Movie.1080p.mkv"
+    summaries = {
+        "by_codec": [{"codec": "h264", "avg_savings_pct": 41.0}],
+        "by_resolution_bucket": [{"resolution_bucket": "1080p", "avg_savings_pct": 32.0}],
+        "by_library": [{"library": "tv", "avg_savings_pct": 28.0}],
+    }
+
+    codec_pick = runner._select_historical_signal(
+        history_summaries=summaries,
+        src=src,
+        before_probe={"codec": "h264", "height": 1080},
+        library_name="tv",
+    )
+    assert codec_pick == (41.0, "codec:h264")
+
+    resolution_pick = runner._select_historical_signal(
+        history_summaries=summaries,
+        src=src,
+        before_probe={"codec": "mpeg2video", "height": 1080},
+        library_name="tv",
+    )
+    assert resolution_pick == (32.0, "resolution:1080p")
+
+    library_pick = runner._select_historical_signal(
+        history_summaries=summaries,
+        src=tmp_path / "Movie.Unknown.mkv",
+        before_probe={"codec": "mpeg2video", "height": 240},
+        library_name="tv",
+    )
+    assert library_pick == (28.0, "library:tv")
+
+
 def test_run_exits_when_free_space_too_low(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, min_media_free_gb=10)
 

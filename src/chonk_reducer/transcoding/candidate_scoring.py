@@ -24,6 +24,8 @@ class CandidateScoreInputs:
     resolution_tag_hints: tuple[str, ...]
     has_cached_max_savings_skip: bool
     cached_max_savings_percent: float | None
+    historical_avg_savings_percent: float | None = None
+    historical_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class CandidateScoreResult:
     library_priority_points: float
     file_size_points: float
     cached_max_savings_penalty: float
+    historical_adjustment_points: float
 
 
 def _clamp(value: float, *, low: float, high: float) -> float:
@@ -71,6 +74,23 @@ def _reason_for_file_size(points: float) -> str | None:
     if points >= 6.0:
         return "large source file"
     return None
+
+
+def _reason_for_history_adjustment(*, points: float, context: str | None) -> str | None:
+    if points == 0:
+        return None
+    context_value = str(context or "").strip().lower()
+    if context_value.startswith("codec:"):
+        return "historically strong savings for this codec" if points > 0 else "historically weak savings for this codec"
+    if context_value.startswith("resolution:"):
+        return (
+            "history suggests better than estimate"
+            if points > 0
+            else "historically weak savings for this resolution"
+        )
+    if context_value.startswith("library:"):
+        return "history suggests better than estimate" if points > 0 else "history suggests worse than estimate"
+    return "history suggests better than estimate" if points > 0 else "history suggests worse than estimate"
 
 
 def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreResult:
@@ -118,12 +138,27 @@ def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreRes
         cached_max_savings_penalty = 30.0
         reasons.append("reduced by prior max-savings skip signal")
 
+    historical_adjustment_points = 0.0
+    if (
+        inputs.historical_avg_savings_percent is not None
+        and inputs.estimated_savings_percent is not None
+    ):
+        delta = float(inputs.historical_avg_savings_percent) - float(inputs.estimated_savings_percent)
+        historical_adjustment_points = _clamp(delta * 0.5, low=-10.0, high=10.0)
+        reason = _reason_for_history_adjustment(
+            points=historical_adjustment_points,
+            context=inputs.historical_context,
+        )
+        if reason:
+            reasons.append(reason)
+
     score = (
         savings_bytes_points
         + savings_percent_points
         + library_priority_points
         + file_size_points
         - cached_max_savings_penalty
+        + historical_adjustment_points
     )
     score = round(max(0.0, score), 3)
 
@@ -135,6 +170,7 @@ def calculate_candidate_score(inputs: CandidateScoreInputs) -> CandidateScoreRes
         library_priority_points=round(library_priority_points, 3),
         file_size_points=round(file_size_points, 3),
         cached_max_savings_penalty=round(cached_max_savings_penalty, 3),
+        historical_adjustment_points=round(historical_adjustment_points, 3),
     )
 
 
@@ -147,6 +183,8 @@ def build_candidate_score_inputs(
     estimated_encoded_size_bytes: int | None = None,
     estimated_savings_percent: float | None = None,
     cached_max_savings_percent: float | None = None,
+    historical_avg_savings_percent: float | None = None,
+    historical_context: str | None = None,
     now_ts: float | None = None,
     file_mtime: float | None = None,
 ) -> CandidateScoreInputs:
@@ -196,4 +234,8 @@ def build_candidate_score_inputs(
         resolution_tag_hints=resolution_tag_hints,
         has_cached_max_savings_skip=cached_max_savings_percent is not None,
         cached_max_savings_percent=float(cached_max_savings_percent) if cached_max_savings_percent is not None else None,
+        historical_avg_savings_percent=(
+            float(historical_avg_savings_percent) if historical_avg_savings_percent is not None else None
+        ),
+        historical_context=(str(historical_context) if historical_context else None),
     )

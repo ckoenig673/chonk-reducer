@@ -48,6 +48,8 @@ def test_build_candidate_score_inputs_populates_available_fields(tmp_path: Path)
     assert inputs.resolution_tag_hints == ("2160p",)
     assert inputs.has_cached_max_savings_skip is True
     assert inputs.cached_max_savings_percent == 51.2
+    assert inputs.historical_avg_savings_percent is None
+    assert inputs.historical_context is None
 
 
 def test_build_candidate_score_inputs_handles_missing_optional_values(tmp_path: Path):
@@ -71,6 +73,8 @@ def test_build_candidate_score_inputs_handles_missing_optional_values(tmp_path: 
     assert inputs.resolution_tag_hints == ()
     assert inputs.has_cached_max_savings_skip is False
     assert inputs.cached_max_savings_percent is None
+    assert inputs.historical_avg_savings_percent is None
+    assert inputs.historical_context is None
 
 
 def test_calculate_candidate_score_prefers_higher_value_candidates(tmp_path: Path):
@@ -197,3 +201,108 @@ def test_calculate_candidate_score_omits_low_value_reasons_for_weak_candidate(tm
 
     assert result.score > 0.0
     assert result.reasons == ()
+
+
+def test_calculate_candidate_score_applies_positive_history_adjustment(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=50),
+        src=tmp_path / "PositiveHistory.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=int(1.3 * 1024 ** 3),
+        estimated_savings_percent=35.0,
+        historical_avg_savings_percent=60.0,
+        historical_context="codec:h264",
+    )
+
+    result = calculate_candidate_score(inputs)
+    baseline = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(library_priority=50),
+            src=tmp_path / "PositiveHistory.mkv",
+            file_size_bytes=2 * 1024 ** 3,
+            estimated_encoded_size_bytes=int(1.3 * 1024 ** 3),
+            estimated_savings_percent=35.0,
+        )
+    )
+
+    assert result.historical_adjustment_points == 10.0
+    assert result.score == round(baseline.score + 10.0, 3)
+    assert "historically strong savings for this codec" in result.reasons
+
+
+def test_calculate_candidate_score_applies_negative_history_adjustment(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=50),
+        src=tmp_path / "NegativeHistory.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=int(1.3 * 1024 ** 3),
+        estimated_savings_percent=35.0,
+        historical_avg_savings_percent=10.0,
+        historical_context="resolution:1080p",
+    )
+
+    result = calculate_candidate_score(inputs)
+
+    assert result.historical_adjustment_points == -10.0
+    assert "historically weak savings for this resolution" in result.reasons
+
+
+def test_calculate_candidate_score_history_adjustment_not_applied_without_history(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(library_priority=50),
+        src=tmp_path / "NoHistory.mkv",
+        file_size_bytes=2 * 1024 ** 3,
+        estimated_encoded_size_bytes=int(1.3 * 1024 ** 3),
+        estimated_savings_percent=35.0,
+    )
+
+    result = calculate_candidate_score(inputs)
+
+    assert result.historical_adjustment_points == 0.0
+    assert "history suggests better than estimate" not in result.reasons
+    assert "history suggests worse than estimate" not in result.reasons
+
+
+def test_calculate_candidate_score_history_adjustment_is_bounded(tmp_path: Path):
+    high = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(),
+            src=tmp_path / "BoundHigh.mkv",
+            file_size_bytes=1_000,
+            estimated_encoded_size_bytes=500,
+            estimated_savings_percent=5.0,
+            historical_avg_savings_percent=95.0,
+            historical_context="library:tv",
+        )
+    )
+    low = calculate_candidate_score(
+        build_candidate_score_inputs(
+            cfg=_cfg(),
+            src=tmp_path / "BoundLow.mkv",
+            file_size_bytes=1_000,
+            estimated_encoded_size_bytes=500,
+            estimated_savings_percent=95.0,
+            historical_avg_savings_percent=5.0,
+            historical_context="library:tv",
+        )
+    )
+
+    assert high.historical_adjustment_points == 10.0
+    assert low.historical_adjustment_points == -10.0
+
+
+def test_calculate_candidate_score_history_adjustment_is_deterministic(tmp_path: Path):
+    inputs = build_candidate_score_inputs(
+        cfg=_cfg(),
+        src=tmp_path / "DeterministicHistory.mkv",
+        file_size_bytes=8_000,
+        estimated_encoded_size_bytes=4_000,
+        estimated_savings_percent=42.0,
+        historical_avg_savings_percent=50.0,
+        historical_context="library:movies",
+    )
+
+    first = calculate_candidate_score(inputs)
+    second = calculate_candidate_score(inputs)
+
+    assert first == second

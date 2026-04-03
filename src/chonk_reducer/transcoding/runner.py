@@ -19,6 +19,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .candidate_scoring import build_candidate_score_inputs, calculate_candidate_score
+from ..services.history_summaries import get_history_summaries
 from ..skip_policy import evaluate_skip
 from ..stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path, get_policy_skip_cache, upsert_policy_skip_cache, delete_policy_skip_cache
 
@@ -76,6 +77,86 @@ def _preview_score_band(score: float) -> str:
     if score_value >= 30.0:
         return "Medium value"
     return "Low confidence"
+
+
+def _resolution_bucket_for_candidate(src: Path, before_probe: dict | None) -> str:
+    if before_probe:
+        try:
+            height = int(before_probe.get("height")) if before_probe.get("height") is not None else 0
+        except Exception:
+            height = 0
+        if height >= 4320:
+            return "4320p+"
+        if height >= 2160:
+            return "2160p"
+        if height >= 1440:
+            return "1440p"
+        if height >= 1080:
+            return "1080p"
+        if height >= 720:
+            return "720p"
+        if height >= 576:
+            return "576p"
+        if height >= 480:
+            return "480p"
+
+    text = src.name.lower()
+    if "4320" in text or "8k" in text:
+        return "4320p+"
+    if "2160" in text or "4k" in text:
+        return "2160p"
+    if "1440" in text:
+        return "1440p"
+    if "1080" in text:
+        return "1080p"
+    if "720" in text:
+        return "720p"
+    if "576" in text:
+        return "576p"
+    if "480" in text:
+        return "480p"
+    return "unknown"
+
+
+def _select_historical_signal(
+    *,
+    history_summaries: dict[str, object] | None,
+    src: Path,
+    before_probe: dict | None,
+    library_name: str,
+) -> tuple[float | None, str | None]:
+    if not history_summaries:
+        return None, None
+
+    by_codec = {
+        str(row.get("codec", "")).strip().lower(): float(row.get("avg_savings_pct"))
+        for row in (history_summaries.get("by_codec") or [])
+        if row.get("codec") and row.get("avg_savings_pct") is not None
+    }
+    by_resolution = {
+        str(row.get("resolution_bucket", "")).strip().lower(): float(row.get("avg_savings_pct"))
+        for row in (history_summaries.get("by_resolution_bucket") or [])
+        if row.get("resolution_bucket") and row.get("avg_savings_pct") is not None
+    }
+    by_library = {
+        str(row.get("library", "")).strip().lower(): float(row.get("avg_savings_pct"))
+        for row in (history_summaries.get("by_library") or [])
+        if row.get("library") and row.get("avg_savings_pct") is not None
+    }
+
+    codec = str((before_probe or {}).get("codec") or "").strip().lower()
+    if codec and codec in by_codec:
+        return by_codec[codec], f"codec:{codec}"
+
+    resolution_bucket = _resolution_bucket_for_candidate(src, before_probe)
+    if resolution_bucket in by_resolution:
+        return by_resolution[resolution_bucket], f"resolution:{resolution_bucket}"
+
+    library_key = str(library_name or "").strip().lower()
+    if library_key and library_key in by_library:
+        return by_library[library_key], f"library:{library_key}"
+
+    return None, None
 
 
 def _validate_config(cfg, logger: Logger) -> bool:
@@ -213,8 +294,10 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         logger.log("===== END =====")
         return 1
 
+    history_summaries: dict[str, object] | None = None
     if getattr(cfg, "stats_enabled", False):
         ensure_database(cfg, logger)
+        history_summaries = get_history_summaries(cfg.stats_path)
 
     # Global pause (no cleanup/discovery/processing)
     pause_file = cfg.media_root / ".chonkpause"
@@ -511,6 +594,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
             except Exception as e:
                 logger.log(f"Probe (before) failed: {e}")
 
+            historical_avg_savings_percent, historical_context = _select_historical_signal(
+                history_summaries=history_summaries,
+                src=src,
+                before_probe=before_probe,
+                library_name=str(getattr(cfg, "library", "") or ""),
+            )
             _score_inputs = build_candidate_score_inputs(
                 cfg=cfg,
                 src=src,
@@ -519,13 +608,20 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 cached_max_savings_percent=(
                     float(cached_max_savings.get("savings_percent")) if cached_max_savings is not None else None
                 ),
+                historical_avg_savings_percent=historical_avg_savings_percent,
+                historical_context=historical_context,
                 file_mtime=file_mtime,
             )
             _score_result = calculate_candidate_score(_score_inputs)
+            history_fragment = ""
+            history_points = float(getattr(_score_result, "historical_adjustment_points", 0.0) or 0.0)
+            if history_points:
+                history_fragment = " (+history: %+0.1f)" % history_points
             logger.log(
-                "SCORE: %.3f reasons=%s file=%s"
+                "SCORE: %.3f%s reasons=%s file=%s"
                 % (
                     float(_score_result.score),
+                    history_fragment,
                     ", ".join(_score_result.reasons[:3]) if _score_result.reasons else "none",
                     src,
                 )
@@ -578,6 +674,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 estimated_savings_pct = 0.0
                 if before_bytes > 0 and estimated_bytes > 0:
                     estimated_savings_pct = ((before_bytes - estimated_bytes) / float(before_bytes)) * 100.0
+                historical_avg_savings_percent, historical_context = _select_historical_signal(
+                    history_summaries=history_summaries,
+                    src=src,
+                    before_probe=before_probe,
+                    library_name=str(getattr(cfg, "library", "") or ""),
+                )
                 _score_inputs = build_candidate_score_inputs(
                     cfg=cfg,
                     src=src,
@@ -588,6 +690,8 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     cached_max_savings_percent=(
                         float(cached_max_savings.get("savings_percent")) if cached_max_savings is not None else None
                     ),
+                    historical_avg_savings_percent=historical_avg_savings_percent,
+                    historical_context=historical_context,
                     file_mtime=file_mtime,
                 )
                 _score_result = calculate_candidate_score(_score_inputs)
