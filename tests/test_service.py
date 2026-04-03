@@ -2036,6 +2036,7 @@ def test_history_page_returns_rows_when_encode_stats_exist(tmp_path, monkeypatch
     status_code, body, _ = _call_get(service, "/history")
 
     assert status_code == 200
+    assert '<div class="table-frame"><table class="data-table">' in body
     for heading in (
         "Library",
         "File Name",
@@ -2064,6 +2065,7 @@ def test_history_page_handles_empty_stats_gracefully(tmp_path, monkeypatch):
     status_code, body, _ = _call_get(service, "/history")
 
     assert status_code == 200
+    assert 'class="common-bordered-message"' in body
     assert "No completed encode history recorded yet" in body
 
 
