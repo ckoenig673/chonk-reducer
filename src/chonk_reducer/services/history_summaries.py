@@ -66,7 +66,7 @@ class HistorySummariesService:
             self._cache[cache_key] = _CacheEntry(signature=signature, computed_at=now_value, value=computed)
             return computed
 
-    def _build_signature(self, db_file: Path) -> tuple[int, int, int, int, int, int]:
+    def _build_signature(self, db_file: Path) -> tuple[int, ...]:
         db_stat = db_file.stat()
         wal_file = Path(f"{db_file}-wal")
         shm_file = Path(f"{db_file}-shm")
@@ -85,6 +85,26 @@ class HistorySummariesService:
             shm_mtime_ns = int(shm_stat.st_mtime_ns)
             shm_size = int(shm_stat.st_size)
 
+        data_version = 0
+        encode_row_count = 0
+        encode_max_rowid = 0
+        try:
+            conn = sqlite3.connect(str(db_file))
+            try:
+                data_version_row = conn.execute("PRAGMA data_version").fetchone()
+                if data_version_row:
+                    data_version = int(data_version_row[0] or 0)
+                count_row = conn.execute("SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM encodes").fetchone()
+                if count_row:
+                    encode_row_count = int(count_row[0] or 0)
+                    encode_max_rowid = int(count_row[1] or 0)
+            finally:
+                conn.close()
+        except Exception:
+            data_version = 0
+            encode_row_count = 0
+            encode_max_rowid = 0
+
         return (
             int(db_stat.st_mtime_ns),
             int(db_stat.st_size),
@@ -92,6 +112,9 @@ class HistorySummariesService:
             wal_size,
             shm_mtime_ns,
             shm_size,
+            data_version,
+            encode_row_count,
+            encode_max_rowid,
         )
 
     def _compute(self, db_file: Path, *, generated_at: int) -> dict[str, Any]:
