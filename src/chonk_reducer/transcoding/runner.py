@@ -179,6 +179,13 @@ def _select_historical_signal(
     return None, None
 
 
+def _effective_max_files(cfg) -> int:
+    budget = getattr(cfg, "run_budget", None)
+    if budget is not None and hasattr(budget, "max_files_limit"):
+        return int(budget.max_files_limit(fallback_max_files=getattr(cfg, "max_files", 1)))
+    return max(1, int(getattr(cfg, "max_files", 1) or 1))
+
+
 def _validate_config(cfg, logger: Logger) -> bool:
     errors = []
 
@@ -284,7 +291,10 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
     logger.log(f"STATS_PATH={getattr(cfg, 'stats_path', '')}")
     logger.log(f"MEDIA_ROOT={cfg.media_root}")
     logger.log(f"WORK_ROOT={cfg.work_root}")
-    logger.log(f"MIN_SIZE_GB={cfg.min_size_gb} MAX_FILES={cfg.max_files}")
+    effective_max_files = _effective_max_files(cfg)
+    run_budget = getattr(cfg, "run_budget", None)
+    budget_type = getattr(run_budget, "budget_type", "max_files")
+    logger.log(f"MIN_SIZE_GB={cfg.min_size_gb} MAX_FILES={effective_max_files} RUN_BUDGET_TYPE={budget_type}")
     logger.log(f"MIN_SAVINGS_PERCENT={cfg.min_savings_percent}")
     logger.log(f"QSV_QUALITY={cfg.qsv_quality} QSV_PRESET={cfg.qsv_preset}")
     logger.log(
@@ -499,7 +509,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         for src in cands:
             if _cancel_check("candidate scanning"):
                 break
-            if done >= cfg.max_files:
+            if done >= effective_max_files:
                 break
 
             # Max GB per run guard (Story 43)

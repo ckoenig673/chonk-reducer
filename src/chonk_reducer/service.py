@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.49.2") or "1.49.2").strip() or "1.49.2"
+APP_VERSION = (os.getenv("APP_VERSION", "1.50.0") or "1.50.0").strip() or "1.50.0"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}

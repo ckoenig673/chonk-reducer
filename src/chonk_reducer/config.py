@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .transcoding.run_budget import RunBudget, normalize_run_budget
 
 
 def _env(name: str, default: str) -> str:
@@ -68,6 +69,7 @@ class Config:
     # Selection
     min_size_gb: float
     max_files: int
+    run_budget: RunBudget
     min_media_free_gb: float
     max_gb_per_run: float
 
@@ -156,6 +158,7 @@ def load_config() -> Config:
 
         min_size_gb=_env_float("MIN_SIZE_GB", 0.0),
         max_files=_env_int("MAX_FILES", 1),
+        run_budget=normalize_run_budget(budget_type_raw=_env("RUN_BUDGET_TYPE", "max_files"), max_files=_env_int("MAX_FILES", 1)),
         min_media_free_gb=_env_float("MIN_MEDIA_FREE_GB", 0.0),
         max_gb_per_run=_env_float("MAX_GB_PER_RUN", 0.0),
         max_savings_percent=_env_float("MAX_SAVINGS_PERCENT", 0.0),

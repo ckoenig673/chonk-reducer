@@ -8,6 +8,8 @@ from pathlib import Path
 import chonk_reducer.transcoding.runner as runner
 import pytest
 
+from chonk_reducer.transcoding.run_budget import RunBudgetType, normalize_run_budget
+
 
 def _base_cfg(tmp_path: Path, **overrides):
     media_root = tmp_path / "media"
@@ -172,6 +174,44 @@ def test_run_dry_run_mode_processes_all_candidates_until_max_files(tmp_path, mon
 
 def test_run_stops_after_max_files(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, max_files=1)
+    src1 = cfg.media_root / "a.mkv"
+    src2 = cfg.media_root / "b.mkv"
+    src1.write_bytes(b"x" * 5000)
+    src2.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1000000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    calls = {"encode": 0}
+
+    def fake_encode(src, encoded, cfg, logger):
+        calls["encode"] += 1
+        encoded.write_bytes(b"x" * 1000)
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    rc = runner.run()
+
+    assert rc == 0
+    assert calls["encode"] == 1
+
+
+
+
+def test_run_non_max_files_budget_type_keeps_max_files_limit_for_now(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=1)
+    cfg.run_budget = normalize_run_budget(budget_type_raw=RunBudgetType.SCORE_CUTOFF.value, max_files=cfg.max_files)
     src1 = cfg.media_root / "a.mkv"
     src2 = cfg.media_root / "b.mkv"
     src1.write_bytes(b"x" * 5000)
