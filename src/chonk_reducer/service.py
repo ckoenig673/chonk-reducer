@@ -4201,8 +4201,19 @@ def _next_run_from_cron(schedule: str, now: Optional[datetime] = None) -> Option
         return None
 
     try:
-        trigger = _build_scheduler_cron_trigger(cron_expr, timezone=_cron_trigger_timezone())
-        return trigger.get_next_fire_time(None, reference)
+        trigger_timezone = _cron_trigger_timezone()
+        reference_for_trigger = reference
+        if isinstance(reference_for_trigger, datetime):
+            if reference_for_trigger.tzinfo is None and hasattr(trigger_timezone, "utcoffset"):
+                reference_for_trigger = reference_for_trigger.replace(tzinfo=trigger_timezone)
+            elif reference_for_trigger.tzinfo is not None and hasattr(trigger_timezone, "utcoffset"):
+                reference_for_trigger = reference_for_trigger.astimezone(trigger_timezone)
+
+        trigger = CronTrigger.from_crontab(cron_expr, timezone=trigger_timezone)
+        next_run = trigger.get_next_fire_time(previous_fire_time=None, now=reference_for_trigger)
+        if next_run is None:
+            raise ValueError("Unable to compute next run for valid cron expression: %s" % cron_expr)
+        return next_run
     except Exception:
         return None
 
