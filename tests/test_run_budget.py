@@ -28,3 +28,14 @@ def test_normalize_run_budget_keeps_compatibility_for_non_max_files_types():
 
     assert budget.budget_type is RunBudgetType.ESTIMATED_RUNTIME_MINUTES
     assert budget.max_files_limit(fallback_max_files=4) == 4
+
+
+def test_normalize_run_budget_uses_explicit_budget_value_when_present():
+    budget = normalize_run_budget(
+        budget_type_raw="estimated_savings_bytes",
+        max_files=4,
+        budget_value_raw="123456",
+    )
+
+    assert budget.budget_type is RunBudgetType.ESTIMATED_SAVINGS_BYTES
+    assert budget.estimated_savings_bytes_limit() == 123456

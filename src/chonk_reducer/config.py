@@ -158,7 +158,11 @@ def load_config() -> Config:
 
         min_size_gb=_env_float("MIN_SIZE_GB", 0.0),
         max_files=_env_int("MAX_FILES", 1),
-        run_budget=normalize_run_budget(budget_type_raw=_env("RUN_BUDGET_TYPE", "max_files"), max_files=_env_int("MAX_FILES", 1)),
+        run_budget=normalize_run_budget(
+            budget_type_raw=_env("RUN_BUDGET_TYPE", "max_files"),
+            max_files=_env_int("MAX_FILES", 1),
+            budget_value_raw=_env("RUN_BUDGET_VALUE", ""),
+        ),
         min_media_free_gb=_env_float("MIN_MEDIA_FREE_GB", 0.0),
         max_gb_per_run=_env_float("MAX_GB_PER_RUN", 0.0),
         max_savings_percent=_env_float("MAX_SAVINGS_PERCENT", 0.0),

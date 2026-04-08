@@ -34,6 +34,18 @@ class RunBudget:
             return fallback
         return max(1, parsed)
 
+    def estimated_savings_bytes_limit(self) -> int | None:
+        """Return a positive estimated-savings budget in bytes when configured."""
+        if self.budget_type is not RunBudgetType.ESTIMATED_SAVINGS_BYTES:
+            return None
+        try:
+            parsed = int(str(self.raw_value).strip())
+        except (TypeError, ValueError):
+            return None
+        if parsed <= 0:
+            return None
+        return parsed
+
 
 def parse_budget_type(value: str | None) -> RunBudgetType | None:
     normalized = str(value or "").strip().lower()
@@ -45,11 +57,11 @@ def parse_budget_type(value: str | None) -> RunBudgetType | None:
     return None
 
 
-def normalize_run_budget(*, budget_type_raw: str | None, max_files: int) -> RunBudget:
+def normalize_run_budget(*, budget_type_raw: str | None, max_files: int, budget_value_raw: str | None = None) -> RunBudget:
     parsed_budget_type = parse_budget_type(budget_type_raw)
     if parsed_budget_type is None:
         parsed_budget_type = RunBudgetType.MAX_FILES
 
     safe_max_files = max(1, int(max_files))
-    raw_value = str(safe_max_files)
+    raw_value = str((budget_value_raw or "").strip() or safe_max_files)
     return RunBudget(budget_type=parsed_budget_type, raw_value=raw_value)

@@ -109,3 +109,14 @@ def test_run_budget_accepts_known_non_max_files_type(monkeypatch):
 
     assert cfg.run_budget.budget_type is RunBudgetType.SCORE_CUTOFF
     assert cfg.run_budget.max_files_limit(fallback_max_files=cfg.max_files) == 6
+
+
+def test_run_budget_reads_explicit_budget_value(monkeypatch):
+    monkeypatch.setenv("RUN_BUDGET_TYPE", "estimated_savings_bytes")
+    monkeypatch.setenv("RUN_BUDGET_VALUE", "1048576")
+    monkeypatch.setenv("MAX_FILES", "6")
+
+    cfg = load_config()
+
+    assert cfg.run_budget.budget_type is RunBudgetType.ESTIMATED_SAVINGS_BYTES
+    assert cfg.run_budget.estimated_savings_bytes_limit() == 1048576
