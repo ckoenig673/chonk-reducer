@@ -245,6 +245,104 @@ def test_run_non_max_files_budget_type_keeps_max_files_limit_for_now(tmp_path, m
     assert calls["encode"] == 1
 
 
+def test_run_estimated_savings_budget_selects_in_rank_order_until_target(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=10)
+    cfg.run_budget = normalize_run_budget(
+        budget_type_raw=RunBudgetType.ESTIMATED_SAVINGS_BYTES.value,
+        max_files=cfg.max_files,
+        budget_value_raw="1200",
+    )
+    src1 = cfg.media_root / "a.mkv"
+    src2 = cfg.media_root / "b.mkv"
+    src3 = cfg.media_root / "c.mkv"
+    for src in (src1, src2, src3):
+        src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2, src3], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1_000_000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    monkeypatch.setattr(runner, "_rank_candidates_by_score", lambda *a, **k: ([src2, src1, src3], {}))
+    savings_map = {src2: 700, src1: 600, src3: 500}
+    monkeypatch.setattr(
+        runner,
+        "_estimate_candidate_savings_bytes_for_budget",
+        lambda _cfg, src, _logger: savings_map[src],
+    )
+
+    calls = {"encode": []}
+
+    def fake_encode(src, encoded, cfg, logger):
+        calls["encode"].append(src)
+        encoded.write_bytes(b"x" * 1000)
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    rc = runner.run()
+
+    assert rc == 0
+    assert calls["encode"] == [src2, src1]
+
+
+def test_run_estimated_savings_budget_excludes_missing_estimates_deterministically(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, max_files=10)
+    cfg.run_budget = normalize_run_budget(
+        budget_type_raw=RunBudgetType.ESTIMATED_SAVINGS_BYTES.value,
+        max_files=cfg.max_files,
+        budget_value_raw="1000",
+    )
+    src1 = cfg.media_root / "a.mkv"
+    src2 = cfg.media_root / "b.mkv"
+    src3 = cfg.media_root / "c.mkv"
+    for src in (src1, src2, src3):
+        src.write_bytes(b"x" * 5000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2, src3], {}, []))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "validate_post_encode", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1_000_000})
+    monkeypatch.setattr(runner, "swap_in", lambda src, encoded, cfg, logger: (src.with_suffix(".bak"), src.with_suffix(".optimized")))
+    monkeypatch.setattr(runner, "record_success", lambda *a, **k: None)
+
+    monkeypatch.setattr(runner, "_rank_candidates_by_score", lambda *a, **k: ([src1, src2, src3], {}))
+    savings_map = {src1: None, src2: 600, src3: 450}
+    monkeypatch.setattr(
+        runner,
+        "_estimate_candidate_savings_bytes_for_budget",
+        lambda _cfg, src, _logger: savings_map[src],
+    )
+
+    calls = {"encode": []}
+
+    def fake_encode(src, encoded, cfg, logger):
+        calls["encode"].append(src)
+        encoded.write_bytes(b"x" * 1000)
+
+    monkeypatch.setattr(runner, "encode_qsv", fake_encode)
+
+    rc = runner.run()
+
+    assert rc == 0
+    assert calls["encode"] == [src2, src3]
+
+
 def test_preview_run_does_not_launch_ffmpeg_and_reports_estimates(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, preview=True, max_files=1, min_savings_percent=10.0)
     src = cfg.media_root / "movie.mkv"
@@ -318,6 +416,46 @@ def test_preview_run_marks_skip_decisions_for_codec_and_resolution(tmp_path, mon
     assert rows[1]["decision"] == "Skip (resolution rules)"
     assert "score" in rows[0]
     assert "score_band" in rows[0]
+
+
+def test_preview_estimated_savings_budget_only_emits_selected_candidates(tmp_path, monkeypatch):
+    cfg = _base_cfg(tmp_path, preview=True, max_files=10)
+    cfg.run_budget = normalize_run_budget(
+        budget_type_raw=RunBudgetType.ESTIMATED_SAVINGS_BYTES.value,
+        max_files=cfg.max_files,
+        budget_value_raw="800",
+    )
+    src1 = cfg.media_root / "a.mkv"
+    src2 = cfg.media_root / "b.mkv"
+    src3 = cfg.media_root / "c.mkv"
+    for src in (src1, src2, src3):
+        src.write_bytes(b"x" * 10_000)
+
+    monkeypatch.setattr(runner, "load_config", lambda: cfg)
+    monkeypatch.setattr(runner, "acquire_lock", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_work_dir", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_media_temp", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_logs", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "cleanup_baks", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "gather_candidates", lambda *a, **k: ([src1, src2, src3], {}, []))
+    monkeypatch.setattr(runner, "_rank_candidates_by_score", lambda *a, **k: ([src1, src2, src3], {}))
+    monkeypatch.setattr(runner, "evaluate_skip", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "probe_video_stream", lambda *a, **k: {"codec": "h264", "height": 1080, "width": 1920, "bit_rate": 1_000_000})
+
+    savings_map = {src1: 500, src2: 400, src3: 350}
+    monkeypatch.setattr(
+        runner,
+        "_estimate_candidate_savings_bytes_for_budget",
+        lambda _cfg, src, _logger: savings_map[src],
+    )
+
+    snapshots = []
+    rc = runner.run(progress_callback=lambda values: snapshots.append(values))
+
+    assert rc == 0
+    rows = [json.loads(item["preview_result_json"]) for item in snapshots if "preview_result_json" in item]
+    assert [Path(row["file"]) for row in rows] == [src1, src2]
     assert "score_reasons" in rows[0]
     assert "confidence_label" in rows[0]
     assert "history_influenced" in rows[0]

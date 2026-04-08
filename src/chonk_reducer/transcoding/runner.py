@@ -19,6 +19,7 @@ from .swap import swap_in
 from .validation import validate_post_encode
 from .ffmpeg_utils import probe_video_stream
 from .candidate_scoring import build_candidate_score_inputs, calculate_candidate_score
+from .run_budget import RunBudgetType
 from ..services.history_summaries import get_history_summaries
 from ..skip_policy import evaluate_skip
 from ..stats import ensure_database, record_success, record_failure, record_dry_run, record_skip, record_run_counters, record_run_log_path, get_policy_skip_cache, upsert_policy_skip_cache, delete_policy_skip_cache
@@ -249,6 +250,80 @@ def _estimate_size_bytes(before_bytes: int, cfg, probe: dict | None) -> int:
 
     ratio = max(0.25, min(0.95, ratio))
     return max(1, int(before_bytes * ratio))
+
+
+def _estimate_candidate_savings_bytes_for_budget(cfg, src: Path, logger: Logger) -> int | None:
+    """Estimate candidate savings bytes for budget-mode selection."""
+    try:
+        before_bytes = int(src.stat().st_size)
+    except Exception:
+        return None
+    if before_bytes <= 0:
+        return None
+
+    before_probe = None
+    try:
+        before_probe = probe_video_stream(
+            src,
+            cfg.ffprobe_analyzeduration,
+            cfg.ffprobe_probesize,
+            logger,
+            timeout=cfg.probe_timeout_secs,
+        )
+    except Exception:
+        before_probe = None
+
+    estimated_encoded_bytes = _estimate_size_bytes(before_bytes, cfg, before_probe)
+    savings_bytes = int(before_bytes) - int(estimated_encoded_bytes or 0)
+    if savings_bytes <= 0:
+        return None
+    return savings_bytes
+
+
+def _apply_estimated_savings_budget_selection(cfg, cands: list[Path], logger: Logger) -> list[Path]:
+    """Select ranked candidates until cumulative estimated savings meets/exceeds budget."""
+    run_budget = getattr(cfg, "run_budget", None)
+    if run_budget is None or getattr(run_budget, "budget_type", None) is not RunBudgetType.ESTIMATED_SAVINGS_BYTES:
+        return cands
+
+    budget_bytes = run_budget.estimated_savings_bytes_limit() if hasattr(run_budget, "estimated_savings_bytes_limit") else None
+    if budget_bytes is None:
+        logger.log("RUN_BUDGET(estimated_savings_bytes): invalid budget value; using ranked candidate list unchanged.")
+        return cands
+
+    selected: list[Path] = []
+    excluded: list[tuple[Path, str]] = []
+    cumulative = 0
+
+    logger.log(
+        "RUN_BUDGET(estimated_savings_bytes): target=%d bytes (%.2f GiB)"
+        % (int(budget_bytes), float(budget_bytes) / float(1024 ** 3))
+    )
+    for src in cands:
+        estimated_savings_bytes = _estimate_candidate_savings_bytes_for_budget(cfg, src, logger)
+        if estimated_savings_bytes is None:
+            excluded.append((src, "missing_estimated_savings"))
+            continue
+        if cumulative >= budget_bytes:
+            excluded.append((src, "below_cut_line"))
+            continue
+        selected.append(src)
+        cumulative += int(estimated_savings_bytes)
+        logger.log(
+            "RUN_BUDGET include savings=%d cumulative=%d/%d :: %s"
+            % (estimated_savings_bytes, cumulative, budget_bytes, src)
+        )
+
+    logger.log(
+        "RUN_BUDGET selected=%d excluded=%d cumulative=%d/%d"
+        % (len(selected), len(excluded), cumulative, budget_bytes)
+    )
+    for src, reason in excluded[:10]:
+        logger.log(f"RUN_BUDGET exclude({reason}) :: {src}")
+    if len(excluded) > 10:
+        logger.log(f"RUN_BUDGET ...and {len(excluded) - 10} more excluded candidates")
+
+    return selected
 
 
 
@@ -485,6 +560,8 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
             if len(cands) > 10:
                 logger.log(f"...and {len(cands) - 10} more ranked candidates")
             logger.log("=====================================")
+
+        cands = _apply_estimated_savings_budget_selection(cfg, cands, logger)
 
         logger.log(f"Found {len(cands)} candidates")
         _progress(candidates_found=len(cands), current_file="", files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=0, files_failed=failed, bytes_saved=saved_bytes_run)

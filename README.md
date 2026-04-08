@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400">
 </p>
 
-**Current Version:** v1.50.0
+**Current Version:** v1.51.0
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
@@ -239,9 +239,7 @@ Dry run mode (`dry_run=true`) scans candidate files and logs what would be encod
 
 ---
 
-## Run Budget Groundwork (Story 4.1)
-
-A lightweight run-budget model is now defined for future budget-aware selection stories.
+## Run Budget Modes
 
 Supported budget types:
 - `max_files` (current/default active behavior)
@@ -249,10 +247,11 @@ Supported budget types:
 - `estimated_savings_bytes`
 - `score_cutoff`
 
-Current compatibility behavior:
-- The runtime still enforces the existing max-files cap per run.
-- Non-`max_files` budget types are parsed/normalized and stored as explicit metadata groundwork, but currently resolve to the same effective max-files cap.
-- Candidate scoring/ranking/skip/scheduler behavior is intentionally unchanged in this groundwork story.
+Current behavior:
+- `max_files` remains the default and keeps existing run-cap behavior.
+- `estimated_savings_bytes` is operational: after discovery/prefilter/ranking, candidates are selected in ranked order until cumulative estimated savings meets/exceeds `RUN_BUDGET_VALUE` bytes.
+- In `estimated_savings_bytes` mode, candidates with missing/unusable estimated savings are excluded conservatively and logged as budget exclusions.
+- Other non-`max_files` modes remain parsed metadata for future stories.
 
 ## Notifications
 
@@ -351,7 +350,8 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `TZ` | Runtime | env/compose | Timezone used for scheduler/display. |
 | `CHONK_SECRET_KEY` | Runtime secret | env/compose | Required for encrypted webhook settings. |
 | `APP_VERSION` | Runtime metadata | env/compose | Optional runtime version override. |
-| `RUN_BUDGET_TYPE` | Runtime groundwork | env/compose | Optional budget-type selector (`max_files`, `estimated_runtime_minutes`, `estimated_savings_bytes`, `score_cutoff`). Defaults to `max_files`; current run cap remains max-files compatible. |
+| `RUN_BUDGET_TYPE` | Runtime selection | env/compose | Optional budget-type selector (`max_files`, `estimated_runtime_minutes`, `estimated_savings_bytes`, `score_cutoff`). Defaults to `max_files`. |
+| `RUN_BUDGET_VALUE` | Runtime selection | env/compose | Optional budget value for the selected mode. For `estimated_savings_bytes`, set this to the target savings bytes for candidate cut-line selection. |
 | `MOVIE_MEDIA_ROOT`, `TV_MEDIA_ROOT` | Bootstrap | env/compose | Used to seed default libraries on first startup. |
 | `MOVIE_SCHEDULE`, `TV_SCHEDULE` | Bootstrap | env/compose | Legacy schedule seed values for first startup only. |
 | `QSV_QUALITY`, `QSV_PRESET`, `MIN_SAVINGS_PERCENT` | Bootstrap | env/compose | Seed defaults for new/bootstrap library encoding fields. |
