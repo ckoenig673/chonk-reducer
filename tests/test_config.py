@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from chonk_reducer.config import load_config
+from chonk_reducer.transcoding.run_budget import RunBudgetType
 
 
 def test_load_config_returns_expected_defaults(monkeypatch):
@@ -78,3 +79,33 @@ def test_app_version_comes_from_environment(monkeypatch):
     cfg = load_config()
 
     assert cfg.version == "v1.41.0"
+
+
+def test_run_budget_defaults_to_max_files(monkeypatch):
+    monkeypatch.delenv("RUN_BUDGET_TYPE", raising=False)
+    monkeypatch.setenv("MAX_FILES", "2")
+
+    cfg = load_config()
+
+    assert cfg.run_budget.budget_type is RunBudgetType.MAX_FILES
+    assert cfg.run_budget.max_files_limit(fallback_max_files=99) == 2
+
+
+def test_run_budget_invalid_type_falls_back_to_max_files(monkeypatch):
+    monkeypatch.setenv("RUN_BUDGET_TYPE", "invalid")
+    monkeypatch.setenv("MAX_FILES", "5")
+
+    cfg = load_config()
+
+    assert cfg.run_budget.budget_type is RunBudgetType.MAX_FILES
+    assert cfg.run_budget.max_files_limit(fallback_max_files=1) == 5
+
+
+def test_run_budget_accepts_known_non_max_files_type(monkeypatch):
+    monkeypatch.setenv("RUN_BUDGET_TYPE", "score_cutoff")
+    monkeypatch.setenv("MAX_FILES", "6")
+
+    cfg = load_config()
+
+    assert cfg.run_budget.budget_type is RunBudgetType.SCORE_CUTOFF
+    assert cfg.run_budget.max_files_limit(fallback_max_files=cfg.max_files) == 6
