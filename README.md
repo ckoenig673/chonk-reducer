@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400">
 </p>
 
-**Current Version:** v1.52.0
+**Current Version:** v1.53.0
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
@@ -227,7 +227,7 @@ Preview mode (`trigger=preview`):
 - **Does** run candidate scan + ffprobe + policy evaluation.
 - **Does** estimate output size and estimated savings.
 - **Does** return per-file decisions (`Encode`, threshold skips, codec/resolution skips).
-- **Does** show budget visibility fields when `RUN_BUDGET_TYPE=estimated_savings_bytes`: per-row budget inclusion/exclusion state, running cumulative estimated savings, and an explicit cut-line marker on the first budget-excluded row.
+- **Does** show budget visibility fields when budget modes are active: per-row budget inclusion/exclusion state and short operator-friendly budget reasons.
 - **Does not** run ffmpeg encode.
 - **Does not** rename, replace, or delete media files.
 - **Does not** write `.optimized`/`.failed` artifacts for media.
@@ -252,8 +252,9 @@ Current behavior:
 - `max_files` remains the default and keeps existing run-cap behavior.
 - `estimated_savings_bytes` is operational: after discovery/prefilter/ranking, candidates are selected in ranked order until cumulative estimated savings meets/exceeds `RUN_BUDGET_VALUE` bytes.
 - In `estimated_savings_bytes` mode, candidates with missing/unusable estimated savings are excluded conservatively and logged as budget exclusions.
+- `score_cutoff` is operational: after discovery/prefilter/ranking, candidates are selected only when `score >= RUN_BUDGET_VALUE` (numeric cutoff).
 - Preview/UI budget display is visibility-only: it explains selected vs excluded rows and cumulative savings progression without changing budget/scoring/selection behavior.
-- Other non-`max_files` modes remain parsed metadata for future stories.
+- `estimated_runtime_minutes` remains parsed metadata for future stories.
 
 ## Notifications
 
@@ -353,7 +354,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `CHONK_SECRET_KEY` | Runtime secret | env/compose | Required for encrypted webhook settings. |
 | `APP_VERSION` | Runtime metadata | env/compose | Optional runtime version override. |
 | `RUN_BUDGET_TYPE` | Runtime selection | env/compose | Optional budget-type selector (`max_files`, `estimated_runtime_minutes`, `estimated_savings_bytes`, `score_cutoff`). Defaults to `max_files`. |
-| `RUN_BUDGET_VALUE` | Runtime selection | env/compose | Optional budget value for the selected mode. For `estimated_savings_bytes`, set this to the target savings bytes for candidate cut-line selection. |
+| `RUN_BUDGET_VALUE` | Runtime selection | env/compose | Optional budget value for the selected mode. For `estimated_savings_bytes`, set target savings bytes; for `score_cutoff`, set the minimum score threshold (include when `score >= cutoff`). |
 | `MOVIE_MEDIA_ROOT`, `TV_MEDIA_ROOT` | Bootstrap | env/compose | Used to seed default libraries on first startup. |
 | `MOVIE_SCHEDULE`, `TV_SCHEDULE` | Bootstrap | env/compose | Legacy schedule seed values for first startup only. |
 | `QSV_QUALITY`, `QSV_PRESET`, `MIN_SAVINGS_PERCENT` | Bootstrap | env/compose | Seed defaults for new/bootstrap library encoding fields. |

@@ -374,6 +374,54 @@ def _apply_estimated_savings_budget_selection(
     return selected
 
 
+def _apply_score_cutoff_budget_selection(
+    cfg,
+    cands: list[Path],
+    ranking_meta: dict[Path, dict[str, object]],
+    logger: Logger,
+    selection_meta: dict[Path, dict[str, object]] | None = None,
+) -> list[Path]:
+    """Select ranked candidates whose score is at or above the configured cutoff."""
+    run_budget = getattr(cfg, "run_budget", None)
+    if run_budget is None or getattr(run_budget, "budget_type", None) is not RunBudgetType.SCORE_CUTOFF:
+        return cands
+
+    cutoff = run_budget.score_cutoff_value() if hasattr(run_budget, "score_cutoff_value") else None
+    if cutoff is None:
+        logger.log("RUN_BUDGET(score_cutoff): invalid budget value; using ranked candidate list unchanged.")
+        return cands
+
+    selected: list[Path] = []
+    excluded: list[Path] = []
+
+    logger.log("RUN_BUDGET(score_cutoff): min_score=%.3f" % float(cutoff))
+    for src in cands:
+        rank_row = ranking_meta.get(src, {})
+        score_value = float(rank_row.get("score", 0.0) or 0.0)
+        if score_value >= cutoff:
+            selected.append(src)
+            if selection_meta is not None:
+                selection_meta[src] = {
+                    "included_by_budget": True,
+                    "budget_status": "selected_score_cutoff",
+                    "budget_reason": "included by score cutoff",
+                }
+            logger.log("RUN_BUDGET include score=%.3f cutoff=%.3f :: %s" % (score_value, cutoff, src))
+            continue
+
+        excluded.append(src)
+        if selection_meta is not None:
+            selection_meta[src] = {
+                "included_by_budget": False,
+                "budget_status": "excluded_score_cutoff",
+                "budget_reason": "excluded due to score cutoff",
+            }
+        logger.log("RUN_BUDGET exclude(score_cutoff) score=%.3f cutoff=%.3f :: %s" % (score_value, cutoff, src))
+
+    logger.log("RUN_BUDGET(score_cutoff) selected=%d excluded=%d cutoff=%.3f" % (len(selected), len(excluded), cutoff))
+    return selected
+
+
 
 def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] = None, on_cancelled: Optional[Callable[[str], None]] = None) -> int:
     cfg = load_config()
@@ -617,6 +665,13 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
             logger,
             selection_meta=budget_selection_meta,
         )
+        cands = _apply_score_cutoff_budget_selection(
+            cfg,
+            cands,
+            ranking_meta,
+            logger,
+            selection_meta=budget_selection_meta,
+        )
         budget_excluded_candidates = [
             src
             for src in ranked_candidates
@@ -659,8 +714,11 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 if isinstance(estimated_savings_bytes, int) and estimated_savings_bytes > 0 and original_size > 0:
                     estimated_size = max(0, int(original_size) - int(estimated_savings_bytes))
                 decision = "Skip (budget limit)"
-                if str(budget_meta.get("budget_status", "")).strip() == "excluded_missing_estimate":
+                budget_status = str(budget_meta.get("budget_status", "")).strip()
+                if budget_status == "excluded_missing_estimate":
                     decision = "Skip (missing estimated savings)"
+                elif budget_status == "excluded_score_cutoff":
+                    decision = "Skip (score cutoff)"
                 budget_excluded_preview_results.append(
                     {
                         "file": str(src),

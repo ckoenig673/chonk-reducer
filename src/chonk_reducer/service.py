@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.52.0") or "1.52.0").strip() or "1.52.0"
+APP_VERSION = (os.getenv("APP_VERSION", "1.53.0") or "1.53.0").strip() or "1.53.0"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -2807,6 +2807,9 @@ class ChonkService:
             included_by_budget = row.get("included_by_budget")
             if included_by_budget is True:
                 budget_label = "Included"
+                budget_status = str(row.get("budget_status", "") or "").strip()
+                if budget_status == "selected_score_cutoff":
+                    budget_label = "Included (score cutoff)"
             elif included_by_budget is False:
                 budget_status = str(row.get("budget_status", "") or "").strip()
                 budget_label = "Excluded"
@@ -2814,6 +2817,8 @@ class ChonkService:
                     budget_label = "Excluded (cut line)"
                 elif budget_status == "excluded_missing_estimate":
                     budget_label = "Excluded (missing estimate)"
+                elif budget_status == "excluded_score_cutoff":
+                    budget_label = "Excluded (score cutoff)"
             cumulative_value = row.get("cumulative_estimated_savings_bytes")
             target_value = row.get("budget_target_bytes")
             try:
