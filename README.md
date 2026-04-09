@@ -234,6 +234,26 @@ Preview mode (`trigger=preview`):
 
 Preview snapshots are kept in service memory for Dashboard display until replaced or cleared.
 
+## Preview Behavior (Budget-Aware)
+
+When budget modes are active, preview shows:
+
+- Included vs excluded candidates
+- Explicit reasons:
+  - `Skip (budget limit)`
+  - `Skip (score cutoff)`
+  - `Skip (missing estimated savings)`
+- Cumulative estimated savings progression (for `estimated_savings_bytes`)
+- Score + value + confidence + reasons
+
+Budget modes do **not** change:
+
+- scoring
+- ranking
+- skip logic
+
+They only control selection of ranked candidates.
+
 ## Dry Run Mode
 
 Dry run mode (`dry_run=true`) scans candidate files and logs what would be encoded/swapped without running ffmpeg or modifying media files. It now evaluates each candidate up to `max_files` (instead of stopping after the first dry-run candidate).
@@ -242,19 +262,41 @@ Dry run mode (`dry_run=true`) scans candidate files and logs what would be encod
 
 ## Run Budget Modes
 
-Supported budget types:
-- `max_files` (current/default active behavior)
-- `estimated_runtime_minutes`
-- `estimated_savings_bytes`
-- `score_cutoff`
+All runs follow the same high-level flow:
 
-Current behavior:
-- `max_files` remains the default and keeps existing run-cap behavior.
-- `estimated_savings_bytes` is operational: after discovery/prefilter/ranking, candidates are selected in ranked order until cumulative estimated savings meets/exceeds `RUN_BUDGET_VALUE` bytes.
-- In `estimated_savings_bytes` mode, candidates with missing/unusable estimated savings are excluded conservatively and logged as budget exclusions.
-- `score_cutoff` is operational: after discovery/prefilter/ranking, candidates are selected only when `score >= RUN_BUDGET_VALUE` (numeric cutoff).
-- Preview/UI budget display is visibility-only: it explains selected vs excluded rows and cumulative savings progression without changing budget/scoring/selection behavior.
-- `estimated_runtime_minutes` remains parsed metadata for future stories.
+1. Discover candidates
+2. Apply skip rules
+3. Score + rank
+4. Apply budget mode
+
+#### `max_files` (default)
+
+- Selects the top N ranked candidates.
+- Existing/default behavior.
+- Simple and predictable.
+
+#### `estimated_savings_bytes`
+
+- Walks ranked candidates in order.
+- Accumulates estimated savings as candidates are included.
+- Stops when cumulative estimated savings reaches/exceeds `RUN_BUDGET_VALUE`.
+- Excludes candidates without usable estimated savings.
+
+#### `score_cutoff`
+
+- Includes candidates where `score >= RUN_BUDGET_VALUE`.
+- Excludes lower-scoring candidates.
+- Preserves ranked order.
+
+Example configuration:
+
+```bash
+RUN_BUDGET_MODE=estimated_savings_bytes
+RUN_BUDGET_VALUE=2000000000
+
+RUN_BUDGET_MODE=score_cutoff
+RUN_BUDGET_VALUE=60
+```
 
 ## Notifications
 
@@ -353,7 +395,7 @@ Designed to be operator-friendly and reusable for future UI help/tooltips.
 | `TZ` | Runtime | env/compose | Timezone used for scheduler/display. |
 | `CHONK_SECRET_KEY` | Runtime secret | env/compose | Required for encrypted webhook settings. |
 | `APP_VERSION` | Runtime metadata | env/compose | Optional runtime version override. |
-| `RUN_BUDGET_TYPE` | Runtime selection | env/compose | Optional budget-type selector (`max_files`, `estimated_runtime_minutes`, `estimated_savings_bytes`, `score_cutoff`). Defaults to `max_files`. |
+| `RUN_BUDGET_MODE` | Runtime selection | env/compose | Optional budget-mode selector (`max_files`, `estimated_savings_bytes`, `score_cutoff`). Defaults to `max_files`. |
 | `RUN_BUDGET_VALUE` | Runtime selection | env/compose | Optional budget value for the selected mode. For `estimated_savings_bytes`, set target savings bytes; for `score_cutoff`, set the minimum score threshold (include when `score >= cutoff`). |
 | `MOVIE_MEDIA_ROOT`, `TV_MEDIA_ROOT` | Bootstrap | env/compose | Used to seed default libraries on first startup. |
 | `MOVIE_SCHEDULE`, `TV_SCHEDULE` | Bootstrap | env/compose | Legacy schedule seed values for first startup only. |
