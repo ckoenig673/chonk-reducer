@@ -106,7 +106,7 @@ from .core.text_utils import normalize_csv_text as _normalize_csv_text, sanitize
 
 
 LOGGER = logging.getLogger("chonk_reducer.service")
-APP_VERSION = (os.getenv("APP_VERSION", "1.51.0") or "1.51.0").strip() or "1.51.0"
+APP_VERSION = (os.getenv("APP_VERSION", "1.52.0") or "1.52.0").strip() or "1.52.0"
 HOUSEKEEPING_JOB_ID = "housekeeping-daily"
 _ENV_MUTATION_LOCK = threading.RLock()
 _ENV_RUNTIME_BASELINES: Dict[str, Optional[str]] = {}
@@ -1341,6 +1341,24 @@ class ChonkService:
         estimated_pct = None
         if original_total > 0:
             estimated_pct = (float(estimated_saved) / float(original_total)) * 100.0
+        budget_selected = 0
+        budget_excluded = 0
+        budget_progress = 0
+        budget_target = None
+        for row in rows:
+            included_by_budget = row.get("included_by_budget")
+            if included_by_budget is True:
+                budget_selected += 1
+            elif included_by_budget is False:
+                budget_excluded += 1
+            try:
+                if included_by_budget is True:
+                    budget_progress = max(budget_progress, int(row.get("cumulative_estimated_savings_bytes") or 0))
+                target_candidate = int(row.get("budget_target_bytes") or 0)
+                if target_candidate > 0:
+                    budget_target = max(int(budget_target or 0), target_candidate)
+            except Exception:
+                continue
         return {
             "files_evaluated": files_evaluated,
             "candidates_found": candidates,
@@ -1348,6 +1366,10 @@ class ChonkService:
             "estimated_encoded_total": estimated_total,
             "estimated_total_savings": estimated_saved,
             "estimated_savings_percent": estimated_pct,
+            "budget_selected": budget_selected,
+            "budget_excluded": budget_excluded,
+            "budget_progress_bytes": budget_progress,
+            "budget_target_bytes": budget_target,
         }
 
     def _preview_summary_html(self, summary: Dict[str, object]) -> str:
@@ -1360,6 +1382,10 @@ class ChonkService:
             estimated_encoded_total=_escape_html(_format_saved_bytes(summary.get("estimated_encoded_total", 0))),
             estimated_total_savings=_escape_html(_format_saved_bytes(summary.get("estimated_total_savings", 0))),
             estimated_savings_percent=_escape_html(pct_label),
+            budget_selected=_escape_html(str(summary.get("budget_selected", 0))),
+            budget_excluded=_escape_html(str(summary.get("budget_excluded", 0))),
+            budget_progress=_escape_html(_format_saved_bytes(summary.get("budget_progress_bytes", 0))),
+            budget_target=_escape_html(_format_saved_bytes(summary.get("budget_target_bytes", 0))),
         )
 
     def run_detail_page_html(self, run_id: str) -> tuple:
@@ -2777,8 +2803,33 @@ class ChonkService:
                 if history_reason:
                     cleaned_reasons = cleaned_reasons + [history_reason]
             reasons_label = " • ".join(cleaned_reasons[:2]) if cleaned_reasons else "-"
+            budget_label = "-"
+            included_by_budget = row.get("included_by_budget")
+            if included_by_budget is True:
+                budget_label = "Included"
+            elif included_by_budget is False:
+                budget_status = str(row.get("budget_status", "") or "").strip()
+                budget_label = "Excluded"
+                if budget_status == "excluded_budget_cut_line":
+                    budget_label = "Excluded (cut line)"
+                elif budget_status == "excluded_missing_estimate":
+                    budget_label = "Excluded (missing estimate)"
+            cumulative_value = row.get("cumulative_estimated_savings_bytes")
+            target_value = row.get("budget_target_bytes")
+            try:
+                cumulative_int = int(cumulative_value or 0)
+                target_int = int(target_value or 0)
+            except Exception:
+                cumulative_int = 0
+                target_int = 0
+            if target_int > 0:
+                budget_label = "%s • %s / %s" % (
+                    budget_label,
+                    _format_saved_bytes(cumulative_int),
+                    _format_saved_bytes(target_int),
+                )
             body_rows.append(
-                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                 % (
                     _escape_html(str(row.get("file", "-"))),
                     _escape_html(_format_saved_bytes(row.get("original_size"))),
@@ -2787,12 +2838,13 @@ class ChonkService:
                     _escape_html(score_label),
                     _escape_html(value_label),
                     _escape_html(reasons_label),
+                    _escape_html(budget_label),
                     _escape_html(str(row.get("decision", "-"))),
                 )
             )
         if not body_rows:
-            body_rows.append('<tr><td colspan="8">No preview results yet.</td></tr>')
-        return """<section id="runtime-preview-results" class="dashboard-preview-panel"><div class="dashboard-preview-header"><h3 class="dashboard-preview-title">Preview Results</h3><button id="runtime-clear-preview-button" type="button" class="secondary-button">Clear Preview Results</button></div><div class="dashboard-preview-details">%s</div>%s<div class="table-frame"><table class="data-table"><thead><tr><th>File</th><th>Original Size</th><th>Estimated Size</th><th>Savings %%</th><th>Score</th><th>Value</th><th>Why</th><th>Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div></section>""" % (details, summary_html, "".join(body_rows))
+            body_rows.append('<tr><td colspan="9">No preview results yet.</td></tr>')
+        return """<section id="runtime-preview-results" class="dashboard-preview-panel"><div class="dashboard-preview-header"><h3 class="dashboard-preview-title">Preview Results</h3><button id="runtime-clear-preview-button" type="button" class="secondary-button">Clear Preview Results</button></div><div class="dashboard-preview-details">%s</div>%s<div class="table-frame"><table class="data-table"><thead><tr><th>File</th><th>Original Size</th><th>Estimated Size</th><th>Savings %%</th><th>Score</th><th>Value</th><th>Why</th><th>Budget</th><th>Decision</th></tr></thead><tbody id="runtime-preview-results-body">%s</tbody></table></div></section>""" % (details, summary_html, "".join(body_rows))
 
     @staticmethod
     def _preview_score_label(raw_score: object) -> str:

@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400">
 </p>
 
-**Current Version:** v1.51.0
+**Current Version:** v1.52.0
 
 Chonk Reducer is a Docker-first NAS media optimization service. It scans media libraries, evaluates candidates, runs Intel QSV HEVC transcodes when policy allows, validates output, swaps atomically, and records run/file metrics in SQLite.
 
@@ -227,6 +227,7 @@ Preview mode (`trigger=preview`):
 - **Does** run candidate scan + ffprobe + policy evaluation.
 - **Does** estimate output size and estimated savings.
 - **Does** return per-file decisions (`Encode`, threshold skips, codec/resolution skips).
+- **Does** show budget visibility fields when `RUN_BUDGET_TYPE=estimated_savings_bytes`: per-row budget inclusion/exclusion state, running cumulative estimated savings, and an explicit cut-line marker on the first budget-excluded row.
 - **Does not** run ffmpeg encode.
 - **Does not** rename, replace, or delete media files.
 - **Does not** write `.optimized`/`.failed` artifacts for media.
@@ -251,6 +252,7 @@ Current behavior:
 - `max_files` remains the default and keeps existing run-cap behavior.
 - `estimated_savings_bytes` is operational: after discovery/prefilter/ranking, candidates are selected in ranked order until cumulative estimated savings meets/exceeds `RUN_BUDGET_VALUE` bytes.
 - In `estimated_savings_bytes` mode, candidates with missing/unusable estimated savings are excluded conservatively and logged as budget exclusions.
+- Preview/UI budget display is visibility-only: it explains selected vs excluded rows and cumulative savings progression without changing budget/scoring/selection behavior.
 - Other non-`max_files` modes remain parsed metadata for future stories.
 
 ## Notifications

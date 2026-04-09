@@ -280,7 +280,12 @@ def _estimate_candidate_savings_bytes_for_budget(cfg, src: Path, logger: Logger)
     return savings_bytes
 
 
-def _apply_estimated_savings_budget_selection(cfg, cands: list[Path], logger: Logger) -> list[Path]:
+def _apply_estimated_savings_budget_selection(
+    cfg,
+    cands: list[Path],
+    logger: Logger,
+    selection_meta: dict[Path, dict[str, object]] | None = None,
+) -> list[Path]:
     """Select ranked candidates until cumulative estimated savings meets/exceeds budget."""
     run_budget = getattr(cfg, "run_budget", None)
     if run_budget is None or getattr(run_budget, "budget_type", None) is not RunBudgetType.ESTIMATED_SAVINGS_BYTES:
@@ -294,21 +299,55 @@ def _apply_estimated_savings_budget_selection(cfg, cands: list[Path], logger: Lo
     selected: list[Path] = []
     excluded: list[tuple[Path, str]] = []
     cumulative = 0
+    cut_line_marked = False
 
     logger.log(
         "RUN_BUDGET(estimated_savings_bytes): target=%d bytes (%.2f GiB)"
         % (int(budget_bytes), float(budget_bytes) / float(1024 ** 3))
     )
     for src in cands:
+        cumulative_before = int(cumulative)
         estimated_savings_bytes = _estimate_candidate_savings_bytes_for_budget(cfg, src, logger)
         if estimated_savings_bytes is None:
             excluded.append((src, "missing_estimated_savings"))
+            if selection_meta is not None:
+                selection_meta[src] = {
+                    "included_by_budget": False,
+                    "budget_status": "excluded_missing_estimate",
+                    "budget_reason": "excluded due to missing estimated savings",
+                    "estimated_savings_bytes": None,
+                    "cumulative_estimated_savings_bytes": cumulative_before,
+                    "budget_target_bytes": int(budget_bytes),
+                }
             continue
         if cumulative >= budget_bytes:
             excluded.append((src, "below_cut_line"))
+            if selection_meta is not None:
+                budget_status = "excluded_budget_limit"
+                budget_reason = "excluded due to budget limit"
+                if not cut_line_marked:
+                    budget_status = "excluded_budget_cut_line"
+                    cut_line_marked = True
+                selection_meta[src] = {
+                    "included_by_budget": False,
+                    "budget_status": budget_status,
+                    "budget_reason": budget_reason,
+                    "estimated_savings_bytes": int(estimated_savings_bytes),
+                    "cumulative_estimated_savings_bytes": cumulative_before,
+                    "budget_target_bytes": int(budget_bytes),
+                }
             continue
         selected.append(src)
         cumulative += int(estimated_savings_bytes)
+        if selection_meta is not None:
+            selection_meta[src] = {
+                "included_by_budget": True,
+                "budget_status": "selected_by_budget",
+                "budget_reason": "selected by budget",
+                "estimated_savings_bytes": int(estimated_savings_bytes),
+                "cumulative_estimated_savings_bytes": int(cumulative),
+                "budget_target_bytes": int(budget_bytes),
+            }
         logger.log(
             "RUN_BUDGET include savings=%d cumulative=%d/%d :: %s"
             % (estimated_savings_bytes, cumulative, budget_bytes, src)
@@ -319,7 +358,16 @@ def _apply_estimated_savings_budget_selection(cfg, cands: list[Path], logger: Lo
         % (len(selected), len(excluded), cumulative, budget_bytes)
     )
     for src, reason in excluded[:10]:
-        logger.log(f"RUN_BUDGET exclude({reason}) :: {src}")
+        meta = selection_meta.get(src, {}) if selection_meta is not None else {}
+        logger.log(
+            "RUN_BUDGET exclude(%s) cumulative=%d/%d :: %s"
+            % (
+                reason,
+                int(meta.get("cumulative_estimated_savings_bytes", cumulative)),
+                int(meta.get("budget_target_bytes", budget_bytes)),
+                src,
+            )
+        )
     if len(excluded) > 10:
         logger.log(f"RUN_BUDGET ...and {len(excluded) - 10} more excluded candidates")
 
@@ -561,7 +609,19 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 logger.log(f"...and {len(cands) - 10} more ranked candidates")
             logger.log("=====================================")
 
-        cands = _apply_estimated_savings_budget_selection(cfg, cands, logger)
+        ranked_candidates = list(cands)
+        budget_selection_meta: dict[Path, dict[str, object]] = {}
+        cands = _apply_estimated_savings_budget_selection(
+            cfg,
+            cands,
+            logger,
+            selection_meta=budget_selection_meta,
+        )
+        budget_excluded_candidates = [
+            src
+            for src in ranked_candidates
+            if budget_selection_meta.get(src, {}).get("included_by_budget") is False
+        ]
 
         logger.log(f"Found {len(cands)} candidates")
         _progress(candidates_found=len(cands), current_file="", files_evaluated=evaluated, files_processed=processed, success_count=succeeded, files_skipped=0, files_failed=failed, bytes_saved=saved_bytes_run)
@@ -582,6 +642,47 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
         with open(cand_log, "w", encoding="utf-8", newline="\n") as f:
             for p in cands:
                 f.write(str(p) + "\n")
+
+        budget_excluded_preview_results: list[dict[str, object]] = []
+        if cfg.preview and budget_excluded_candidates:
+            for src in budget_excluded_candidates:
+                budget_meta = budget_selection_meta.get(src, {})
+                rank_row = ranking_meta.get(src, {})
+                rank_score = float(rank_row.get("score", 0.0))
+                rank_reasons = tuple(rank_row.get("reasons", ()))
+                try:
+                    original_size = int(src.stat().st_size)
+                except Exception:
+                    original_size = 0
+                estimated_savings_bytes = budget_meta.get("estimated_savings_bytes")
+                estimated_size = int(original_size)
+                if isinstance(estimated_savings_bytes, int) and estimated_savings_bytes > 0 and original_size > 0:
+                    estimated_size = max(0, int(original_size) - int(estimated_savings_bytes))
+                decision = "Skip (budget limit)"
+                if str(budget_meta.get("budget_status", "")).strip() == "excluded_missing_estimate":
+                    decision = "Skip (missing estimated savings)"
+                budget_excluded_preview_results.append(
+                    {
+                        "file": str(src),
+                        "original_size": int(original_size or 0),
+                        "estimated_size": int(estimated_size or 0),
+                        "estimated_savings_pct": 0.0,
+                        "score": round(rank_score, 3),
+                        "score_band": _preview_score_band(rank_score),
+                        "confidence_label": "",
+                        "confidence_adjustment_points": 0.0,
+                        "score_reasons": list(rank_reasons[:3]),
+                        "history_influenced": False,
+                        "history_influence_reason": None,
+                        "included_by_budget": budget_meta.get("included_by_budget"),
+                        "budget_status": budget_meta.get("budget_status"),
+                        "budget_reason": budget_meta.get("budget_reason"),
+                        "estimated_savings_bytes": budget_meta.get("estimated_savings_bytes"),
+                        "cumulative_estimated_savings_bytes": budget_meta.get("cumulative_estimated_savings_bytes"),
+                        "budget_target_bytes": budget_meta.get("budget_target_bytes"),
+                        "decision": decision,
+                    }
+                )
 
         for src in cands:
             if _cancel_check("candidate scanning"):
@@ -761,6 +862,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 )
                 if cfg.preview:
                     decision = "Skip (unsupported codec)" if cat == "codec" else "Skip (resolution rules)"
+                    budget_meta = budget_selection_meta.get(src, {})
                     preview_result = {
                         "file": str(src),
                         "original_size": int(before_bytes or 0),
@@ -775,6 +877,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                         "score_reasons": list(_score_result.reasons[:3]),
                         "history_influenced": bool(getattr(_score_result, "history_influenced", False)),
                         "history_influence_reason": getattr(_score_result, "history_influence_reason", None),
+                        "included_by_budget": budget_meta.get("included_by_budget"),
+                        "budget_status": budget_meta.get("budget_status"),
+                        "budget_reason": budget_meta.get("budget_reason"),
+                        "estimated_savings_bytes": budget_meta.get("estimated_savings_bytes"),
+                        "cumulative_estimated_savings_bytes": budget_meta.get("cumulative_estimated_savings_bytes"),
+                        "budget_target_bytes": budget_meta.get("budget_target_bytes"),
                         "decision": decision,
                     }
                     _progress(
@@ -834,6 +942,7 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                 else:
                     decision = "Encode"
 
+                budget_meta = budget_selection_meta.get(src, {})
                 preview_result = {
                     "file": str(src),
                     "original_size": int(before_bytes or 0),
@@ -848,6 +957,12 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
                     "score_reasons": list(_score_result.reasons[:3]),
                     "history_influenced": bool(getattr(_score_result, "history_influenced", False)),
                     "history_influence_reason": getattr(_score_result, "history_influence_reason", None),
+                    "included_by_budget": budget_meta.get("included_by_budget"),
+                    "budget_status": budget_meta.get("budget_status"),
+                    "budget_reason": budget_meta.get("budget_reason"),
+                    "estimated_savings_bytes": budget_meta.get("estimated_savings_bytes"),
+                    "cumulative_estimated_savings_bytes": budget_meta.get("cumulative_estimated_savings_bytes"),
+                    "budget_target_bytes": budget_meta.get("budget_target_bytes"),
                     "decision": decision,
                 }
                 _progress(
@@ -1132,6 +1247,24 @@ def run(progress_callback=None, cancel_requested: Optional[Callable[[], bool]] =
 
                     # Count toward MAX_FILES so we don't run forever
                     done += 1
+
+        if cfg.preview and budget_excluded_preview_results:
+            for preview_result in budget_excluded_preview_results:
+                _progress(
+                    preview_result=preview_result,
+                    preview_result_json=json.dumps(preview_result),
+                    files_evaluated=evaluated,
+                )
+                logger.log(
+                    "PREVIEW: %s decision=%s budget=%s cumulative=%s/%s"
+                    % (
+                        str(preview_result.get("file", "")),
+                        str(preview_result.get("decision", "")),
+                        str(preview_result.get("budget_status", "")),
+                        int(preview_result.get("cumulative_estimated_savings_bytes") or 0),
+                        int(preview_result.get("budget_target_bytes") or 0),
+                    )
+                )
 
         # Summary
         if cancelled:
