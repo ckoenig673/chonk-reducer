@@ -39,3 +39,23 @@ def test_normalize_run_budget_uses_explicit_budget_value_when_present():
 
     assert budget.budget_type is RunBudgetType.ESTIMATED_SAVINGS_BYTES
     assert budget.estimated_savings_bytes_limit() == 123456
+
+
+def test_run_budget_score_cutoff_value_parses_finite_numeric_values():
+    budget = normalize_run_budget(
+        budget_type_raw="score_cutoff",
+        max_files=4,
+        budget_value_raw="55.5",
+    )
+
+    assert budget.budget_type is RunBudgetType.SCORE_CUTOFF
+    assert budget.score_cutoff_value() == 55.5
+
+
+def test_run_budget_score_cutoff_value_rejects_invalid_values():
+    budget = normalize_run_budget(
+        budget_type_raw="score_cutoff",
+        max_files=4,
+        budget_value_raw="not-a-number",
+    )
+    assert budget.score_cutoff_value() is None

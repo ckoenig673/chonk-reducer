@@ -6,7 +6,7 @@ x-runtime-env: &runtime-env
   PYTHONPYCACHEPREFIX: /work/pycache
   PYTHONDONTWRITEBYTECODE: 1
   STATS_ENABLED: "true"
-  APP_VERSION: "v1.52.0"
+  APP_VERSION: "v1.53.0"
   WORK_ROOT: /work
   STATS_PATH: /config/chonk.db
   TZ: America/Chicago

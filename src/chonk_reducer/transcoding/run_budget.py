@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 
 
 class RunBudgetType(str, Enum):
@@ -43,6 +44,18 @@ class RunBudget:
         except (TypeError, ValueError):
             return None
         if parsed <= 0:
+            return None
+        return parsed
+
+    def score_cutoff_value(self) -> float | None:
+        """Return a finite numeric score cutoff when configured."""
+        if self.budget_type is not RunBudgetType.SCORE_CUTOFF:
+            return None
+        try:
+            parsed = float(str(self.raw_value).strip())
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(parsed):
             return None
         return parsed
 
