@@ -220,6 +220,61 @@ Service UI routes:
 
 ---
 
+## Run Budget Modes
+
+All runs follow the same high-level flow:
+
+1. Discover candidates
+2. Apply skip rules
+3. Score + rank
+4. Apply budget mode
+
+#### `max_files` (default)
+
+- Selects the top N ranked candidates.
+- Existing/default behavior.
+- Simple and predictable.
+
+Best for:
+
+- Simple runs
+- Predictable workloads
+
+#### `estimated_savings_bytes`
+
+- Walks ranked candidates in order.
+- Accumulates estimated savings as candidates are included.
+- Stops when cumulative estimated savings reaches/exceeds `RUN_BUDGET_VALUE`.
+- Excludes candidates without usable estimated savings.
+
+Best for:
+
+- Maximizing disk savings
+- Prioritizing high-impact files
+
+#### `score_cutoff`
+
+- Includes candidates where `score >= RUN_BUDGET_VALUE`.
+- Excludes lower-scoring candidates.
+- Preserves ranked order.
+
+Best for:
+
+- High-confidence optimization
+- Avoiding low-value work
+
+Example configuration:
+
+```bash
+RUN_BUDGET_MODE=estimated_savings_bytes
+RUN_BUDGET_VALUE=2000000000
+
+RUN_BUDGET_MODE=score_cutoff
+RUN_BUDGET_VALUE=60
+```
+
+---
+
 ## Preview Mode (What it does / does not do)
 
 Preview mode (`trigger=preview`):
@@ -252,52 +307,13 @@ Budget modes do **not** change:
 - ranking
 - skip logic
 
-They only control selection of ranked candidates.
+They only control how many of the ranked candidates are selected.
 
 ## Dry Run Mode
 
 Dry run mode (`dry_run=true`) scans candidate files and logs what would be encoded/swapped without running ffmpeg or modifying media files. It now evaluates each candidate up to `max_files` (instead of stopping after the first dry-run candidate).
 
 ---
-
-## Run Budget Modes
-
-All runs follow the same high-level flow:
-
-1. Discover candidates
-2. Apply skip rules
-3. Score + rank
-4. Apply budget mode
-
-#### `max_files` (default)
-
-- Selects the top N ranked candidates.
-- Existing/default behavior.
-- Simple and predictable.
-
-#### `estimated_savings_bytes`
-
-- Walks ranked candidates in order.
-- Accumulates estimated savings as candidates are included.
-- Stops when cumulative estimated savings reaches/exceeds `RUN_BUDGET_VALUE`.
-- Excludes candidates without usable estimated savings.
-
-#### `score_cutoff`
-
-- Includes candidates where `score >= RUN_BUDGET_VALUE`.
-- Excludes lower-scoring candidates.
-- Preserves ranked order.
-
-Example configuration:
-
-```bash
-RUN_BUDGET_MODE=estimated_savings_bytes
-RUN_BUDGET_VALUE=2000000000
-
-RUN_BUDGET_MODE=score_cutoff
-RUN_BUDGET_VALUE=60
-```
-
 ## Notifications
 
 Supported targets:
