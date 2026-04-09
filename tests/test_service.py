@@ -5374,12 +5374,18 @@ def test_preview_savings_summary_calculation_and_render():
                 "original_size": 1000,
                 "estimated_size": 700,
                 "estimated_savings_pct": "30.0",
+                "estimated_savings_bytes": 300,
                 "score": 83.25,
                 "score_band": "High value",
                 "confidence_label": "high",
                 "score_reasons": ["high projected GB savings", "strong projected % savings"],
                 "history_influenced": True,
                 "history_influence_reason": "history-influenced score",
+                "included_by_budget": True,
+                "budget_status": "selected_by_budget",
+                "budget_reason": "selected by budget",
+                "cumulative_estimated_savings_bytes": 300,
+                "budget_target_bytes": 350,
                 "decision": "Encode",
             },
             {
@@ -5387,10 +5393,16 @@ def test_preview_savings_summary_calculation_and_render():
                 "original_size": 1000,
                 "estimated_size": 950,
                 "estimated_savings_pct": "5.0",
+                "estimated_savings_bytes": 50,
                 "score": 12.0,
                 "score_reasons": [],
                 "confidence_label": "low",
                 "history_influenced": False,
+                "included_by_budget": False,
+                "budget_status": "excluded_budget_cut_line",
+                "budget_reason": "excluded due to budget limit",
+                "cumulative_estimated_savings_bytes": 300,
+                "budget_target_bytes": 350,
                 "decision": "Skip",
             },
         ],
@@ -5409,6 +5421,11 @@ def test_preview_savings_summary_calculation_and_render():
     assert ">Score<" in html
     assert ">Value<" in html
     assert ">Why<" in html
+    assert ">Budget<" in html
+    assert "Included • 300 B / 350 B" in html
+    assert "Excluded (cut line) • 300 B / 350 B" in html
+    assert "runtime-preview-budget-selected" in html
+    assert "runtime-preview-budget-excluded" in html
     assert "High value (high confidence)" in html
     assert "high projected GB savings • strong projected % savings" in html
 

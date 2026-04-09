@@ -418,7 +418,7 @@ def test_preview_run_marks_skip_decisions_for_codec_and_resolution(tmp_path, mon
     assert "score_band" in rows[0]
 
 
-def test_preview_estimated_savings_budget_only_emits_selected_candidates(tmp_path, monkeypatch):
+def test_preview_estimated_savings_budget_emits_selected_and_excluded_candidates_with_budget_flags(tmp_path, monkeypatch):
     cfg = _base_cfg(tmp_path, preview=True, max_files=10)
     cfg.run_budget = normalize_run_budget(
         budget_type_raw=RunBudgetType.ESTIMATED_SAVINGS_BYTES.value,
@@ -455,7 +455,15 @@ def test_preview_estimated_savings_budget_only_emits_selected_candidates(tmp_pat
 
     assert rc == 0
     rows = [json.loads(item["preview_result_json"]) for item in snapshots if "preview_result_json" in item]
-    assert [Path(row["file"]) for row in rows] == [src1, src2]
+    assert [Path(row["file"]) for row in rows] == [src1, src2, src3]
+    assert rows[0]["included_by_budget"] is True
+    assert rows[0]["cumulative_estimated_savings_bytes"] == 500
+    assert rows[1]["included_by_budget"] is True
+    assert rows[1]["cumulative_estimated_savings_bytes"] == 900
+    assert rows[2]["included_by_budget"] is False
+    assert rows[2]["budget_status"] == "excluded_budget_cut_line"
+    assert rows[2]["budget_reason"] == "excluded due to budget limit"
+    assert rows[2]["decision"] == "Skip (budget limit)"
     assert "score_reasons" in rows[0]
     assert "confidence_label" in rows[0]
     assert "history_influenced" in rows[0]
