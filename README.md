@@ -25,38 +25,6 @@ It supports both:
 
 ---
 
-## Code Layout (Structural Refactor)
-
-This release includes a **structural refactor only**: behavior is intended to remain the same while making modules easier to navigate and maintain.
-
-```
-src/chonk_reducer/
-  main.py
-  core/
-  web/
-    app.py
-    routers/
-    templates/
-    static/
-  services/
-  data/
-    db.py
-    repositories/
-  scheduler/
-  transcoding/
-```
-
-Responsibilities:
-- `web/`: FastAPI app bootstrap, route registration, plus UI templates/static assets (`web/templates`, `web/static/css`, `web/static/js`).
-- `data/`: SQLite setup and repository-oriented data access modules.
-- `scheduler/`: scheduler wiring and listener setup helpers.
-- `services/`: service orchestration and runtime workflows (including notification and reporting modules such as Discord/webhook notifications and weekly reporting).
-- `core/`: shared runtime helpers such as display/formatting, text-normalization, logging/timestamp, locking, and secret-encryption utilities used by service, transcoding, data, and web rendering paths.
-- `transcoding/`: encoding/runner pipeline modules (`encode.py`, `runner.py`, `swap.py`, `validation.py`, `ffmpeg_utils.py`) kept separate from web routing.
-
-UI extraction note:
-- Dashboard, Runs, Run Detail, Analytics, and selected Settings/Library scaffolds are incrementally moving into dedicated templates/partials under `web/templates/` and page-specific CSS under `web/static/css/base.css` to reduce inline presentation markup in Python service code. Recent passes include reusable Settings global-row/message/housekeeping partials, Library form section/name-path partials, extracted Library schedule/create/ignored-folders partials, reusable preview/system housekeeping summary partials, shared Analytics/key-value/common bordered-message partial wrappers, a dedicated `services/settings_libraries_rendering.py` helper for settings/libraries assembly, and a `services/dashboard_rendering.py` helper for dashboard/runs/activity rendering composition.
-
 ## Quick Start
 
 ```bash
@@ -88,6 +56,38 @@ Service URLs:
 - Health: `http://localhost:8085/health`
 
 ---
+
+## Architecture and Code Layout
+
+The codebase separates web presentation, orchestration, persistence, scheduling, and transcoding so each area can evolve without changing unrelated runtime behavior.
+
+```
+src/chonk_reducer/
+  main.py
+  core/
+  web/
+    app.py
+    routers/
+    templates/
+    static/
+  services/
+  data/
+    db.py
+    repositories/
+  scheduler/
+  transcoding/
+```
+
+Responsibilities:
+- `web/`: FastAPI app bootstrap, route registration, plus UI templates/static assets (`web/templates`, `web/static/css`, `web/static/js`).
+- `data/`: SQLite setup and repository-oriented data access modules.
+- `scheduler/`: scheduler wiring and listener setup helpers.
+- `services/`: service orchestration and runtime workflows (including notification and reporting modules such as Discord/webhook notifications and weekly reporting).
+- `core/`: shared runtime helpers such as display/formatting, text-normalization, logging/timestamp, locking, and secret-encryption utilities used by service, transcoding, data, and web rendering paths.
+- `transcoding/`: encoding/runner pipeline modules (`encode.py`, `runner.py`, `swap.py`, `validation.py`, `ffmpeg_utils.py`) kept separate from web routing.
+
+UI extraction note:
+- Dashboard, Runs, Run Detail, Analytics, and selected Settings/Library scaffolds are incrementally moving into dedicated templates/partials under `web/templates/` and page-specific CSS under `web/static/css/base.css` to reduce inline presentation markup in Python service code. Recent passes include reusable Settings global-row/message/housekeeping partials, Library form section/name-path partials, extracted Library schedule/create/ignored-folders partials, reusable preview/system housekeeping summary partials, shared Analytics/key-value/common bordered-message partial wrappers, a dedicated `services/settings_libraries_rendering.py` helper for settings/libraries assembly, and a `services/dashboard_rendering.py` helper for dashboard/runs/activity rendering composition.
 
 ## Current Architecture (Source of Truth)
 
@@ -466,3 +466,10 @@ pytest -q
 ```
 
 See `docs/TESTING.md` for environment-specific test notes.
+
+## Documentation and Project Policies
+
+- [Testing guide](docs/TESTING.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [GitHub releases](https://github.com/ckoenig673/chonk-reducer/releases)
