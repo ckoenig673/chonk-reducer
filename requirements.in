@@ -1,0 +1,4 @@
+fastapi
+python-multipart
+uvicorn
+APScheduler>=3.10,<4

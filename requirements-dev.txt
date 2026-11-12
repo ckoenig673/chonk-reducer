@@ -1,4 +1,28 @@
--r requirements.txt
-pytest
-pytest-mock
-httpx
+# Exact Python 3.11 development/test lock resolved on 2026-11-12.
+# Edit requirements-dev.in first, then deliberately regenerate and validate this file.
+annotated-doc==0.0.6
+annotated-types==0.8.0
+anyio==4.16.0
+APScheduler==3.11.3
+certifi==2026.10.23
+click==8.5.1
+fastapi==0.162.5
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+iniconfig==2.3.1
+opentelemetry-api==1.45.2
+packaging==26.3
+pluggy==1.7.0
+pydantic==2.14.3
+pydantic-core==2.50.4
+pygments==2.21.0
+pytest==9.2.0
+pytest-mock==3.17.0
+python-multipart==0.0.33
+starlette==1.10.0
+typing-extensions==4.16.0
+typing-inspection==0.4.5
+tzlocal==5.4.5
+uvicorn==0.54.0

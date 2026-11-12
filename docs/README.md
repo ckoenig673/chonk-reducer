@@ -5,6 +5,7 @@
 - [Project overview and quick start](../README.md)
 - [Complete operator reference](REFERENCE.md)
 - [Testing guide](TESTING.md)
+- [Dependency maintenance](DEPENDENCIES.md)
 - [Screenshot standards and assets](screenshots/README.md)
 
 ## Project Policies
