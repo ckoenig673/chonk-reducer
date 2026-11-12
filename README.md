@@ -14,7 +14,7 @@
   <img src="assets/chonk-reducer-logo.png" width="400" alt="Chonk Reducer logo">
 </p>
 
-**Current version:** `v1.53.0`
+**Current version:** `v1.53.1`
 
 Chonk Reducer is a Docker-first NAS media optimization service. It finds worthwhile candidates, performs hardware-accelerated Intel QSV HEVC transcodes, validates the output, swaps files safely, and records operational metrics in SQLite.
 
@@ -84,6 +84,11 @@ Deployment concerns such as bind addresses, paths, timezone, and `CHONK_SECRET_K
 
 See the [settings inventory](docs/REFERENCE.md#settings-inventory--mapping) for scopes, defaults, and compatibility notes.
 
+Runtime and development dependencies are fully pinned, and the FFmpeg base
+image is pinned by both release tag and immutable digest. Maintainers should
+update the human-edited `.in` files before regenerating either requirements
+lock. See [dependency maintenance](docs/DEPENDENCIES.md).
+
 ## Testing
 
 ```bash
@@ -98,6 +103,7 @@ Tests are designed to run without a NAS, production database, real media library
 - [Documentation index](docs/README.md)
 - [Complete operator reference](docs/REFERENCE.md)
 - [Testing guide](docs/TESTING.md)
+- [Dependency maintenance](docs/DEPENDENCIES.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [GitHub releases](https://github.com/ckoenig673/chonk-reducer/releases)

@@ -1,4 +1,4 @@
-FROM linuxserver/ffmpeg:latest
+FROM linuxserver/ffmpeg:9.0.2-cli-ls89@sha256:822d04f0b2d0c4847430f5cc90f20ea48be866bb502ece63fdeb729400bf5361
 
 # Base image is Ubuntu; install python + tzdata
 RUN apt-get update \
