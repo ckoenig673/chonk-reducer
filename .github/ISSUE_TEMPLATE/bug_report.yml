@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a reproducible problem in Chonk Reducer
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Chonk Reducer. Use synthetic examples and remove media names, library paths, hostnames, webhook values, secrets, and other private data before submitting.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Dashboard or web interface
+        - Candidate discovery or policy
+        - Encoding, validation, or swap
+        - Scheduler or service runtime
+        - Notifications or reporting
+        - Deployment or configuration
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v1.53.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: deployment
+    attributes:
+      label: Deployment environment
+      placeholder: Docker Compose on Synology DSM 7, Ubuntu 24.04, or similar
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Relevant hardware
+      description: Include CPU, Intel GPU, and storage platform when relevant. Do not include serial numbers or hostnames.
+      placeholder: Intel N100 with QSV; NAS model optional
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Run mode
+      options:
+        - Service mode
+        - One-shot run
+        - Preview run
+        - Dry run
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Configure a synthetic test library...
+        2. Start...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized configuration and logs
+      description: Include only the minimum relevant configuration. Remove media names, paths, hosts, webhook URLs, keys, and tokens.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I reproduced this with a preview, dry run, or synthetic test library when practical.
+          required: true
+        - label: I removed private media details, secrets, hosts, and production paths from this report.
+          required: true
