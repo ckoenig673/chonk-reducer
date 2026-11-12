@@ -2,6 +2,10 @@
 
 Product screenshots must come from a local demo environment containing synthetic data.
 
+Current assets:
+
+- `chonk-dashboard.png` — isolated dashboard demo with synthetic libraries and savings history
+
 Before committing a screenshot, verify that it contains none of the following:
 
 - Real media filenames or library paths

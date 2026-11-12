@@ -30,6 +30,12 @@ Chonk Reducer is a Docker-first NAS media optimization service. It finds worthwh
 - Per-library schedules, priorities, quality settings, and skip rules.
 - Encrypted Discord and generic-webhook configuration.
 
+## Product Preview
+
+The dashboard below was captured from an isolated local demo containing synthetic libraries, filenames, schedules, and savings history. It did not use a NAS, production media, or a production database.
+
+![Chonk Reducer dashboard with synthetic library and savings data](docs/screenshots/chonk-dashboard.png)
+
 ## Quick Start
 
 ```bash
@@ -70,7 +76,7 @@ The service provides operator views for:
 - Global and per-library settings
 - System status and housekeeping
 
-Real product screenshots will be added only from a sanitized demo environment. See the [screenshot standards](docs/screenshots/README.md).
+Product screenshots are captured only from sanitized demo environments. See the [screenshot standards](docs/screenshots/README.md).
 
 ## Configuration
 
