@@ -1,0 +1,75 @@
+name: Feature request
+description: Suggest a focused improvement to Chonk Reducer
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: Describe the operator problem first, including the safety and filesystem implications of the requested behavior.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product area
+      options:
+        - Candidate discovery or ranking
+        - Encoding, validation, or swap
+        - Scheduling or run budgets
+        - Dashboard, analytics, or history
+        - Notifications or reporting
+        - Deployment or configuration
+        - Documentation or developer experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operator problem
+      description: Explain the current limitation and its operational impact.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired outcome without assuming a specific implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: media_impact
+    attributes:
+      label: Potential media or filesystem impact
+      options:
+        - Read-only or reporting only
+        - Changes candidate selection only
+        - May create temporary or sidecar files
+        - May replace, rename, or remove media files
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety expectations
+      description: Describe preview, validation, rollback, or dry-run behavior that should accompany this feature.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Suggested acceptance criteria
+      placeholder: |
+        - [ ] Preview mode explains...
+        - [ ] Existing atomic-swap guarantees remain...
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Scope checks
+      options:
+        - label: I searched existing issues for a similar request.
+          required: true
+        - label: This request is focused and does not bundle unrelated changes.
+          required: true
+        - label: I described filesystem and media-safety implications where relevant.
+          required: true
